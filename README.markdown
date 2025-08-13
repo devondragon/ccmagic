@@ -253,10 +253,11 @@ Commands can request access to:
 
 Detailed documentation available in the `/docs` directory:
 - [Getting Started Guide](docs/getting-started.markdown)
+- [Team Collaboration Guide](docs/claude-code-team-guide.markdown)
+- [Claude Code Quickstart](docs/claude-code-quickstart.markdown)
 - [Directory Structure Reference](docs/directory-structure.markdown)
 - [Context Systems Reference](docs/context-systems-reference.markdown)
-- [Claude Code Quickstart](docs/claude-code-quickstart.markdown)
-- [Team Collaboration Guide](docs/claude-code-team-guide.markdown)
+
 
 ## 🤝 Contributing
 
