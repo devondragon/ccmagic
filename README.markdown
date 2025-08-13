@@ -6,6 +6,8 @@ A powerful collection of custom slash commands that transform Claude Code into a
 
 ### Installation
 
+#### Option 1: Global Installation (User-wide)
+
 1. Navigate to your Claude commands directory:
    ```bash
    cd ~/.claude/commands/
@@ -13,10 +15,50 @@ A powerful collection of custom slash commands that transform Claude Code into a
 
 2. Clone the ccmagic repository:
    ```bash
-   git clone https://github.com/[your-username]/ccmagic.git
+   git clone https://github.com/devondragon/ccmagic.git
    ```
 
 3. Start using commands with the `/ccmagic:` prefix in Claude Code!
+
+#### Option 2: Project-local Installation
+
+For team projects or when you want CCMagic versioned with your codebase:
+
+**Using Git Submodule (Recommended for version control):**
+```bash
+# From your project root
+git submodule add https://github.com/devondragon/ccmagic.git .claude/commands/ccmagic
+git commit -m "Add CCMagic as submodule"
+
+# Team members can initialize after cloning
+git submodule update --init --recursive
+```
+
+**Using Direct Copy (Simpler, no submodule complexity - but no updates):**
+```bash
+# From your project root
+mkdir -p .claude/commands
+
+# Download and extract (using curl)
+curl -L https://github.com/devondragon/ccmagic/archive/main.tar.gz | \
+  tar -xz -C .claude/commands --strip-components=1
+
+# Or using wget
+wget -qO- https://github.com/devondragon/ccmagic/archive/main.tar.gz | \
+  tar -xz -C .claude/commands --strip-components=1
+
+# Optional: Track commands in your project's git
+git add .claude/commands/
+git commit -m "Add CCMagic commands to project"
+
+# Or ignore them if you prefer team members to install separately
+echo ".claude/commands/" >> .gitignore
+```
+
+**Note:** Project-local commands take precedence over global commands. This allows teams to:
+- Pin specific CCMagic versions per project
+- Customize commands for project needs
+- Ensure all team members use the same command versions
 
 ### Your First Command
 
@@ -30,55 +72,55 @@ This creates a complete project management structure in your repository's `conte
 ## 📋 Available Commands
 
 ### Project Setup & Planning
-| Command | Description | Example |
-|---------|-------------|---------|
-| `/ccmagic:init` | Initialize complete CCMagic context structure | `/ccmagic:init` |
-| `/ccmagic:plan` | Interactive project planning session | `/ccmagic:plan saas-app` |
-| `/ccmagic:help` | Get help with CCMagic commands | `/ccmagic:help` |
+| Command         | Description                                   | Example                  |
+| --------------- | --------------------------------------------- | ------------------------ |
+| `/ccmagic:init` | Initialize complete CCMagic context structure | `/ccmagic:init`          |
+| `/ccmagic:plan` | Interactive project planning session          | `/ccmagic:plan saas-app` |
+| `/ccmagic:help` | Get help with CCMagic commands                | `/ccmagic:help`          |
 
 ### Task Management
-| Command | Description | Example |
-|---------|-------------|---------|
-| `/ccmagic:create-features` | Create new features for an epic | `/ccmagic:create-features epic-001` |
-| `/ccmagic:create-tasks` | Break down features into tasks | `/ccmagic:create-tasks` |
-| `/ccmagic:start-task` | Start working on a specific task | `/ccmagic:start-task 001-01-003` |
-| `/ccmagic:current-task` | View current active task | `/ccmagic:current-task` |
-| `/ccmagic:complete-task` | Mark task as completed | `/ccmagic:complete-task 001-01-003` |
-| `/ccmagic:checkpoint` | Save current progress | `/ccmagic:checkpoint` |
+| Command                    | Description                      | Example                             |
+| -------------------------- | -------------------------------- | ----------------------------------- |
+| `/ccmagic:create-features` | Create new features for an epic  | `/ccmagic:create-features epic-001` |
+| `/ccmagic:create-tasks`    | Break down features into tasks   | `/ccmagic:create-tasks`             |
+| `/ccmagic:start-task`      | Start working on a specific task | `/ccmagic:start-task 001-01-003`    |
+| `/ccmagic:current-task`    | View current active task         | `/ccmagic:current-task`             |
+| `/ccmagic:complete-task`   | Mark task as completed           | `/ccmagic:complete-task 001-01-003` |
+| `/ccmagic:checkpoint`      | Save current progress            | `/ccmagic:checkpoint`               |
 
 ### Features & Epics
-| Command | Description | Example |
-|---------|-------------|---------|
-| `/ccmagic:current-feature` | View current feature status | `/ccmagic:current-feature` |
-| `/ccmagic:create-spike` | Create research/investigation task | `/ccmagic:create-spike` |
-| `/ccmagic:start-spike` | Begin working on a spike | `/ccmagic:start-spike spike-001` |
+| Command                    | Description                        | Example                          |
+| -------------------------- | ---------------------------------- | -------------------------------- |
+| `/ccmagic:current-feature` | View current feature status        | `/ccmagic:current-feature`       |
+| `/ccmagic:create-spike`    | Create research/investigation task | `/ccmagic:create-spike`          |
+| `/ccmagic:start-spike`     | Begin working on a spike           | `/ccmagic:start-spike spike-001` |
 
 ### Project Status & Documentation
-| Command | Description | Example |
-|---------|-------------|---------|
-| `/ccmagic:status` | Check project and task status | `/ccmagic:status` |
-| `/ccmagic:handoff` | Create detailed handoff notes | `/ccmagic:handoff` |
-| `/ccmagic:add-backlog` | Add items to project backlog | `/ccmagic:add-backlog` |
+| Command                | Description                   | Example                |
+| ---------------------- | ----------------------------- | ---------------------- |
+| `/ccmagic:status`      | Check project and task status | `/ccmagic:status`      |
+| `/ccmagic:handoff`     | Create detailed handoff notes | `/ccmagic:handoff`     |
+| `/ccmagic:add-backlog` | Add items to project backlog  | `/ccmagic:add-backlog` |
 
 ### Context Management
-| Command | Description | Example |
-|---------|-------------|---------|
+| Command                 | Description                | Example                 |
+| ----------------------- | -------------------------- | ----------------------- |
 | `/ccmagic:context-save` | Save current context state | `/ccmagic:context-save` |
-| `/ccmagic:context-load` | Load saved context state | `/ccmagic:context-load` |
+| `/ccmagic:context-load` | Load saved context state   | `/ccmagic:context-load` |
 
 ### Development Workflow
-| Command | Description | Example |
-|---------|-------------|---------|
-| `/ccmagic:test` | Run project tests | `/ccmagic:test` |
+| Command             | Description           | Example             |
+| ------------------- | --------------------- | ------------------- |
+| `/ccmagic:test`     | Run project tests     | `/ccmagic:test`     |
 | `/ccmagic:validate` | Validate code changes | `/ccmagic:validate` |
-| `/ccmagic:review` | Perform code review | `/ccmagic:review` |
+| `/ccmagic:review`   | Perform code review   | `/ccmagic:review`   |
 
 ### Git Integration
-| Command | Description | Example |
-|---------|-------------|---------|
-| `/ccmagic:pr` | Create pull request | `/ccmagic:pr` |
-| `/ccmagic:merge` | Merge changes | `/ccmagic:merge` |
-| `/ccmagic:sync` | Sync with remote repository | `/ccmagic:sync` |
+| Command          | Description                 | Example          |
+| ---------------- | --------------------------- | ---------------- |
+| `/ccmagic:pr`    | Create pull request         | `/ccmagic:pr`    |
+| `/ccmagic:merge` | Merge changes               | `/ccmagic:merge` |
+| `/ccmagic:sync`  | Sync with remote repository | `/ccmagic:sync`  |
 
 ## 🏗️ CCMagic Context System
 
@@ -240,8 +282,8 @@ MIT License - See [LICENSE](LICENSE) file for details
 ## 🔗 Links
 
 - [Claude Code Documentation](https://docs.anthropic.com/en/docs/claude-code)
-- [Report Issues](https://github.com/[your-username]/ccmagic/issues)
-- [Feature Requests](https://github.com/[your-username]/ccmagic/discussions)
+- [Report Issues](https://github.com/devondragon/ccmagic/issues)
+- [Feature Requests](https://github.com/devondragon/ccmagic/discussions)
 
 ## 🎉 Why CCMagic?
 

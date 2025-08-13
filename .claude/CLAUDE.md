@@ -2,6 +2,8 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+It is NOT read automatically in this locaiton and must be specifically referenced, however this is the only way to avoid it showing up as a slash command to consuming projects.
+
 ## Repository Overview
 
 This is the **ccmagic** project - a collection of custom slash commands for Claude Code that implement a comprehensive project management and context system. These commands help developers maintain organized project context, track work progress, and enable smooth handoffs between development sessions.
