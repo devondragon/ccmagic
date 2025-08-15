@@ -20,7 +20,7 @@ This command will:
 ### 2. **Git Branching:**
 - **Research Branch**: `spike/[spike-id]-[description]`
 - **Direct commit**: For quick investigations
-- Time-boxed, not production code
+
 
 ### 3. **Update Working State:**
 Update project working-state.md:
@@ -29,7 +29,6 @@ Update project working-state.md:
 ## Current Spike
 - **ID**: spike-001-research-auth-providers
 - **Type**: Research / Investigation
-- **Time Box**: 4 hours
 - **Branch**: spike/spike-001-research-auth-providers
 - **Started**: 2024-01-15 14:30
 
@@ -74,14 +73,13 @@ Note: CLAUDE.md is automatically loaded. Only load specific knowledge files as n
 4. Perform analysis and comparisons
 
 #### Key Investigation Guidelines:
-- **Time-boxed**: Respect the time limit specified
 - **Document findings**: Update spike file with discoveries
 - **Create artifacts**: Save useful code snippets, configs, or examples
 - **Update knowledge base**: Transfer learnings to `/context/knowledge/`
 - **Make recommendations**: Provide clear, actionable conclusions
 
 ### 5. **Spike Completion:**
-When investigation is complete or time-box expires:
+When investigation is complete:
 - Move spike from `current/` to `completed/`
 - Update working-state.md
 - Document key findings in knowledge base
@@ -112,6 +110,5 @@ Produces findings, recommendations, next steps, and artifacts in completed spike
 
 ## Notes:
 - Only one spike should be active at a time
-- Focus on answering specific questions, not building features
 - Document everything - negative results are valuable too
 - Create tasks for actual implementation work

@@ -1,6 +1,6 @@
 ---
 allowed-tools: Write(*), Read(*), LS(*), Glob(*), Bash(mkdir:*)
-description: Create a time-boxed research or investigation task
+description: Create a research or investigation task
 argument-hint: spike-description (e.g., "evaluate caching strategies")
 model: claude-sonnet-4-20250514
 ---
@@ -9,7 +9,7 @@ model: claude-sonnet-4-20250514
 
 ## Creating a New Spike...
 
-I'll help you create a time-boxed research or investigation task (spike).
+I'll help you create a research or investigation task (spike).
 
 ### 1. Checking Context Structure:
 
@@ -55,31 +55,26 @@ What type of spike is this?
 - Evaluate technologies, libraries, frameworks
 - Compare approaches or solutions
 - Assess feasibility of features
-- Time box: 4-8 hours typically
 
 ### 🔍 Investigation  
 - Debug complex issues
 - Understand system behavior
 - Root cause analysis
-- Time box: 2-6 hours typically
 
 ### 🛠️ POC (Proof of Concept)
 - Build working prototype
 - Validate technical approach
 - Test integration possibilities
-- Time box: 4-8 hours typically
 
 ### 🔧 Maintenance
 - Update dependencies
 - Refactor code areas
 - Clean up tech debt
-- Time box: 2-4 hours typically
 
 ### 🚨 Hotfix
 - Emergency production fixes
 - Critical bug resolution
 - Security patches
-- Time box: 1-4 hours max
 
 Select type [1-5]: {{spike_type}}
 ```
@@ -103,10 +98,6 @@ How urgent is this spike?
 - [ ] 🟠 High - Blocks current feature work
 - [ ] 🟡 Medium - Needed soon but not blocking
 - [ ] 🟢 Low - Nice to have, when time permits
-
-### Time Box
-Maximum time to spend (hours, recommended max 8):
-> {{time_box}} hours
 
 ### Related To
 Is this spike related to any epic or feature?
@@ -164,9 +155,6 @@ What will be produced from this spike?
 ### Technical Risks
 {{technical_risks}}
 
-### Time Constraints
-- Hard deadline: {{deadline_if_any}}
-- Time box strictly enforced: {{yes/no}}
 
 ### Dependencies
 - Needs input from: {{person_or_team}}
@@ -189,7 +177,6 @@ Creating `context/spikes/todo/spike-{{id}}-{{description}}.md`:
 ## Metadata
 - **Type**: {{spike_type}}
 - **Priority**: {{priority}}
-- **Time Box**: {{time_box}} hours maximum
 - **Created**: {{current_date}}
 - **Owner**: {{assignee}}
 - **Status**: TODO
@@ -221,7 +208,6 @@ Creating `context/spikes/todo/spike-{{id}}-{{description}}.md`:
 - [ ] Findings are documented below
 - [ ] Recommendation is clear and actionable
 - [ ] Next steps are defined
-- [ ] Time box was respected
 
 ### Deliverables
 - [ ] {{deliverable_1}}
@@ -311,20 +297,6 @@ Creating `context/spikes/todo/spike-{{id}}-{{description}}.md`:
 
 ---
 
-## Time Tracking
-
-### Actual Time Spent
-- Research: {{research_hours}}h
-- Prototyping: {{prototype_hours}}h  
-- Documentation: {{doc_hours}}h
-- **Total**: {{total_hours}}h / {{time_box}}h budgeted
-
-### Time Box Analysis
-- Within budget: {{yes/no}}
-- Variance: {{variance}}%
-- Reason for variance: {{reason_if_over}}
-```
-
 ### 8. Updating Working State:
 
 Updating `context/working-state.md`:
@@ -333,7 +305,7 @@ Updating `context/working-state.md`:
 ## Upcoming Spikes
 
 ### High Priority
-- spike-{{id}}: {{description}} ({{time_box}}h)
+- spike-{{id}}: {{description}}
   - Type: {{type}}
   - Related: {{related_items}}
   - Due: {{due_date_if_any}}
@@ -375,21 +347,14 @@ Updating `context/working-state.md`:
 📝 Details:
    Type: {{type}}
    Priority: {{priority}}
-   Time Box: {{time_box}} hours
    Questions: {{question_count}} to answer
    
 📁 Location:
    context/spikes/todo/spike-{{id}}-{{description}}.md
-   
-⏰ Time Box Breakdown:
-   Research: ~{{research_percent}}% ({{research_hours}}h)
-   Implementation: ~{{impl_percent}}% ({{impl_hours}}h)
-   Documentation: ~{{doc_percent}}% ({{doc_hours}}h)
-   
+    
 🎯 Success Metrics:
    • Answer {{primary_question_count}} primary questions
    • Deliver {{deliverable_count}} deliverables
-   • Stay within {{time_box}}h time box
    
 📅 Scheduling:
    Suggested Start: {{suggested_start}}
@@ -415,17 +380,12 @@ Created successfully! The spike is now in your backlog.
 After creating the spike, use:
 
 - `/start-spike spike-{{id}}` - Begin working on spike
-- `/list-spikes` - View all spikes by status
-- `/complete-spike spike-{{id}}` - Finish spike with findings
-- `/extend-spike spike-{{id}}` - Request time box extension
-- `/convert-spike spike-{{id}}` - Convert findings to tasks
 ```
 
 ## Smart Features:
 
 ### Auto-Suggestions:
 - Suggests related spikes based on description
-- Recommends time box based on spike type
 - Proposes questions based on common patterns
 - Links to relevant knowledge base articles
 
@@ -436,24 +396,21 @@ After creating the spike, use:
 - Updates project risk register
 
 ### Quality Checks:
-- Warns if time box exceeds 8 hours
 - Validates questions are specific and measurable
 - Ensures success criteria are clear
 - Checks for duplicate spikes
 
 ## Best Practices Enforcement:
 
-1. **Time Box Limits**: Maximum 8 hours (1 day) recommended
-2. **Clear Questions**: Each question should be answerable
-3. **Defined Success**: Clear criteria for completion
-4. **Documentation**: Findings must be recorded
-5. **Follow-through**: Creates tasks from recommendations
+1. **Clear Questions**: Each question should be answerable
+2. **Defined Success**: Clear criteria for completion
+3. **Documentation**: Findings must be recorded
+4. **Follow-through**: Creates tasks from recommendations
 
 ## Error Handling:
 
 - **Duplicate spike**: Show similar spikes and ask to proceed
 - **No context directory**: Prompt to run `/init`
-- **Invalid time box**: Suggest appropriate range
 - **Missing required fields**: Interactive prompts for completion
 
-The spike creation system ensures research and investigation work is properly planned, time-boxed, and documented!
+The spike creation system ensures research and investigation work is properly planned, and documented!
