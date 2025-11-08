@@ -44,7 +44,7 @@ fi
 ### Step 2: Parse Feature Name
 
 Extract feature name from arguments:
-```
+```bash
 FEATURE_NAME="$ARGUMENTS"
 
 # Validate feature name
@@ -438,10 +438,14 @@ Examples:
 ```
 
 ### Not a Git Repository
-```markdown
+**Error Message:**
+```
 ❌ Error: Not a git repository
 
 Quick start requires git for branching.
+```
+
+**Solution:**
 
 Initialize git first:
 ```bash
@@ -451,7 +455,6 @@ git commit -m "Initial commit"
 ```
 
 Then run quick-start again.
-```
 
 ## Advanced Options
 
