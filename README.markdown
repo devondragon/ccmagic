@@ -232,9 +232,10 @@ Tasks follow the format `XXX-YY-ZZZ-description`:
 ## 🎯 Use Cases
 
 ### Solo Developer
-Start simple with one epic and one feature:
+Start simple with minimal setup:
 ```
-/ccmagic:init
+/ccmagic:init --light   # Minimal structure for simple projects
+/ccmagic:plan my-feature
 /ccmagic:start-task
 # Work on tasks
 /ccmagic:checkpoint
@@ -287,7 +288,7 @@ Add new commands by creating `.md` files in the repository root:
 description: Brief description of the command
 argument-hint: expected arguments
 allowed-tools: Read(*), Bash(git:*), Task(*), TodoWrite(*)
-model: claude-sonnet-4-20250514
+model: sonnet
 ---
 
 # Command Title

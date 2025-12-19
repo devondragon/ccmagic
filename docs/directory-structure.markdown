@@ -274,8 +274,23 @@ sessions/
 
 ## Scaling from Simple to Complex
 
-### Simple Project Start (Solo Developer)
-For a minimal viable setup:
+### Light Mode (`/ccmagic:init --light`)
+For solo developers and simple projects, use the `--light` flag:
+```
+context/
+├── project.md           # Project overview
+├── working-state.md     # Current status
+└── backlog.md           # Ideas and future work
+```
+
+This minimal setup is ideal for:
+- Solo developers
+- Quick prototypes
+- Learning CCMagic
+- Simple single-feature projects
+
+### Simple Project Start (Standard Init)
+For a minimal but structured setup:
 ```
 context/
 ├── epics/

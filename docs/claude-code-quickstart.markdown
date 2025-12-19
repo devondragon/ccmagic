@@ -76,8 +76,11 @@ Let's build a complete pet profile application showing how each role uses CCMagi
 
 ```markdown
 /ccmagic:init
+# Full structure for team projects
 
-# CCMagic initializes the project structure
+# OR for simpler projects:
+/ccmagic:init --light
+# Minimal structure (project.md, working-state.md, backlog.md)
 ```
 
 ```markdown
@@ -86,7 +89,7 @@ Let's build a complete pet profile application showing how each role uses CCMagi
 # Interactive planning session begins
 ```
 
-**Claude Code (using Opus 4.1 or Zen MCP Planner) prompts:**
+**Claude Code (using Opus model or optional MCP tools) prompts:**
 ```markdown
 I'll help you plan the PetPal application. Let me ask some strategic questions:
 
@@ -593,21 +596,31 @@ Let me check for unblocked tasks...
 
 ## Advanced CCMagic Features
 
-### Custom Model Selection
+### Model Selection
 
-**For complex architectural decisions:**
-```markdown
-/ccmagic:plan --model=opus-4
+CCMagic commands automatically use appropriate models:
+- **opus**: Complex planning (`/plan`, `/create-features`)
+- **sonnet**: Standard operations (`/review`, `/validate`, `/start-task`)
+- **haiku**: Fast operations (`/status`, `/daily-standup`, `/blockers`)
 
-# Uses most advanced model for deep thinking
+Model aliases auto-update to the latest versions without manual changes.
+
+### Parallel Subagents
+
+Commands like `/review` and `/analyze-impact` use Claude Code's Task tool to run multiple Explore agents in parallel:
+```
+# /review launches 3 parallel agents:
+Agent 1: Code quality analysis
+Agent 2: Security & performance review
+Agent 3: Architecture & integration check
 ```
 
-**For simple tasks:**
-```markdown
-/ccmagic:start-task 001-01-008-readme --model=haiku
+### Real-time Progress with TodoWrite
 
-# Uses fast, cheap model for simple work
-```
+Commands populate Claude Code's native todo UI for visibility:
+- `/start-task` creates checklist from acceptance criteria
+- `/plan` shows next steps after planning
+- Progress updates in real-time as you work
 
 ### Parallel Development
 
@@ -869,7 +882,7 @@ Fresh Start (0-25%) → Productive (25-50%) → Checkpoint (50-70%) → Handoff 
 
 ### Day 1: Setup (30 minutes)
 - [ ] Install CCMagic
-- [ ] Run `/ccmagic:init` in your project
+- [ ] Run `/ccmagic:init --light` for simple projects (or `/ccmagic:init` for teams)
 - [ ] Read generated `CLAUDE.md`
 - [ ] Try `/ccmagic:status`
 

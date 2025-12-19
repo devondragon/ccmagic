@@ -50,13 +50,13 @@ graph TD
 
 ### Team Role Distribution
 
-| Role              | AI Usage                | Recommended Model Type                           | Human Focus              |
-| ----------------- | ----------------------- | ------------------------------------------------ | ------------------------ |
-| **Product Owner** | Requirements refinement | Advanced (GPT-5 thinking, Claude Opus)           | Vision & priorities      |
-| **Architect**     | System design           | Advanced reasoning (GPT-5 thinking, Claude Opus) | Technical decisions      |
-| **Tech Lead**     | Task breakdown          | Advanced planning (GPT-5 thinking, Claude Opus)  | Feasibility & estimation |
-| **Developer**     | Code generation         | Balanced (Sonnet 4, GPT-5)                       | Logic & testing          |
-| **QA Engineer**   | Test generation         | Balanced (Sonnet 4, GPT-5)                       | Edge cases & validation  |
+| Role              | AI Usage                | Recommended Model                   | Human Focus              |
+| ----------------- | ----------------------- | ----------------------------------- | ------------------------ |
+| **Product Owner** | Requirements refinement | opus (advanced reasoning)           | Vision & priorities      |
+| **Architect**     | System design           | opus (complex analysis)             | Technical decisions      |
+| **Tech Lead**     | Task breakdown          | opus (planning & design)            | Feasibility & estimation |
+| **Developer**     | Code generation         | sonnet (balanced speed & quality)   | Logic & testing          |
+| **QA Engineer**   | Test generation         | sonnet (thorough analysis)          | Edge cases & validation  |
 
 ---
 
@@ -613,36 +613,32 @@ context/
 
 ### Choosing the Right Model for Each Task
 
-| Task Type              | Recommended Model  | Why                           | Context Usage |
-| ---------------------- | ------------------ | ----------------------------- | ------------- |
-| **Strategic Planning** | Opus / Gemini Pro  | Deep reasoning, architecture  | High          |
-| **Feature Design**     | Opus               | Complex decomposition         | High          |
-| **Task Creation**      | Sonnet             | Structured output             | Medium        |
-| **Implementation**     | Sonnet             | Balance of speed & capability | Medium        |
-| **Simple Fixes**       | Haiku              | Fast, cheap                   | Low           |
-| **Code Review**        | Sonnet             | Thorough analysis             | Medium        |
-| **Documentation**      | Sonnet             | Clear writing                 | Low           |
-| **Debugging**          | Sonnet + zen:debug | Systematic approach           | High          |
+CCMagic commands use model aliases (sonnet, opus, haiku) that auto-update to the latest versions:
 
-### When to Override Default Models
+| Task Type              | Recommended Model | Why                           | Context Usage |
+| ---------------------- | ----------------- | ----------------------------- | ------------- |
+| **Strategic Planning** | opus              | Deep reasoning, architecture  | High          |
+| **Feature Design**     | opus              | Complex decomposition         | High          |
+| **Task Creation**      | sonnet            | Structured output             | Medium        |
+| **Implementation**     | sonnet            | Balance of speed & capability | Medium        |
+| **Simple Fixes**       | haiku             | Fast, efficient               | Low           |
+| **Code Review**        | sonnet            | Thorough analysis             | Medium        |
+| **Status Checks**      | haiku             | Quick lookups                 | Low           |
+| **Debugging**          | sonnet            | Systematic approach           | High          |
 
-```bash
-# Complex architectural decision
-/ccmagic:plan --model opus
+### CCMagic Default Model Assignments
 
-# Simple configuration update
-/ccmagic:start-task epic-001-f01-004-readme --model haiku
-
-# Critical security review
-/ccmagic:review --model opus
-```
+Commands are pre-configured with appropriate models:
+- **opus**: `/plan`, `/create-features`, `/start-spike`
+- **sonnet**: `/start-task`, `/review`, `/validate`, `/checkpoint`
+- **haiku**: `/status`, `/daily-standup`, `/blockers`
 
 ### Cost-Effective Model Usage
 
-1. **Batch Similar Work**: Group tasks that need the same model
-2. **Use Haiku for Simple Tasks**: README updates, config changes
-3. **Reserve Opus for Critical Decisions**: Architecture, security
-4. **Default to Sonnet**: Best balance for most development
+1. **Trust the Defaults**: CCMagic assigns optimal models per command
+2. **Use Light Mode**: `/ccmagic:init --light` for simple projects
+3. **Leverage Parallel Execution**: Commands run independent checks simultaneously
+4. **Quick Status Checks**: haiku-powered `/status` and `/blockers` are fast and cheap
 
 ---
 
@@ -918,11 +914,12 @@ Atomic Tasks → Focused Context → Efficient Development
 
 ### The Right Model Philosophy
 
-- **Planning**: Use advanced models (GPT-4, Claude Opus) for deep thinking
-- **Implementation**: Use balanced models (Sonnet, GPT-4) for coding
-- **Simple Tasks**: Use fast models (Haiku, GPT-3.5) for simple work
-- **Complex Problems**: Use specialized models with reasoning capabilities
-- **Documentation**: Use models with good technical writing abilities
+CCMagic uses model aliases that auto-update to latest versions:
+- **opus**: Deep thinking, planning, architecture decisions
+- **sonnet**: Balanced speed & quality for implementation
+- **haiku**: Fast, efficient for status checks and simple operations
+
+Commands are pre-assigned optimal models - trust the defaults.
 
 ---
 
@@ -930,7 +927,7 @@ Atomic Tasks → Focused Context → Efficient Development
 
 ### For Teams New to AI-Assisted Development
 
-1. **Start Small**: One epic, one feature, focus on learning the process
+1. **Start Small**: Use `/ccmagic:init --light` for your first project
 2. **Document Everything**: Create context/ directory and use it religiously
 3. **Practice Context Management**: Learn to clear between tasks
 4. **Checkpoint Often**: Build the documentation habit early
