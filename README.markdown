@@ -323,7 +323,7 @@ Commands can request access to:
 ### Model Selection
 Choose appropriate models in frontmatter:
 ```yaml
-model: haiku                    # Fast, simple operations
+model: claude-haiku-4-20250514  # Fast, simple operations
 model: claude-sonnet-4-20250514 # Standard operations (default)
 model: claude-opus-4-1-20250805 # Complex reasoning
 ```

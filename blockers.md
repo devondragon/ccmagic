@@ -1,7 +1,7 @@
 ---
 allowed-tools: Read(*), Bash(git:*), Glob(*), Grep(*), Task(*), TodoWrite(*), Write(*)
 description: Surface and track blockers across all features and tasks
-model: haiku
+model: claude-haiku-4-20250514
 ---
 
 # Blockers Command

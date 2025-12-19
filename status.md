@@ -1,7 +1,7 @@
 ---
 allowed-tools: Read(*), Bash(git:*), Bash(gh:*), Glob(*), LS(*)
 description: Show current work status (fast, lightweight check)
-model: haiku
+model: claude-haiku-4-20250514
 ---
 
 # Status Command
