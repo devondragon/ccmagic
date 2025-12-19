@@ -1,13 +1,33 @@
 ---
-allowed-tools: Write(*), Read(*), Bash(git:*), LS(*), Glob(*)
+allowed-tools: Write(*), Read(*), Bash(git:*), LS(*), Glob(*), Task(*), TodoWrite(*)
 description: Create detailed handoff documentation for context switching
 argument-hint: [next-developer-name or 'general']
-model: claude-sonnet-4-20250514
+model: sonnet
 ---
 
 # Create Handoff Documentation
 
 I'll create comprehensive handoff documentation to ensure smooth context transfer.
+
+## Efficient Context Gathering with Explore Agent
+
+For comprehensive handoffs, use the Task tool with Explore agent to gather context in parallel:
+
+```
+Use Task tool with:
+  subagent_type: "Explore"
+  prompt: "Gather handoff context for this project. Analyze:
+          1. Current working state and active tasks
+          2. Recent code changes and their purpose
+          3. Known issues, blockers, and TODOs in code
+          4. Dependencies and integration points
+          5. Test status and coverage
+          Provide a comprehensive summary suitable for handoff."
+```
+
+This parallelizes context gathering and produces a focused summary.
+
+## Alternative: Manual Gathering (if Explore agent unavailable)
 
 ## Gathering Current State...
 

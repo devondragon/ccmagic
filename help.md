@@ -1,7 +1,7 @@
 ---
 allowed-tools: Read(*), Glob(*), Bash(git:*), TodoWrite(*)
 description: Interactive help and command reference with examples
-model: claude-sonnet-4-20250514
+model: sonnet
 ---
 
 # CCMagic Help System

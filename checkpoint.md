@@ -2,7 +2,7 @@
 allowed-tools: Write(*), Read(*), Bash(git:*), LS(*)
 description: Save current progress and update working state
 argument-hint: [optional commit message]
-model: claude-sonnet-4-20250514
+model: sonnet
 ---
 
 # Checkpoint Progress

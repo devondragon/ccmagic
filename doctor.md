@@ -1,7 +1,7 @@
 ---
 allowed-tools: Read(*), Glob(*), Bash(*)
 description: Diagnose CCMagic setup issues and validate installation
-model: claude-sonnet-4-20250514
+model: sonnet
 ---
 
 # CCMagic Doctor - System Health Check

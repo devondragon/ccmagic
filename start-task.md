@@ -1,8 +1,8 @@
 ---
-allowed-tools: Write(*), Read(*), Bash(git:*), Glob(*), LS(*), TodoWrite(*), mcp__zen__thinkdeep(*), mcp__zen__codereview(*), mcp__zen__refactor(*), mcp__zen__docgen(*), Task(*)
+allowed-tools: Write(*), Read(*), Bash(git:*), Glob(*), LS(*), TodoWrite(*), Task(*), mcp__zen__thinkdeep(*), mcp__zen__codereview(*), mcp__zen__refactor(*), mcp__zen__docgen(*), mcp__pal__codereview(*), mcp__pal__analyze(*)
 description: Start working on a specific task and begin development
 argument-hint: task-id (optional, e.g., task-001 or epic-001-f01-task-001)
-model: claude-sonnet-4-20250514
+model: sonnet
 ---
 
 # Start Task and Begin Development
@@ -88,7 +88,21 @@ Update both project and feature working-state.md files:
 
 ### 4. **Begin Development Work:**
 
-#### Load Context (in order):
+#### Quick Context Loading with Explore Agent:
+For efficient context loading, use the Task tool with subagent_type="Explore":
+
+```
+Use Task tool with:
+  subagent_type: "Explore"
+  prompt: "Explore the codebase to understand the context for task [task-id].
+          Focus on: 1) Files related to the feature, 2) Existing patterns and
+          conventions, 3) Dependencies and integration points. Be thorough."
+```
+
+This parallelizes context gathering and provides a focused summary without loading all files sequentially.
+
+#### Traditional Context Loading (fallback):
+If Explore agent is unavailable, load context in order:
 1. `/context/project.md` - Project overview
 2. `/context/conventions.md` - Development conventions
 3. `/context/working-state.md` - Current project state
@@ -98,30 +112,55 @@ Update both project and feature working-state.md files:
 
 Note: CLAUDE.md is automatically loaded. Only load specific knowledge files if referenced in the task.
 
+#### CRITICAL: Populate TodoWrite Immediately
+After loading the task, **IMMEDIATELY use TodoWrite** to create a visible checklist:
+
+```
+Use TodoWrite tool with todos containing:
+1. All acceptance criteria from the task file (status: pending)
+2. Key implementation steps identified during analysis
+3. Testing requirements
+4. Documentation updates needed
+
+Example format:
+[
+  {"content": "Implement user validation logic", "status": "pending", "activeForm": "Implementing user validation"},
+  {"content": "Add unit tests for validation", "status": "pending", "activeForm": "Adding validation tests"},
+  {"content": "Update API documentation", "status": "pending", "activeForm": "Updating API docs"}
+]
+```
+
+This provides real-time visibility in the Claude Code interface. **Mark items as in_progress/completed as you work.**
+
 #### Development Workflow:
 
-**If zen MCP tools are available:**
-1. Use `mcp__zen__thinkdeep` (model: gemini-2.5-pro or best available) to:
+**Tool Priority (use whichever is available, in order):**
+
+**Tier 1 - External MCP Tools (if available):**
+1. **Analysis**: Use `mcp__zen__thinkdeep` or `mcp__pal__analyze` to:
    - Analyze the task requirements
    - Create detailed implementation plan
    - Identify potential challenges
 
-2. Use `TodoWrite` to break down into subtasks
+2. **Always use `TodoWrite`** to break down into subtasks with real-time tracking
 
 3. Implement the solution following project conventions
 
-4. Use `mcp__zen__codereview` before marking complete
+4. **Code Review**: Use `mcp__zen__codereview` or `mcp__pal__codereview` before marking complete
 
 5. For specific task types:
    - Refactoring tasks: Use `mcp__zen__refactor`
    - Documentation tasks: Use `mcp__zen__docgen`
-   - Complex features: Use `Task` tool with general-purpose agent
+   - Complex features: Use `Task` tool with `subagent_type: "general-purpose"`
 
-**If zen MCP tools are NOT available:**
-1. Analyze task requirements using standard Claude model
-2. Create implementation plan and subtasks manually
+**Tier 2 - Built-in Claude Code Features (always available):**
+1. Use `Task` tool with `subagent_type: "Plan"` to design implementation approach
+2. Use `TodoWrite` for task breakdown and tracking
 3. Implement solution following conventions
-4. Perform self-review before completing
+4. Use `Task` tool with `subagent_type: "Explore"` to verify implementation
+5. Perform thorough self-review before completing
+
+**Note:** All MCP tools (zen/pal) are optional enhancements. The workflow functions fully without them using Claude Code's built-in Task tool and subagents.
 
 #### Key Implementation Reminders:
 - Create feature branch BEFORE any code changes

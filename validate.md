@@ -1,10 +1,33 @@
+---
+allowed-tools: Read(*), Bash(*), Glob(*), Task(*), TodoWrite(*)
+description: Comprehensive pre-commit validation with parallel checks
+model: sonnet
+---
+
 # Validate Command
 
 Comprehensive pre-commit validation to ensure code quality, tests pass, and changes are ready for PR.
 
 ## Validation Pipeline
 
-Run all quality checks in sequence, stopping on critical failures:
+### Parallel Execution Strategy
+Run INDEPENDENT checks simultaneously using multiple Bash tool calls in a single message:
+
+```
+# PARALLEL GROUP 1 (run simultaneously):
+- Linting (eslint, pylint, etc.)
+- Type checking (tsc, mypy, etc.)
+- Format checking (prettier, black, etc.)
+- Security scanning (npm audit, safety, etc.)
+
+# SEQUENTIAL (after parallel group completes):
+- Tests (may depend on compilation)
+- Build verification (depends on all above)
+```
+
+**Critical**: Send multiple Bash tool calls in a SINGLE message for parallel execution.
+
+## Check Categories (with dependencies):
 1. **Syntax Check**: Ensure code compiles/parses
 2. **Type Checking**: Validate type safety
 3. **Linting**: Check code style and quality
@@ -223,14 +246,25 @@ Timestamp: [ISO 8601 timestamp]
 
 ## Smart Features
 
-### 1. Parallel Execution
-Run independent checks in parallel:
-```javascript
-Promise.all([
-  runLinting(),
-  runTypeCheck(),
-  runSecurityScan(),
-]).then(reportResults)
+### 1. Parallel Execution (CRITICAL)
+**Use multiple Bash tool calls in a SINGLE message** for parallel execution:
+
+```
+# In ONE message, call Bash tool FOUR times simultaneously:
+
+Bash({ command: "npm run lint", description: "Run linting" })
+Bash({ command: "npx tsc --noEmit", description: "Type check" })
+Bash({ command: "npx prettier --check .", description: "Format check" })
+Bash({ command: "npm audit --audit-level=high", description: "Security scan" })
+
+# These run IN PARALLEL because they're in the same message
+```
+
+**After parallel checks complete, run sequential checks:**
+```
+Bash({ command: "npm test", description: "Run tests" })
+# Then:
+Bash({ command: "npm run build", description: "Build project" })
 ```
 
 ### 2. Incremental Validation
