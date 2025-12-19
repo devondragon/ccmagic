@@ -2,7 +2,7 @@
 allowed-tools: Write(*), Read(*), Bash(git:*), Glob(*), LS(*), TodoWrite(*), Task(*), mcp__zen__thinkdeep(*), mcp__zen__codereview(*), mcp__zen__refactor(*), mcp__zen__docgen(*), mcp__pal__codereview(*), mcp__pal__analyze(*)
 description: Start working on a specific task and begin development
 argument-hint: task-id (optional, e.g., task-001 or epic-001-f01-task-001)
-model: claude-sonnet-4-20250514
+model: sonnet
 ---
 
 # Start Task and Begin Development

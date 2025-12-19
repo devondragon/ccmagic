@@ -2,7 +2,7 @@
 allowed-tools: Write(*), Read(*), Bash(mkdir -p:*), Glob(*), LS(*), mcp__zen__planner(*)
 description: Break down an epic into manageable features
 argument-hint: epic-id (optional, e.g., epic-001 or epic-001-mvp)
-model: claude-opus-4-1-20250805
+model: opus
 ---
 
 # Feature Breakdown for Epic

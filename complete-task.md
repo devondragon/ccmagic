@@ -2,7 +2,7 @@
 allowed-tools: Write(*), Read(*), Bash(git:*, mv:*, gh:*), LS(*), Glob(*)
 description: Mark a task as complete and update all tracking
 argument-hint: [task-id or 'current']
-model: claude-sonnet-4-20250514
+model: sonnet
 ---
 
 # Complete Task

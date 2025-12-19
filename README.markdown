@@ -321,11 +321,11 @@ Commands can request access to:
 - `mcp__pal__codereview(*)` - Code review with validation
 
 ### Model Selection
-Choose appropriate models in frontmatter:
+Choose appropriate models in frontmatter (aliases auto-update to latest versions):
 ```yaml
-model: claude-haiku-4-20250514  # Fast, simple operations
-model: claude-sonnet-4-20250514 # Standard operations (default)
-model: claude-opus-4-1-20250805 # Complex reasoning
+model: haiku   # Fast, simple operations
+model: sonnet  # Standard operations (default)
+model: opus    # Complex reasoning
 ```
 
 ### Parallel Execution Pattern

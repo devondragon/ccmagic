@@ -2,7 +2,7 @@
 allowed-tools: Write(*), Read(*), Bash(mkdir -p:*), Bash(mkdir:*), Bash(touch:*), Task(*), TodoWrite(*), EnterPlanMode(*), AskUserQuestion(*), mcp__pal__planner(*)
 description: Interactive project planning session to define scope and generate technical requirements
 argument-hint: [project-type or domain]
-model: claude-opus-4-1-20250805
+model: opus
 ---
 
 # Project Planning Session

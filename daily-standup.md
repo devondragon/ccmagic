@@ -1,7 +1,7 @@
 ---
 allowed-tools: Read(*), Glob(*), Bash(git:*), Bash(gh:*), TodoWrite(*)
 description: Generate daily progress summary for standup meetings
-model: claude-haiku-4-20250514
+model: haiku
 ---
 
 # Daily Standup Report

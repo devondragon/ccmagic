@@ -1,7 +1,7 @@
 ---
 allowed-tools: Read(*), Bash(git:*), Glob(*), Task(*), TodoWrite(*), mcp__zen__codereview(*), mcp__pal__codereview(*)
 description: Comprehensive code review using parallel exploration and expert analysis
-model: claude-sonnet-4-20250514
+model: sonnet
 ---
 
 # Code Review Command

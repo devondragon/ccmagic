@@ -2,7 +2,7 @@
 allowed-tools: Write(*), Bash(git add:*), Bash(git status:*), Bash(git commit:*), Bash(mkdir*), Bash(mkdir:*), Bash(mkdir -p:*), Bash(touch:*), AskUserQuestion(*)
 description: Initializes CCMagic context (use --light for minimal setup)
 argument-hint: [--light | --full]
-model: claude-sonnet-4-20250514
+model: sonnet
 ---
 
 # Initialize CCMagic Project

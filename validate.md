@@ -1,7 +1,7 @@
 ---
 allowed-tools: Read(*), Bash(*), Glob(*), Task(*), TodoWrite(*)
 description: Comprehensive pre-commit validation with parallel checks
-model: claude-sonnet-4-20250514
+model: sonnet
 ---
 
 # Validate Command
