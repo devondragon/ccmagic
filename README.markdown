@@ -2,6 +2,8 @@
 
 A powerful collection of custom slash commands that transform Claude Code into a comprehensive project management system. Maintain organized context, track work progress, manage features and tasks, and enable seamless handoffs between development sessions.
 
+**Now with Claude Code's latest features**: Parallel subagents, real-time TodoWrite integration, and optional MCP tool enhancements.
+
 ## 🚀 Quick Start
 
 ### Installation
@@ -64,19 +66,22 @@ echo ".claude/commands/" >> .gitignore
 
 Initialize a new project with the CCMagic context system:
 ```
-/ccmagic:init
+/ccmagic:init           # Full setup with epics, features, knowledge base
+/ccmagic:init --light   # Minimal setup for simple projects
 ```
 
-This creates a complete project management structure in your repository's `context/` directory.
+This creates a project management structure in your repository's `context/` directory.
 
 ## 📋 Available Commands
 
 ### Project Setup & Planning
-| Command         | Description                                   | Example                  |
-| --------------- | --------------------------------------------- | ------------------------ |
-| `/ccmagic:init` | Initialize complete CCMagic context structure | `/ccmagic:init`          |
-| `/ccmagic:plan` | Interactive project planning session          | `/ccmagic:plan saas-app` |
-| `/ccmagic:help` | Get help with CCMagic commands                | `/ccmagic:help`          |
+| Command               | Description                                        | Example                    |
+| --------------------- | -------------------------------------------------- | -------------------------- |
+| `/ccmagic:init`       | Initialize CCMagic context (`--light` for minimal) | `/ccmagic:init --light`    |
+| `/ccmagic:plan`       | Interactive planning with EnterPlanMode support    | `/ccmagic:plan saas-app`   |
+| `/ccmagic:quick-start`| Fast-track feature setup                           | `/ccmagic:quick-start auth`|
+| `/ccmagic:help`       | Get help with CCMagic commands                     | `/ccmagic:help`            |
+| `/ccmagic:doctor`     | Diagnose setup issues and validate installation    | `/ccmagic:doctor`          |
 
 ### Task Management
 | Command                    | Description                      | Example                             |
@@ -96,11 +101,13 @@ This creates a complete project management structure in your repository's `conte
 | `/ccmagic:start-spike`     | Begin working on a spike           | `/ccmagic:start-spike spike-001` |
 
 ### Project Status & Documentation
-| Command                | Description                   | Example                |
-| ---------------------- | ----------------------------- | ---------------------- |
-| `/ccmagic:status`      | Check project and task status | `/ccmagic:status`      |
-| `/ccmagic:handoff`     | Create detailed handoff notes | `/ccmagic:handoff`     |
-| `/ccmagic:add-backlog` | Add items to project backlog  | `/ccmagic:add-backlog` |
+| Command                  | Description                              | Example                  |
+| ------------------------ | ---------------------------------------- | ------------------------ |
+| `/ccmagic:status`        | Quick project status check (uses haiku)  | `/ccmagic:status`        |
+| `/ccmagic:daily-standup` | Generate standup report from git history | `/ccmagic:daily-standup` |
+| `/ccmagic:handoff`       | Create detailed handoff notes            | `/ccmagic:handoff`       |
+| `/ccmagic:add-backlog`   | Add items to project backlog             | `/ccmagic:add-backlog`   |
+| `/ccmagic:blockers`      | Surface and track blockers               | `/ccmagic:blockers`      |
 
 ### Context Management
 | Command                 | Description                | Example                 |
@@ -109,11 +116,12 @@ This creates a complete project management structure in your repository's `conte
 | `/ccmagic:context-load` | Load saved context state   | `/ccmagic:context-load` |
 
 ### Development Workflow
-| Command             | Description           | Example             |
-| ------------------- | --------------------- | ------------------- |
-| `/ccmagic:test`     | Run project tests     | `/ccmagic:test`     |
-| `/ccmagic:validate` | Validate code changes | `/ccmagic:validate` |
-| `/ccmagic:review`   | Perform code review   | `/ccmagic:review`   |
+| Command                  | Description                                   | Example                           |
+| ------------------------ | --------------------------------------------- | --------------------------------- |
+| `/ccmagic:test`          | Run project tests                             | `/ccmagic:test`                   |
+| `/ccmagic:validate`      | Validate code (parallel checks)               | `/ccmagic:validate`               |
+| `/ccmagic:review`        | Code review with parallel exploration         | `/ccmagic:review`                 |
+| `/ccmagic:analyze-impact`| Analyze dependencies and blast radius         | `/ccmagic:analyze-impact src/auth`|
 
 ### Git Integration
 | Command          | Description                 | Example          |
@@ -121,6 +129,56 @@ This creates a complete project management structure in your repository's `conte
 | `/ccmagic:pr`    | Create pull request         | `/ccmagic:pr`    |
 | `/ccmagic:merge` | Merge changes               | `/ccmagic:merge` |
 | `/ccmagic:sync`  | Sync with remote repository | `/ccmagic:sync`  |
+
+## ⚡ Claude Code Integration
+
+CCMagic leverages Claude Code's latest features for maximum efficiency:
+
+### Parallel Subagents
+Commands like `/review` and `/analyze-impact` use the **Task tool with Explore agents** to analyze code in parallel:
+```
+# /review launches 3 parallel agents:
+Agent 1: Code quality analysis
+Agent 2: Security & performance review
+Agent 3: Architecture & integration check
+```
+
+### Real-time Progress with TodoWrite
+Commands populate Claude Code's native todo UI for visibility:
+- `/start-task` creates checklist from acceptance criteria
+- `/plan` shows next steps after planning
+- Progress updates in real-time as you work
+
+### Parallel Execution
+Commands like `/validate` run independent checks simultaneously:
+```
+# These run IN PARALLEL (single message, multiple Bash calls):
+- Linting
+- Type checking
+- Format checking
+- Security scanning
+
+# Then SEQUENTIAL (depends on above):
+- Tests
+- Build
+```
+
+### Model Tiering
+Commands use appropriate models for their complexity:
+- **haiku**: Fast operations (`/status`, `/daily-standup`, `/blockers`)
+- **sonnet**: Standard operations (`/review`, `/validate`, `/start-task`)
+- **opus**: Complex reasoning (`/plan`, `/create-features`, `/create-tasks`)
+
+### Optional MCP Tool Integration
+Commands integrate with external MCP tools when available, with graceful fallback:
+
+| Tool | Purpose | Fallback |
+|------|---------|----------|
+| `mcp__zen__codereview` | Expert code review | Explore agents |
+| `mcp__pal__analyze` | Deep analysis | Standard analysis |
+| `mcp__pal__planner` | Planning assistance | Task tool with Plan agent |
+
+**All commands work fully without MCP tools** - they're optional enhancements.
 
 ## 🏗️ CCMagic Context System
 
@@ -228,7 +286,7 @@ Add new commands by creating `.md` files in the repository root:
 ---
 description: Brief description of the command
 argument-hint: expected arguments
-allowed-tools: Tool1, Tool2
+allowed-tools: Read(*), Bash(git:*), Task(*), TodoWrite(*)
 model: claude-sonnet-4-20250514
 ---
 
@@ -241,13 +299,43 @@ Your command prompt here using:
 
 ### Available Tools
 Commands can request access to:
+
+**Core Tools:**
 - `Write(*)` - File writing
 - `Read(*)` - File reading
-- `Bash(git:*)` - Git commands
+- `Bash(git:*)` - Git commands (use `Bash(*)` for all shell access)
 - `Glob(*)` - File pattern matching
+- `Grep(*)` - Content searching
 - `LS(*)` - Directory listing
-- `TodoWrite(*)` - Task management
-- And many more...
+
+**Claude Code Features:**
+- `Task(*)` - Spawn subagents (Explore, Plan, general-purpose)
+- `TodoWrite(*)` - Real-time progress tracking in UI
+- `EnterPlanMode(*)` - Interactive planning workflow
+- `AskUserQuestion(*)` - Multi-choice user prompts
+
+**Optional MCP Tools (graceful fallback if unavailable):**
+- `mcp__zen__codereview(*)` - Expert code review
+- `mcp__zen__thinkdeep(*)` - Deep analysis
+- `mcp__pal__analyze(*)` - Comprehensive analysis
+- `mcp__pal__codereview(*)` - Code review with validation
+
+### Model Selection
+Choose appropriate models in frontmatter:
+```yaml
+model: haiku                    # Fast, simple operations
+model: claude-sonnet-4-20250514 # Standard operations (default)
+model: claude-opus-4-1-20250805 # Complex reasoning
+```
+
+### Parallel Execution Pattern
+For commands that run independent operations:
+```markdown
+Run these checks IN PARALLEL using multiple Bash tool calls in a single message:
+- Check 1: [command]
+- Check 2: [command]
+- Check 3: [command]
+```
 
 ## 📚 Documentation
 
@@ -290,11 +378,13 @@ Apache 2.0 License - See [LICENSE](LICENSE) file for details
 
 CCMagic transforms Claude Code from a coding assistant into a complete project management system. It provides:
 
-- **Structured Organization**: Hierarchical task management that scales
+- **Structured Organization**: Hierarchical task management that scales from solo to enterprise
 - **Context Preservation**: Never lose track of what you were working on
-- **Team Collaboration**: Smooth handoffs and clear communication
-- **AI Optimization**: Efficient context loading for Claude Code
-- **Flexibility**: Works for solo projects to enterprise teams
+- **Team Collaboration**: Smooth handoffs, blocker tracking, and clear communication
+- **Claude Code Native**: Uses subagents, TodoWrite, and parallel execution for efficiency
+- **Flexible Setup**: Light mode for simple projects, full mode for complex ones
+- **Optional Enhancements**: MCP tools (zen/pal) enhance when available, graceful fallback otherwise
+- **Real-time Visibility**: TodoWrite integration shows progress in Claude Code's UI
 
 Start using CCMagic today and experience a new level of development productivity with Claude Code!
 
