@@ -1,7 +1,7 @@
 ---
-allowed-tools: Read(*), Glob(*), Bash(git:*), TodoWrite(*)
+allowed-tools: Read(*), Glob(*), Bash(git:*), Bash(gh:*), TodoWrite(*)
 description: Generate daily progress summary for standup meetings
-model: claude-sonnet-4-20250514
+model: haiku
 ---
 
 # Daily Standup Report
@@ -17,26 +17,28 @@ The report includes three key sections:
 
 ## Implementation
 
-### 1. Collect Git Activity (Yesterday)
+### 1. Collect Git Activity (PARALLEL)
 
-Analyze git commits from the last 24 hours:
+Run these git commands **IN PARALLEL** using multiple Bash tool calls in a single message:
 
+```
+# Call ALL of these simultaneously in ONE message:
+
+Bash 1: git log --since="24 hours ago" --pretty=format:"%h - %s (%ar)" --author="$(git config user.email)"
+Bash 2: git diff --stat HEAD~10..HEAD 2>/dev/null || git diff --stat
+Bash 3: git status --short
+Bash 4: gh pr list --author @me --state open 2>/dev/null || echo "No gh CLI"
+```
+
+This parallelizes data collection for faster standup generation.
+
+### Git Data to Extract:
 ```bash
-# Get yesterday's date
-YESTERDAY=$(date -d "yesterday" +%Y-%m-%d 2>/dev/null || date -v-1d +%Y-%m-%d)
-
-# Get commits from last 24 hours
-echo "📅 Commits from last 24 hours:"
-git log --since="24 hours ago" --pretty=format:"%h - %s (%ar)" --author="$(git config user.email)"
-
-# Get stats
+# Commits from last 24 hours (already run in parallel above)
 COMMIT_COUNT=$(git log --since="24 hours ago" --author="$(git config user.email)" --oneline | wc -l)
-echo "Total commits: $COMMIT_COUNT"
 
-# File changes
-if [ "$COMMIT_COUNT" -gt 0 ]; then
-  git diff --stat $(git log --since="24 hours ago" --author="$(git config user.email)" --format="%H" | tail -1)^..HEAD
-fi
+# Summary of changes
+git shortlog --since="24 hours ago" --author="$(git config user.email)" -s
 ```
 
 ### 2. Read Current Working State

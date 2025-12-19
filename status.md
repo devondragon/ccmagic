@@ -1,7 +1,7 @@
 ---
-allowed-tools: Write(*), Read(*), Bash(git:*), Glob(*), LS(*), TodoWrite(*), mcp__zen__thinkdeep(*), mcp__zen__codereview(*), mcp__zen__refactor(*), mcp__zen__docgen(*), Task(*)
-description: Show current work status
-model: claude-sonnet-4-20250514
+allowed-tools: Read(*), Bash(git:*), Bash(gh:*), Glob(*), LS(*)
+description: Show current work status (fast, lightweight check)
+model: haiku
 ---
 
 # Status Command
