@@ -514,7 +514,7 @@ Ready to complete task!
 - Searches authoritative sources (official docs, GitHub, experts)
 - Evaluates source quality (authority, recency, specificity)
 - Continues until 80% confidence or 5 iterations
-- Saves findings to `context/knowledge/research-YYYYMMDD-topic.md`
+- Saves findings to `context/knowledge/research-YYYY-MM-DD-topic.md`
 
 ### Example 2: Spike for Extended Investigation
 
