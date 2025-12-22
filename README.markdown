@@ -101,13 +101,14 @@ This creates a project management structure in your repository's `context/` dire
 | `/ccmagic:start-spike`     | Begin working on a spike           | `/ccmagic:start-spike spike-001` |
 
 ### Project Status & Documentation
-| Command                  | Description                              | Example                  |
-| ------------------------ | ---------------------------------------- | ------------------------ |
-| `/ccmagic:status`        | Quick project status check (uses haiku)  | `/ccmagic:status`        |
-| `/ccmagic:daily-standup` | Generate standup report from git history | `/ccmagic:daily-standup` |
-| `/ccmagic:handoff`       | Create detailed handoff notes            | `/ccmagic:handoff`       |
-| `/ccmagic:add-backlog`   | Add items to project backlog             | `/ccmagic:add-backlog`   |
-| `/ccmagic:blockers`      | Surface and track blockers               | `/ccmagic:blockers`      |
+| Command                  | Description                              | Example                           |
+| ------------------------ | ---------------------------------------- | --------------------------------- |
+| `/ccmagic:status`        | Quick project status check (uses haiku)  | `/ccmagic:status`                 |
+| `/ccmagic:daily-standup` | Generate standup report from git history | `/ccmagic:daily-standup`          |
+| `/ccmagic:handoff`       | Create detailed handoff notes            | `/ccmagic:handoff`                |
+| `/ccmagic:add-backlog`   | Add items to project backlog             | `/ccmagic:add-backlog`            |
+| `/ccmagic:blockers`      | Surface and track blockers               | `/ccmagic:blockers`               |
+| `/ccmagic:research`      | Deep iterative research with sources     | `/ccmagic:research JWT vs sessions`|
 
 ### Context Management
 | Command                 | Description                | Example                 |
@@ -167,7 +168,7 @@ Commands like `/validate` run independent checks simultaneously:
 Commands use appropriate models for their complexity:
 - **haiku**: Fast operations (`/status`, `/daily-standup`, `/blockers`)
 - **sonnet**: Standard operations (`/review`, `/validate`, `/start-task`)
-- **opus**: Complex reasoning (`/plan`, `/create-features`, `/create-tasks`)
+- **opus**: Complex reasoning (`/plan`, `/create-features`, `/create-tasks`, `/research`)
 
 ### Optional MCP Tool Integration
 Commands integrate with external MCP tools when available, with graceful fallback:
@@ -206,10 +207,11 @@ your-project/
 │   │   ├── todo/
 │   │   ├── current/
 │   │   └── completed/
-│   ├── knowledge/             # Technical docs
+│   ├── knowledge/             # Technical docs & research
 │   │   ├── architecture.md
 │   │   ├── data-model.md
-│   │   └── api-contracts.md
+│   │   ├── api-contracts.md
+│   │   └── research-*.md      # Research findings from /research
 │   └── sessions/              # Work history
 │       └── handoffs/
 └── CLAUDE.md                   # AI assistant instructions

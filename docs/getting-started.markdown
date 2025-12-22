@@ -78,6 +78,7 @@ You should see the CCMagic help system with available commands.
 | `/ccmagic:start-task` | Begin working on a task |
 | `/ccmagic:checkpoint` | Save progress |
 | `/ccmagic:complete-task` | Mark task as done |
+| `/ccmagic:research` | Deep research with source evaluation |
 | `/ccmagic:help` | Get help with all commands |
 
 ## Typical Workflow

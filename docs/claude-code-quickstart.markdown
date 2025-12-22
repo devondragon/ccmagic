@@ -500,9 +500,25 @@ Ready to complete task!
 
 ## Real-World Workflow Examples
 
-### Example 1: Spike for Technical Research
+### Example 1: Quick Research
 
-**When facing unknowns:**
+**When you need authoritative information on a topic:**
+
+```markdown
+/ccmagic:research JWT refresh token best practices
+
+# Deep iterative research with source evaluation
+```
+
+**CCMagic performs multi-hop research:**
+- Searches authoritative sources (official docs, GitHub, experts)
+- Evaluates source quality (authority, recency, specificity)
+- Continues until 80% confidence or 5 iterations
+- Saves findings to `context/knowledge/research-YYYYMMDD-topic.md`
+
+### Example 2: Spike for Extended Investigation
+
+**When facing larger unknowns requiring hands-on exploration:**
 
 ```markdown
 /ccmagic:create-spike
@@ -514,14 +530,16 @@ Time-box: 8 hours
 
 **CCMagic creates** `context/spikes/todo/spike-001-image-storage.md`
 
-**Developer starts research:**
+**Developer starts spike:**
 ```markdown
 /ccmagic:start-spike spike-001
 
 # Loads research task
 ```
 
-### Example 2: Handling Blocked Tasks
+**Use `/research` for quick information gathering, `/create-spike` for extended investigation with code exploration.**
+
+### Example 3: Handling Blocked Tasks
 
 **When blocked on dependencies:**
 
@@ -536,7 +554,7 @@ Let me check for unblocked tasks...
 # Automatically finds unblocked work
 ```
 
-### Example 3: Team Sync
+### Example 4: Team Sync
 
 **Daily standup preparation:**
 
@@ -561,7 +579,7 @@ Let me check for unblocked tasks...
 - Blocked: Waiting for 001-01-003
 ```
 
-### Example 4: End of Sprint
+### Example 5: End of Sprint
 
 **Preparing for sprint review:**
 
@@ -858,6 +876,7 @@ fi
 | Save progress       | `/ccmagic:checkpoint`                         |
 | Switch tasks        | `/ccmagic:handoff` then `/ccmagic:start-task` |
 | End your day        | `/ccmagic:checkpoint --end-of-day`            |
+| Research a topic    | `/ccmagic:research <topic>`                   |
 | Review code         | `/ccmagic:review`                             |
 | Create PR           | `/ccmagic:pr`                                 |
 | Get help            | `/ccmagic:help`                               |

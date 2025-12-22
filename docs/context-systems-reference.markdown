@@ -97,12 +97,13 @@ project-root/
 │   │       ├── overview.md
 │   │       ├── working-state.md
 │   │       └── tasks/
-│   ├── knowledge/                 # Persistent documentation
+│   ├── knowledge/                 # Persistent documentation & research
 │   │   ├── architecture.md
 │   │   ├── data-model.md
 │   │   ├── business-rules.md
 │   │   ├── api-contracts.md
-│   │   └── tech-debt.md
+│   │   ├── tech-debt.md
+│   │   └── research-*.md          # Research findings from /ccmagic:research
 │   └── sessions/                  # Historical records
 │       ├── 2025-01-05-auth.md
 │       └── handoffs/
