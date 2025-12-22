@@ -17,12 +17,17 @@ Execute iterative, multi-hop research to thoroughly investigate this topic. Cont
 3. Review prior findings to avoid duplication and build on existing knowledge
 4. Use TodoWrite to create a research progress tracker
 
-### Phase 1: Initial Discovery
+### Phase 1: Preliminary Discovery
+
+*This phase establishes baseline understanding and is not counted toward the iteration limit.*
+
 1. Perform initial web search on the core topic
 2. Identify key entities, concepts, and authoritative sources
 3. Note knowledge gaps and follow-up questions
 
-### Phase 2: Iterative Deep Dive (up to 5 hops)
+### Phase 2: Iterative Deep Dive (up to 5 iterations)
+
+Each iteration follows the structured cycle below. Stop when confidence ≥80% or 5 iterations complete.
 
 For each iteration:
 
@@ -35,7 +40,9 @@ Score each source 0.0-1.0 based on:
 - **Specificity** (0.3): Directly addresses the question vs tangential
 - **Corroboration** (0.2): Confirmed by multiple independent sources
 
-Only incorporate sources scoring **≥0.6** into findings.
+Only incorporate sources scoring **≥0.6** (acceptable quality) into findings.
+
+*Note: Sources scoring ≥0.7 are considered "high-quality" for confidence assessment purposes (see table below).*
 
 #### Expansion Strategies (use as appropriate)
 - **Entity expansion**: Topic → Key people/orgs → Their work/positions
@@ -55,14 +62,14 @@ After reaching confidence threshold or max iterations:
    - Recommended follow-up research if needed
 
 2. **Save to context** (if context/ directory exists):
-   - Write findings to `context/knowledge/research-YYYYMMDD-[topic-slug].md`
+   - Write findings to `context/knowledge/research-YYYY-MM-DD-[topic-slug].md`
    - Include source URLs and evaluation scores
    - Date prefix enables historical tracking and avoids overwrites
 
 ## Confidence Assessment
 
 Calculate overall confidence based on:
-- Number of high-quality sources (≥0.7 score)
+- Number of high-quality sources (≥0.7 score; see note in Phase 2)
 - Source agreement/disagreement
 - Coverage of key aspects
 - Recency of information
@@ -70,8 +77,14 @@ Calculate overall confidence based on:
 | Sources (≥0.7) | Agreement | Confidence |
 |----------------|-----------|------------|
 | 5+             | High      | Very High (90%+) |
+| 5+             | Mixed     | High (80-89%) |
+| 5+             | Low       | Medium (60-79%) |
 | 3-4            | High      | High (80-89%) |
-| 2-3            | Mixed     | Medium (60-79%) |
+| 3-4            | Mixed     | Medium (60-79%) |
+| 3-4            | Low       | Low (<60%) |
+| 2-3            | High      | High (70-79%) |
+| 2-3            | Mixed     | Medium (60-69%) |
+| 2-3            | Low       | Low (<60%) |
 | 1-2            | Any       | Low (<60%) |
 
 **Stop iterating when confidence ≥80% OR 5 iterations complete.**
@@ -119,7 +132,7 @@ Calculate overall confidence based on:
 
 When sources disagree:
 1. Note both positions explicitly in findings
-2. Weight by: Authority > Recency > Specificity
+2. Weight by: Authority & Specificity (0.3 each), then Recency & Corroboration (0.2 each)
 3. If still unresolved, mark as "contested" in findings
 4. Document the nature of the disagreement for future reference
 
