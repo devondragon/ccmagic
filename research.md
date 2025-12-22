@@ -17,14 +17,17 @@ Execute iterative, multi-hop research to thoroughly investigate this topic. Cont
 3. Review prior findings to avoid duplication and build on existing knowledge
 4. Use TodoWrite to create a research progress tracker
 
-### Phase 1: Initial Discovery
+### Phase 1: Preliminary Discovery
+
+*This phase establishes baseline understanding and is not counted toward the iteration limit.*
+
 1. Perform initial web search on the core topic
 2. Identify key entities, concepts, and authoritative sources
 3. Note knowledge gaps and follow-up questions
 
-### Phase 2: Iterative Deep Dive (up to 4 additional iterations)
+### Phase 2: Iterative Deep Dive (up to 5 iterations)
 
-*Note: Phase 1 counts as iteration 1, leaving up to 4 more iterations for a maximum of 5 total.*
+Each iteration follows the structured cycle below. Stop when confidence ≥80% or 5 iterations complete.
 
 For each iteration:
 
@@ -79,8 +82,8 @@ Calculate overall confidence based on:
 | 3-4            | High      | High (80-89%) |
 | 3-4            | Mixed     | Medium (60-79%) |
 | 3-4            | Low       | Low (<60%) |
-| 2-3            | High      | Medium (60-79%) |
-| 2-3            | Mixed     | Medium (60-79%) |
+| 2-3            | High      | High (70-79%) |
+| 2-3            | Mixed     | Medium (60-69%) |
 | 2-3            | Low       | Low (<60%) |
 | 1-2            | Any       | Low (<60%) |
 
@@ -129,7 +132,7 @@ Calculate overall confidence based on:
 
 When sources disagree:
 1. Note both positions explicitly in findings
-2. Weight by: Authority & Specificity (equally), then Recency; also consider Corroboration across sources
+2. Weight by: Authority & Specificity (0.3 each), then Recency & Corroboration (0.2 each)
 3. If still unresolved, mark as "contested" in findings
 4. Document the nature of the disagreement for future reference
 
