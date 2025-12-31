@@ -1,5 +1,5 @@
 ---
-allowed-tools: Write(*), Read(*), Bash(mkdir -p:*), Glob(*), LS(*), mcp__zen__planner(*), Bash(mv*)
+allowed-tools: Write(*), Read(*), Bash(mkdir -p:*), Glob(*), LS(*), mcp__pal__planner(*), Bash(mv*)
 description: Generate tasks for a specific feature
 argument-hint: feature-path (optional, e.g., epic-001-f01-core or epic-002-f01-login)
 ---
@@ -16,8 +16,8 @@ This command will:
 
 2. **Task Planning:**
    - Read the feature's `overview.md` from `context/features/[feature-path]/`
-   - Check if mcp__zen__planner tool is available
-   - If available: Use zen:planner to systematically break down the feature into tasks
+   - Check if mcp__pal__planner tool is available
+   - If available: Use pal:planner to systematically break down the feature into tasks
    - If not available: Analyze feature scope and generate tasks interactively
 
 3. **Create Task Structure:**
@@ -28,7 +28,7 @@ This command will:
 ## Task Generation Strategy:
 - **Step 1:** Determine which feature to work on (provided or selected)
 - **Step 2:** Read feature overview to understand requirements
-- **Step 3:** Use zen:planner (if available) for systematic task breakdown
+- **Step 3:** Use pal:planner (if available) for systematic task breakdown
 - **Step 4:** Generate tasks considering:
   - Clear acceptance criteria for each task
   - Task dependencies and optimal ordering

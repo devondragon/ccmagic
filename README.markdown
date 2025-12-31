@@ -176,7 +176,7 @@ Commands integrate with external MCP tools when available, with graceful fallbac
 
 | Tool | Purpose | Fallback |
 |------|---------|----------|
-| `mcp__zen__codereview` | Expert code review | Explore agents |
+| `mcp__pal__codereview` | Expert code review | Explore agents |
 | `mcp__pal__analyze` | Deep analysis | Standard analysis |
 | `mcp__pal__planner` | Planning assistance | Task tool with Plan agent |
 
@@ -319,10 +319,9 @@ Commands can request access to:
 - `AskUserQuestion(*)` - Multi-choice user prompts
 
 **Optional MCP Tools (graceful fallback if unavailable):**
-- `mcp__zen__codereview(*)` - Expert code review
-- `mcp__zen__thinkdeep(*)` - Deep analysis
+- `mcp__pal__codereview(*)` - Expert code review
+- `mcp__pal__thinkdeep(*)` - Deep analysis
 - `mcp__pal__analyze(*)` - Comprehensive analysis
-- `mcp__pal__codereview(*)` - Code review with validation
 
 ### Model Selection
 Choose appropriate models in frontmatter (aliases auto-update to latest versions):
@@ -387,7 +386,7 @@ CCMagic transforms Claude Code from a coding assistant into a complete project m
 - **Team Collaboration**: Smooth handoffs, blocker tracking, and clear communication
 - **Claude Code Native**: Uses subagents, TodoWrite, and parallel execution for efficiency
 - **Flexible Setup**: Light mode for simple projects, full mode for complex ones
-- **Optional Enhancements**: MCP tools (zen/pal) enhance when available, graceful fallback otherwise
+- **Optional Enhancements**: PAL MCP tools enhance when available, graceful fallback otherwise
 - **Real-time Visibility**: TodoWrite integration shows progress in Claude Code's UI
 
 Start using CCMagic today and experience a new level of development productivity with Claude Code!

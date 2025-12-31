@@ -1,5 +1,5 @@
 ---
-allowed-tools: Read(*), Bash(git:*), Glob(*), Task(*), TodoWrite(*), mcp__zen__codereview(*), mcp__pal__codereview(*)
+allowed-tools: Read(*), Bash(git:*), Glob(*), Task(*), TodoWrite(*), mcp__pal__codereview(*)
 description: Comprehensive code review using parallel exploration and expert analysis
 model: sonnet
 ---
@@ -21,7 +21,7 @@ Perform a comprehensive code review of all changes on the current working branch
 
 ### Step 2: Expert Analysis (if MCP tools available)
 **Priority order (use first available):**
-1. `mcp__zen__codereview` with model `o3` or `gemini-2.5-pro`
+1. `mcp__pal__codereview` with model `o3` or `gemini-2.5-pro`
 2. `mcp__pal__codereview` with model `gemini-2.5-pro`
 3. If no MCP tools: synthesize findings from Explore agents above
 

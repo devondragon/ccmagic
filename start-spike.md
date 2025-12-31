@@ -1,5 +1,5 @@
 ---
-allowed-tools: Write(*), Read(*), Bash(git:*), Glob(*), LS(*), TodoWrite(*), mcp__zen__thinkdeep(*), mcp__zen__analyze(*), Task(*), Bash(mv:*)
+allowed-tools: Write(*), Read(*), Bash(git:*), Glob(*), LS(*), TodoWrite(*), mcp__pal__thinkdeep(*), mcp__pal__analyze(*), Task(*), Bash(mv:*)
 description: Start working on a research spike or investigation task
 argument-hint: spike-id (optional, e.g., spike-001 or spike-001-research-auth)
 model: opus
@@ -49,15 +49,15 @@ Note: CLAUDE.md is automatically loaded. Only load specific knowledge files as n
 
 #### Investigation Workflow:
 
-**If zen MCP tools are available:**
-1. Use `mcp__zen__thinkdeep` (model: gemini-2.5-pro or best available) to:
+**If PAL MCP tools are available:**
+1. Use `mcp__pal__thinkdeep` (model: gemini-2.5-pro or best available) to:
    - Analyze the research questions
    - Create investigation plan
    - Identify information sources
 
 2. Use `TodoWrite` to track investigation steps
 
-3. Use `mcp__zen__analyze` for:
+3. Use `mcp__pal__analyze` for:
    - Architecture analysis
    - Performance evaluations
    - Security assessments
@@ -66,7 +66,7 @@ Note: CLAUDE.md is automatically loaded. Only load specific knowledge files as n
 4. For complex research needing multiple perspectives:
    - Use `Task` tool with general-purpose agent
 
-**If zen MCP tools are NOT available:**
+**If PAL MCP tools are NOT available:**
 1. Analyze research questions using standard Claude model
 2. Create investigation plan manually
 3. Document findings systematically

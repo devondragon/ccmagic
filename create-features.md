@@ -1,5 +1,5 @@
 ---
-allowed-tools: Write(*), Read(*), Bash(mkdir -p:*), Glob(*), LS(*), mcp__zen__planner(*)
+allowed-tools: Write(*), Read(*), Bash(mkdir -p:*), Glob(*), LS(*), mcp__pal__planner(*)
 description: Break down an epic into manageable features
 argument-hint: epic-id (optional, e.g., epic-001 or epic-001-mvp)
 model: opus
@@ -16,8 +16,8 @@ This command will:
    - Validate the epic exists before proceeding
 
 2. **Feature Planning:**
-   - First check if mcp__zen__planner tool is available
-   - If available: Use zen:planner to systematically break down the epic into features
+   - First check if mcp__pal__planner tool is available
+   - If available: Use pal:planner to systematically break down the epic into features
    - If not available: Use interactive session to identify features within the epic
 
 3. **Create Feature Structure:**
@@ -32,7 +32,7 @@ This command will:
 ## Workflow:
 - **Step 1:** Determine which epic to work on (provided or selected)
 - **Step 2:** Read the epic file to understand scope and requirements
-- **Step 3:** Use zen:planner (if available) for systematic feature breakdown
+- **Step 3:** Use pal:planner (if available) for systematic feature breakdown
 - **Step 4:** Suggest logical feature boundaries based on:
   - User capabilities and value delivery
   - Technical dependencies

@@ -1,5 +1,5 @@
 ---
-allowed-tools: Write(*), Read(*), Bash(git:*), Glob(*), LS(*), TodoWrite(*), Task(*), mcp__zen__thinkdeep(*), mcp__zen__codereview(*), mcp__zen__refactor(*), mcp__zen__docgen(*), mcp__pal__codereview(*), mcp__pal__analyze(*)
+allowed-tools: Write(*), Read(*), Bash(git:*), Glob(*), LS(*), TodoWrite(*), Task(*), mcp__pal__thinkdeep(*), mcp__pal__codereview(*), mcp__pal__analyze(*)
 description: Start working on a specific task and begin development
 argument-hint: task-id (optional, e.g., task-001 or epic-001-f01-task-001)
 model: sonnet
@@ -139,7 +139,7 @@ This provides real-time visibility in the Claude Code interface. **Mark items as
 **Tool Priority (use whichever is available, in order):**
 
 **Tier 1 - External MCP Tools (if available):**
-1. **Analysis**: Use `mcp__zen__thinkdeep` or `mcp__pal__analyze` to:
+1. **Analysis**: Use `mcp__pal__thinkdeep` or `mcp__pal__analyze` to:
    - Analyze the task requirements
    - Create detailed implementation plan
    - Identify potential challenges
@@ -148,12 +148,9 @@ This provides real-time visibility in the Claude Code interface. **Mark items as
 
 3. Implement the solution following project conventions
 
-4. **Code Review**: Use `mcp__zen__codereview` or `mcp__pal__codereview` before marking complete
+4. **Code Review**: Use `mcp__pal__codereview` before marking complete
 
-5. For specific task types:
-   - Refactoring tasks: Use `mcp__zen__refactor`
-   - Documentation tasks: Use `mcp__zen__docgen`
-   - Complex features: Use `Task` tool with `subagent_type: "general-purpose"`
+5. For complex features: Use `Task` tool with `subagent_type: "general-purpose"`
 
 **Tier 2 - Built-in Claude Code Features (always available):**
 1. Use `Task` tool with `subagent_type: "Plan"` to design implementation approach
@@ -162,7 +159,7 @@ This provides real-time visibility in the Claude Code interface. **Mark items as
 4. Use `Task` tool with `subagent_type: "Explore"` to verify implementation
 5. Perform thorough self-review before completing
 
-**Note:** All MCP tools (zen/pal) are optional enhancements. The workflow functions fully without them using Claude Code's built-in Task tool and subagents.
+**Note:** All PAL MCP tools are optional enhancements. The workflow functions fully without them using Claude Code's built-in Task tool and subagents.
 
 #### Key Implementation Reminders:
 - Create feature branch BEFORE any code changes
