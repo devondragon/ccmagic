@@ -9,6 +9,8 @@ model: opus
 
 Execute iterative, multi-hop research to thoroughly investigate this topic. Continue until reaching **80% confidence** or completing **5 search iterations**.
 
+> **Parallel execution:** When operations are independent, run them simultaneously—searching multiple sources, fetching unrelated URLs, or analyzing separate aspects of the topic. Claude Code will determine when this is safe and helpful.
+
 ## Research Protocol
 
 ### Phase 0: Context Check

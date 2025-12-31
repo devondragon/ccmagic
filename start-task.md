@@ -88,6 +88,8 @@ Update both project and feature working-state.md files:
 
 ### 4. **Begin Development Work:**
 
+> **Parallel execution:** When operations are independent, run them simultaneously—exploring different code areas, reading unrelated files, or editing separate files. Claude Code will determine when this is safe and helpful.
+
 #### Quick Context Loading with Explore Agent:
 For efficient context loading, use the Task tool with subagent_type="Explore":
 

@@ -7,6 +7,8 @@ model: opus
 
 # Project Planning Session
 
+> **Parallel execution:** When operations are independent, run them simultaneously—exploring different code areas, reading unrelated files, or analyzing separate aspects of the project. Claude Code will determine when this is safe and helpful.
+
 ## Planning Approach
 
 ### Option 1: Use EnterPlanMode (Recommended for Complex Projects)

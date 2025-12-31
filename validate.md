@@ -10,22 +10,7 @@ Comprehensive pre-commit validation to ensure code quality, tests pass, and chan
 
 ## Validation Pipeline
 
-### Parallel Execution Strategy
-Run INDEPENDENT checks simultaneously using multiple Bash tool calls in a single message:
-
-```
-# PARALLEL GROUP 1 (run simultaneously):
-- Linting (eslint, pylint, etc.)
-- Type checking (tsc, mypy, etc.)
-- Format checking (prettier, black, etc.)
-- Security scanning (npm audit, safety, etc.)
-
-# SEQUENTIAL (after parallel group completes):
-- Tests (may depend on compilation)
-- Build verification (depends on all above)
-```
-
-**Critical**: Send multiple Bash tool calls in a SINGLE message for parallel execution.
+> **Parallel execution:** When operations are independent, run them simultaneously—linting, type checking, format checking, and security scanning can all run in parallel. Sequential operations (tests, build) run after parallel checks complete. Claude Code will determine when this is safe and helpful.
 
 ## Check Categories (with dependencies):
 1. **Syntax Check**: Ensure code compiles/parses
@@ -246,28 +231,7 @@ Timestamp: [ISO 8601 timestamp]
 
 ## Smart Features
 
-### 1. Parallel Execution (CRITICAL)
-**Use multiple Bash tool calls in a SINGLE message** for parallel execution:
-
-```
-# In ONE message, call Bash tool FOUR times simultaneously:
-
-Bash({ command: "npm run lint", description: "Run linting" })
-Bash({ command: "npx tsc --noEmit", description: "Type check" })
-Bash({ command: "npx prettier --check .", description: "Format check" })
-Bash({ command: "npm audit --audit-level=high", description: "Security scan" })
-
-# These run IN PARALLEL because they're in the same message
-```
-
-**After parallel checks complete, run sequential checks:**
-```
-Bash({ command: "npm test", description: "Run tests" })
-# Then:
-Bash({ command: "npm run build", description: "Build project" })
-```
-
-### 2. Incremental Validation
+### 1. Incremental Validation
 Only validate changed files when possible:
 ```bash
 # Get changed files
@@ -277,7 +241,7 @@ git diff --name-only main...HEAD
 eslint --cache [changed-files]
 ```
 
-### 3. Auto-fix Mode
+### 2. Auto-fix Mode
 Offer to automatically fix issues:
 ```bash
 # Auto-fix linting
@@ -290,7 +254,7 @@ prettier --write .
 npx organize-imports-cli
 ```
 
-### 4. Git Hooks Integration
+### 3. Git Hooks Integration
 Set up pre-commit hooks:
 ```bash
 # Install husky

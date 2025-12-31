@@ -9,6 +9,8 @@ model: sonnet
 
 I'll create comprehensive handoff documentation to ensure smooth context transfer.
 
+> **Parallel execution:** When operations are independent, run them simultaneously—exploring different code areas, reading unrelated files, or gathering context from multiple sources. Claude Code will determine when this is safe and helpful.
+
 ## Efficient Context Gathering with Explore Agent
 
 For comprehensive handoffs, use the Task tool with Explore agent to gather context in parallel:
