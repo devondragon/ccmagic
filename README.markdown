@@ -125,11 +125,12 @@ This creates a project management structure in your repository's `context/` dire
 | `/ccmagic:analyze-impact`| Analyze dependencies and blast radius         | `/ccmagic:analyze-impact src/auth`|
 
 ### Git Integration
-| Command          | Description                 | Example          |
-| ---------------- | --------------------------- | ---------------- |
-| `/ccmagic:pr`    | Create pull request         | `/ccmagic:pr`    |
-| `/ccmagic:merge` | Merge changes               | `/ccmagic:merge` |
-| `/ccmagic:sync`  | Sync with remote repository | `/ccmagic:sync`  |
+| Command          | Description                                      | Example          |
+| ---------------- | ------------------------------------------------ | ---------------- |
+| `/ccmagic:push`  | Smart commit (logical groups) and push           | `/ccmagic:push`  |
+| `/ccmagic:pr`    | Create pull request                              | `/ccmagic:pr`    |
+| `/ccmagic:merge` | Merge changes                                    | `/ccmagic:merge` |
+| `/ccmagic:sync`  | Sync with remote repository                      | `/ccmagic:sync`  |
 
 ## ⚡ Claude Code Integration
 
