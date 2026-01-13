@@ -43,29 +43,34 @@ gh pr view {pr_number} --json reviews --jq '.reviews[] | {author: .author.login,
 
 ### Step 3: Categorize Comments
 
+**Default bias: Address Now.** If a comment identifies a legitimate improvement, fix it in this PR. Non-blocking does not mean defer—clean PRs ship better code.
+
 Analyze each comment and categorize into:
 
-1. **Address Now** - Valid concerns that should be fixed in this PR:
-   - Bug fixes
-   - Security issues
-   - Logic errors
-   - Missing error handling
-   - Code clarity improvements
+1. **Address Now** - The default for valid feedback. Includes:
+   - Bug fixes, security issues, logic errors
+   - Missing error handling or edge cases
+   - Code clarity and readability improvements
    - Style/convention violations
-   - Test coverage gaps
+   - Test coverage gaps or missing test cases
+   - Refactoring to reduce code duplication (DRY violations)
+   - Naming improvements
+   - Documentation gaps for complex logic
+   - Performance fixes that are straightforward
+   - Any improvement that can be done in under ~30 minutes
 
-2. **Defer** - Valid concerns better handled separately:
-   - Large refactoring suggestions
-   - Feature additions beyond scope
-   - Architectural changes
-   - Performance optimizations requiring significant work
-   - Items needing discussion or design decisions
+2. **Defer** - Only for changes that genuinely don't belong in this PR:
+   - Refactoring that would touch many files unrelated to this PR
+   - New features beyond the PR's stated scope
+   - Architectural changes requiring design discussion
+   - Performance work needing benchmarking/profiling first
+   - Changes that would significantly delay the PR with no clear end
 
 3. **Decline** - Comments that don't require action:
-   - Already addressed
-   - Based on misunderstanding
-   - Style preferences without project convention backing
-   - Out of scope for this change
+   - Already addressed in the code
+   - Based on misunderstanding of the code/requirements
+   - Pure style preferences not backed by project conventions
+   - Suggestions that would make the code worse
 
 ### Step 4: Create Fix Plan
 
@@ -108,9 +113,9 @@ For each "Defer" item, use AskUserQuestion to confirm the approach:
 Begin immediately:
 1. Fetch the PR and all comments
 2. Read relevant code files to understand context
-3. Categorize each comment with clear reasoning
+3. Categorize each comment—when in doubt, Address Now
 4. Present the categorization and plan
 5. For deferred items, ask user preference before proceeding
 6. Create TodoWrite entries for approved fixes
 
-Be thorough in analysis but decisive in categorization. Default to addressing valid feedback unless there's a clear reason to defer.
+**Bias toward action.** Reviewers took time to leave feedback—respect that by fixing legitimate issues rather than punting them. A PR that addresses all reasonable feedback ships cleaner code and builds reviewer trust. Only defer when the work truly doesn't fit this PR's scope.
