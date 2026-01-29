@@ -74,10 +74,13 @@ You should see the CCMagic help system with available commands.
 |---------|---------|
 | `/ccmagic:init` | Initialize project structure |
 | `/ccmagic:status` | Check current project status |
+| `/ccmagic:progress` | Check progress and route to next action |
 | `/ccmagic:plan` | Interactive project planning |
 | `/ccmagic:start-task` | Begin working on a task |
 | `/ccmagic:checkpoint` | Save progress |
 | `/ccmagic:complete-task` | Mark task as done |
+| `/ccmagic:verify` | Verify acceptance criteria are met |
+| `/ccmagic:resume` | Resume work from previous session |
 | `/ccmagic:research` | Deep research with source evaluation |
 | `/ccmagic:help` | Get help with all commands |
 
@@ -89,8 +92,18 @@ You should see the CCMagic help system with available commands.
 3. /ccmagic:start-task            # Begin a task
 4. ... work on implementation ...
 5. /ccmagic:checkpoint            # Save progress
-6. /ccmagic:complete-task         # Finish task
-7. /ccmagic:pr                    # Create pull request
+6. /ccmagic:verify                # Verify acceptance criteria
+7. /ccmagic:complete-task         # Finish task
+8. /ccmagic:pr                    # Create pull request
+```
+
+### Resuming Work
+
+When returning to a project after a break:
+```
+1. /ccmagic:resume                # Load previous context
+2. /ccmagic:progress              # See what's next
+3. /ccmagic:start-task            # Continue working
 ```
 
 ## Next Steps

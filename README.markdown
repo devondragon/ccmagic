@@ -75,23 +75,27 @@ This creates a project management structure in your repository's `context/` dire
 ## 📋 Available Commands
 
 ### Project Setup & Planning
-| Command               | Description                                        | Example                    |
-| --------------------- | -------------------------------------------------- | -------------------------- |
-| `/ccmagic:init`       | Initialize CCMagic context (`--light` for minimal) | `/ccmagic:init --light`    |
-| `/ccmagic:plan`       | Interactive planning with EnterPlanMode support    | `/ccmagic:plan saas-app`   |
-| `/ccmagic:quick-start`| Fast-track feature setup                           | `/ccmagic:quick-start auth`|
-| `/ccmagic:help`       | Get help with CCMagic commands                     | `/ccmagic:help`            |
-| `/ccmagic:doctor`     | Diagnose setup issues and validate installation    | `/ccmagic:doctor`          |
+| Command               | Description                                        | Example                      |
+| --------------------- | -------------------------------------------------- | ---------------------------- |
+| `/ccmagic:init`       | Initialize CCMagic context (`--light` for minimal) | `/ccmagic:init --light`      |
+| `/ccmagic:plan`       | Interactive planning with EnterPlanMode support    | `/ccmagic:plan saas-app`     |
+| `/ccmagic:quick-start`| Fast-track feature setup                           | `/ccmagic:quick-start auth`  |
+| `/ccmagic:map-codebase`| Analyze existing codebase and document patterns   | `/ccmagic:map-codebase`      |
+| `/ccmagic:settings`   | Configure CCMagic preferences                      | `/ccmagic:settings`          |
+| `/ccmagic:help`       | Get help with CCMagic commands                     | `/ccmagic:help`              |
+| `/ccmagic:doctor`     | Diagnose setup issues and validate installation    | `/ccmagic:doctor`            |
 
 ### Task Management
-| Command                    | Description                      | Example                             |
-| -------------------------- | -------------------------------- | ----------------------------------- |
-| `/ccmagic:create-features` | Create new features for an epic  | `/ccmagic:create-features epic-001` |
-| `/ccmagic:create-tasks`    | Break down features into tasks   | `/ccmagic:create-tasks`             |
-| `/ccmagic:start-task`      | Start working on a specific task | `/ccmagic:start-task 001-01-003`    |
-| `/ccmagic:current-task`    | View current active task         | `/ccmagic:current-task`             |
-| `/ccmagic:complete-task`   | Mark task as completed           | `/ccmagic:complete-task 001-01-003` |
-| `/ccmagic:checkpoint`      | Save current progress            | `/ccmagic:checkpoint`               |
+| Command                    | Description                                | Example                             |
+| -------------------------- | ------------------------------------------ | ----------------------------------- |
+| `/ccmagic:create-features` | Create new features for an epic            | `/ccmagic:create-features epic-001` |
+| `/ccmagic:discuss-feature` | Gather implementation context before tasks | `/ccmagic:discuss-feature`          |
+| `/ccmagic:create-tasks`    | Break down features into tasks             | `/ccmagic:create-tasks`             |
+| `/ccmagic:start-task`      | Start working on a specific task           | `/ccmagic:start-task 001-01-003`    |
+| `/ccmagic:current-task`    | View current active task                   | `/ccmagic:current-task`             |
+| `/ccmagic:complete-task`   | Mark task as completed                     | `/ccmagic:complete-task 001-01-003` |
+| `/ccmagic:verify`          | Interactive verification of acceptance criteria | `/ccmagic:verify`              |
+| `/ccmagic:checkpoint`      | Save current progress                      | `/ccmagic:checkpoint`               |
 
 ### Features & Epics
 | Command                    | Description                        | Example                          |
@@ -101,36 +105,41 @@ This creates a project management structure in your repository's `context/` dire
 | `/ccmagic:start-spike`     | Begin working on a spike           | `/ccmagic:start-spike spike-001` |
 
 ### Project Status & Documentation
-| Command                  | Description                              | Example                           |
-| ------------------------ | ---------------------------------------- | --------------------------------- |
-| `/ccmagic:status`        | Quick project status check (uses haiku)  | `/ccmagic:status`                 |
-| `/ccmagic:daily-standup` | Generate standup report from git history | `/ccmagic:daily-standup`          |
-| `/ccmagic:handoff`       | Create detailed handoff notes            | `/ccmagic:handoff`                |
-| `/ccmagic:add-backlog`   | Add items to project backlog             | `/ccmagic:add-backlog`            |
-| `/ccmagic:blockers`      | Surface and track blockers               | `/ccmagic:blockers`               |
+| Command                  | Description                              | Example                            |
+| ------------------------ | ---------------------------------------- | ---------------------------------- |
+| `/ccmagic:status`        | Quick project status check (uses haiku)  | `/ccmagic:status`                  |
+| `/ccmagic:progress`      | Check progress and route to next action  | `/ccmagic:progress`                |
+| `/ccmagic:daily-standup` | Generate standup report from git history | `/ccmagic:daily-standup`           |
+| `/ccmagic:handoff`       | Create detailed handoff notes            | `/ccmagic:handoff`                 |
+| `/ccmagic:add-backlog`   | Add items to project backlog             | `/ccmagic:add-backlog`             |
+| `/ccmagic:blockers`      | Surface and track blockers               | `/ccmagic:blockers`                |
 | `/ccmagic:research`      | Deep iterative research with sources     | `/ccmagic:research JWT vs sessions`|
 
 ### Context Management
-| Command                 | Description                | Example                 |
-| ----------------------- | -------------------------- | ----------------------- |
-| `/ccmagic:context-save` | Save current context state | `/ccmagic:context-save` |
-| `/ccmagic:context-load` | Load saved context state   | `/ccmagic:context-load` |
+| Command                 | Description                         | Example                 |
+| ----------------------- | ----------------------------------- | ----------------------- |
+| `/ccmagic:context-save` | Save current context state          | `/ccmagic:context-save` |
+| `/ccmagic:context-load` | Load saved context state            | `/ccmagic:context-load` |
+| `/ccmagic:resume`       | Resume work from previous session   | `/ccmagic:resume`       |
 
 ### Development Workflow
-| Command                  | Description                                   | Example                           |
-| ------------------------ | --------------------------------------------- | --------------------------------- |
-| `/ccmagic:test`          | Run project tests                             | `/ccmagic:test`                   |
-| `/ccmagic:validate`      | Validate code (parallel checks)               | `/ccmagic:validate`               |
-| `/ccmagic:review`        | Code review with parallel exploration         | `/ccmagic:review`                 |
-| `/ccmagic:analyze-impact`| Analyze dependencies and blast radius         | `/ccmagic:analyze-impact src/auth`|
+| Command                  | Description                                   | Example                            |
+| ------------------------ | --------------------------------------------- | ---------------------------------- |
+| `/ccmagic:quick`         | Execute ad-hoc task without feature overhead  | `/ccmagic:quick fix typo in login` |
+| `/ccmagic:test`          | Run project tests                             | `/ccmagic:test`                    |
+| `/ccmagic:validate`      | Validate code (parallel checks)               | `/ccmagic:validate`                |
+| `/ccmagic:review`        | Code review with parallel exploration         | `/ccmagic:review`                  |
+| `/ccmagic:debug`         | Systematic debugging with persistent state    | `/ccmagic:debug login issue`       |
+| `/ccmagic:analyze-impact`| Analyze dependencies and blast radius         | `/ccmagic:analyze-impact src/auth` |
 
 ### Git Integration
-| Command          | Description                                      | Example          |
-| ---------------- | ------------------------------------------------ | ---------------- |
-| `/ccmagic:push`  | Smart commit (logical groups) and push           | `/ccmagic:push`  |
-| `/ccmagic:pr`    | Create pull request                              | `/ccmagic:pr`    |
-| `/ccmagic:merge` | Merge changes                                    | `/ccmagic:merge` |
-| `/ccmagic:sync`  | Sync with remote repository                      | `/ccmagic:sync`  |
+| Command              | Description                                      | Example              |
+| -------------------- | ------------------------------------------------ | -------------------- |
+| `/ccmagic:push`      | Smart commit (logical groups) and push           | `/ccmagic:push`      |
+| `/ccmagic:pr`        | Create pull request                              | `/ccmagic:pr`        |
+| `/ccmagic:pr-feedback`| Review PR comments and plan fixes               | `/ccmagic:pr-feedback`|
+| `/ccmagic:merge`     | Merge changes                                    | `/ccmagic:merge`     |
+| `/ccmagic:sync`      | Sync with remote repository                      | `/ccmagic:sync`      |
 
 ## ⚡ Claude Code Integration
 

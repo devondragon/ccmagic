@@ -178,7 +178,14 @@ monetizable platform through premium features and vet partnerships.
 
 ### Tech Lead: Creating Actionable Tasks
 
-**Mike (Tech Lead) creates detailed tasks:**
+**Mike (Tech Lead) first gathers context, then creates detailed tasks:**
+
+```markdown
+/ccmagic:discuss-feature
+
+# Gather implementation context before task creation
+# Helps identify technical considerations and dependencies
+```
 
 ```markdown
 /ccmagic:create-tasks
@@ -449,6 +456,14 @@ COMMIT;
 Ready to complete task!
 ```
 
+**Verify acceptance criteria are met:**
+```markdown
+/ccmagic:verify
+
+# Interactive verification of task acceptance criteria
+# Walks through each criterion to ensure completion
+```
+
 ```markdown
 /ccmagic:complete-task 001-01-001
 
@@ -499,6 +514,17 @@ Ready to complete task!
 ---
 
 ## Real-World Workflow Examples
+
+### Example 0: Ad-Hoc Tasks
+
+**When you need to do something quick without full feature overhead:**
+
+```markdown
+/ccmagic:quick fix typo in login button
+
+# Execute ad-hoc task without creating features/tasks
+# Perfect for small fixes, one-off changes, or exploration
+```
 
 ### Example 1: Quick Research
 
@@ -554,7 +580,26 @@ Let me check for unblocked tasks...
 # Automatically finds unblocked work
 ```
 
-### Example 4: Team Sync
+### Example 4: Resuming Work
+
+**When returning to a project after a break:**
+
+```markdown
+/ccmagic:resume
+
+# Loads previous session context automatically
+# Restores working state and current task
+```
+
+**Then check what's next:**
+```markdown
+/ccmagic:progress
+
+# Check progress and route to next action
+# Shows current status and suggests next steps
+```
+
+### Example 5: Team Sync
 
 **Daily standup preparation:**
 
@@ -579,7 +624,7 @@ Let me check for unblocked tasks...
 - Blocked: Waiting for 001-01-003
 ```
 
-### Example 5: End of Sprint
+### Example 6: End of Sprint
 
 **Preparing for sprint review:**
 
@@ -612,7 +657,41 @@ Let me check for unblocked tasks...
 
 ---
 
+### Example 7: Analyzing an Existing Codebase
+
+**When joining a project or exploring unfamiliar code:**
+
+```markdown
+/ccmagic:map-codebase
+
+# Analyze existing codebase and document patterns
+# Creates knowledge base entries about architecture, conventions
+```
+
+### Example 8: Reviewing PR Feedback
+
+**When you have comments on your PR to address:**
+
+```markdown
+/ccmagic:pr-feedback
+
+# Review PR comments and plan fixes for valid concerns
+# Helps triage and prioritize feedback
+```
+
+---
+
 ## Advanced CCMagic Features
+
+### Configuration
+
+**Customize CCMagic behavior:**
+```markdown
+/ccmagic:settings
+
+# Configure CCMagic preferences
+# Set default behaviors, model preferences, etc.
+```
 
 ### Model Selection
 
@@ -664,9 +743,17 @@ Recommended order based on dependencies:
 
 **Then:**
 ```markdown
-/ccmagic:debug 001-01-003
+/ccmagic:debug login-issue
 
-# Loads only debugging-relevant context
+# Systematic debugging with persistent investigation state
+# Tracks hypotheses, tests, and findings across sessions
+```
+
+**Resume debugging later:**
+```markdown
+/ccmagic:resume
+
+# Restores debugging context and investigation state
 ```
 
 ---
@@ -869,17 +956,22 @@ fi
 
 ### Essential Commands
 
-| When You Want To... | Use This Command                              |
-| ------------------- | --------------------------------------------- |
-| Start your day      | `/ccmagic:status`                             |
-| Begin new work      | `/ccmagic:start-task`                         |
-| Save progress       | `/ccmagic:checkpoint`                         |
-| Switch tasks        | `/ccmagic:handoff` then `/ccmagic:start-task` |
-| End your day        | `/ccmagic:checkpoint --end-of-day`            |
-| Research a topic    | `/ccmagic:research <topic>`                   |
-| Review code         | `/ccmagic:review`                             |
-| Create PR           | `/ccmagic:pr`                                 |
-| Get help            | `/ccmagic:help`                               |
+| When You Want To...       | Use This Command                              |
+| ------------------------- | --------------------------------------------- |
+| Start your day            | `/ccmagic:status` or `/ccmagic:progress`      |
+| Resume previous work      | `/ccmagic:resume`                             |
+| Begin new work            | `/ccmagic:start-task`                         |
+| Do something quick        | `/ccmagic:quick <description>`                |
+| Save progress             | `/ccmagic:checkpoint`                         |
+| Verify task is done       | `/ccmagic:verify`                             |
+| Switch tasks              | `/ccmagic:handoff` then `/ccmagic:start-task` |
+| End your day              | `/ccmagic:checkpoint --end-of-day`            |
+| Research a topic          | `/ccmagic:research <topic>`                   |
+| Debug an issue            | `/ccmagic:debug <description>`                |
+| Review code               | `/ccmagic:review`                             |
+| Create PR                 | `/ccmagic:pr`                                 |
+| Address PR feedback       | `/ccmagic:pr-feedback`                        |
+| Get help                  | `/ccmagic:help`                               |
 
 ### Task State Transitions
 

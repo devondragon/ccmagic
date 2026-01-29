@@ -629,9 +629,9 @@ CCMagic commands use model aliases (sonnet, opus, haiku) that auto-update to the
 ### CCMagic Default Model Assignments
 
 Commands are pre-configured with appropriate models:
-- **opus**: `/plan`, `/create-features`, `/start-spike`
-- **sonnet**: `/start-task`, `/review`, `/validate`, `/checkpoint`
-- **haiku**: `/status`, `/daily-standup`, `/blockers`
+- **opus**: `/plan`, `/create-features`, `/start-spike`, `/research`
+- **sonnet**: `/start-task`, `/review`, `/validate`, `/checkpoint`, `/debug`, `/verify`
+- **haiku**: `/status`, `/progress`, `/daily-standup`, `/blockers`, `/quick`
 
 ### Cost-Effective Model Usage
 
@@ -724,6 +724,7 @@ At 70% capacity:
 3. Commit work-in-progress
 4. Note "Continue in next session"
 5. Start fresh for continuation
+6. Use /ccmagic:resume to restore context
 ```
 
 #### Scenario: Blocked on Dependencies
@@ -748,11 +749,12 @@ New requirement appears:
 #### Scenario: Complex Bug Found
 ```
 Systematic approach:
-1. Create spike task for investigation
-2. Time-box the research (4-8 hours)
-3. Document findings in spike file
-4. Create specific fix tasks based on findings
-5. Implement fixes as separate tasks
+1. Use /ccmagic:debug to start investigation
+2. Track hypotheses and test results
+3. If extended, create spike task
+4. Document findings in spike or debug file
+5. Create specific fix tasks based on findings
+6. Implement fixes as separate tasks
 ```
 
 ---
@@ -763,7 +765,8 @@ Systematic approach:
 
 ```
 Morning:
-□ Review context/working-state.md
+□ Run /ccmagic:resume (or /ccmagic:status)
+□ Run /ccmagic:progress to see what's next
 □ Check for updates from team
 □ Select task from todo/ folder
 □ Move to current/ folder
@@ -775,6 +778,11 @@ During Development:
 □ Save progress every 1-2 hours
 □ Run tests frequently
 □ Document decisions
+
+Completing Tasks:
+□ Run /ccmagic:validate
+□ Run /ccmagic:verify to check acceptance criteria
+□ Run /ccmagic:complete-task
 
 End of Day:
 □ Update task status
