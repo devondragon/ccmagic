@@ -169,7 +169,53 @@ Estimated time to complete: {{time_estimate}}
 - Estimated feature completion: {{estimated_date}}
 ```
 
-### 6. Creating Session Note:
+### 6. Write Handoff File
+
+Create `.continue-here.md` in project root for session resumption:
+
+```markdown
+# Continue Here
+Created: {{timestamp}}
+
+## Working On
+**Task:** {{task_id}} - {{task_name}}
+**Feature:** {{feature_id}} - {{feature_name}}
+**Branch:** {{branch_name}}
+
+## Progress
+**Status:** {{percentage}}% complete
+**Completed:**
+{{completed_items_list}}
+
+**Remaining:**
+{{remaining_items_list}}
+
+## Key Decisions
+- {{decision_1}}: {{reasoning_1}}
+- {{decision_2}}: {{reasoning_2}}
+
+## Blockers
+{{blockers_if_any}}
+
+## Next Steps
+1. {{next_step_1}}
+2. {{next_step_2}}
+3. {{next_step_3}}
+
+## Context Files
+Read these to restore context:
+- context/features/{{feature_path}}/overview.md
+- context/features/{{feature_path}}/tasks/current/{{task_file}}
+- context/conventions.md
+- {{other_relevant_files}}
+
+## Notes for Next Session
+{{continuation_notes}}
+```
+
+This file enables `/ccmagic:resume` to quickly restore context in a new session.
+
+### 7. Creating Session Note:
 
 Creating `context/sessions/{{date}}-{{time}}-checkpoint.md`:
 
@@ -215,7 +261,7 @@ Creating `context/sessions/{{date}}-{{time}}-checkpoint.md`:
 {{continuation_notes}}
 ```
 
-### 7. Git Integration:
+### 8. Git Integration:
 
 ```bash
 # Show current git status
@@ -248,7 +294,7 @@ if [ $CHANGES -gt 0 ]; then
 fi
 ```
 
-### 8. Progress Visualization:
+### 9. Progress Visualization:
 
 ```
 📊 Checkpoint Summary
