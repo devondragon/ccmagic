@@ -162,7 +162,7 @@ Related improvements identified:
 Add these to backlog? (y/n)
 ```
 
-If yes, append to `context/backlog.md` under "## From Debugging"
+If yes, ensure `context/backlog.md` exists and create a "## From Debugging" section if it does not already exist, then append the items under that section.
 
 ## Notes
 

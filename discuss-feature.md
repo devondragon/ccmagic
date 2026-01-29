@@ -15,7 +15,7 @@ Run this before `/ccmagic:create-tasks` to produce a `CONTEXT.md` that guides ta
 
 ### 1. Load Feature
 
-If `$ARGUMENTS` provided, use that feature path. Otherwise, list features and ask user to select.
+If `$ARGUMENTS` is provided, treat it as the `feature-path`. Otherwise, use Glob or LS to list available feature directories in `context/features/`, then use AskUserQuestion to present the options and capture the user's selected `feature-path`.
 
 Read the feature's `overview.md` from `context/features/[feature-path]/`.
 

@@ -61,7 +61,7 @@ Each task should include machine-verifiable checks where possible. These are com
 ```xml
 ## Verification
 <verify>npm test src/auth/login.test.ts</verify>
-<verify>curl -s localhost:3000/api/health | grep '"status":"ok"'</verify>
+<verify>curl -s localhost:3000/api/health | grep -q '"status":"ok"'</verify>
 <verify>grep -r "LoginForm" src/components/ | wc -l | grep -q "[1-9]"</verify>
 ```
 

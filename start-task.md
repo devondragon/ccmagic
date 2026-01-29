@@ -116,7 +116,7 @@ Use Task tool with:
     [Extract <done> criteria if present, otherwise use acceptance criteria]
 
     ## Instructions
-    1. Read the context files above
+    1. Use the Read tool to load each of the context files listed above
     2. Use TodoWrite immediately - create checklist from acceptance criteria
     3. Explore codebase as needed (use Explore agent for broad searches)
     4. Implement following project conventions

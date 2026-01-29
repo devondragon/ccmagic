@@ -71,7 +71,7 @@ Run `/ccmagic:start-task [task-id]` to begin.
 (List up to 3 highest priority tasks)
 
 **Priority 5: Features Without Tasks**
-If feature directories exist but have empty or no `tasks/todo/`:
+If feature directories exist in `context/features/` but their `tasks/todo/` directories are either missing or contain no `.md` files (check with: `ls context/features/*/tasks/todo/*.md 2>/dev/null | wc -l`):
 ```
 Feature [feature-name] needs task breakdown.
 

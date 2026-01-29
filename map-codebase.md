@@ -93,9 +93,9 @@ Use Task tool with:
     # Architecture
 
     ## Directory Structure
-    ```
+    ~~~
     [tree-like representation of key directories]
-    ```
+    ~~~
 
     ## Organization Pattern
     [Feature-based / Layer-based / Hybrid - with explanation]
@@ -179,7 +179,7 @@ Use Task tool with:
 
 ### 3. Wait for Agents
 
-All three agents should run in parallel. Wait for all to complete.
+All three agents should run in parallel by spawning all 3 Task calls in a single message. Wait for all to complete before proceeding to step 4.
 
 ### 4. Synthesize Findings
 

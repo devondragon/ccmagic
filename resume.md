@@ -106,15 +106,20 @@ Options:
 
 ### 5. Cleanup
 
-After successfully resuming (agent returns or user acknowledges):
+After successfully resuming (only if agent successfully returned and work has resumed, not on failure):
+
+Check if work was successfully resumed:
+- If agent returned with completion/progress, proceed with cleanup
+- If agent failed or user chose to skip, keep handoff file for next attempt
 
 ```bash
+# Only remove if resumption was successful
 rm .continue-here.md
 ```
 
 Confirm cleanup:
 ```
-Handoff file removed. Session resumed.
+Handoff file removed. Session resumed successfully.
 ```
 
 ## Notes

@@ -27,12 +27,16 @@ Read the task file and extract:
 For each `<verify>` command found in the task:
 
 ```bash
-echo "Running: [verify command]"
+verify_cmd="[verify command]"  # Replace with the actual verify command from task file
+echo "Running: $verify_cmd"
+
 # Execute the command
+bash -c "$verify_cmd"
+
 if [ $? -eq 0 ]; then
-  echo "PASS: [verify command]"
+  echo "✅ PASS: $verify_cmd"
 else
-  echo "FAIL: [verify command]"
+  echo "❌ FAIL: $verify_cmd"
   # Store failure for later handling
 fi
 ```
@@ -101,7 +105,7 @@ Use Task tool with:
     5. Report what you found and what you fixed (if anything)
 ```
 
-After debug agent returns, re-run the failed verification.
+After debug agent returns, automatically re-run the specific failed verification command to check if the issue was resolved.
 
 ### 5. Generate Report
 
