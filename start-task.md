@@ -86,93 +86,62 @@ Update both project and feature working-state.md files:
 - **Status**: in_progress
 ```
 
-### 4. **Begin Development Work:**
+### 4. **Spawn Execution Agent:**
 
-> **Parallel execution:** When operations are independent, run them simultaneously—exploring different code areas, reading unrelated files, or editing separate files. Claude Code will determine when this is safe and helpful.
+After setup is complete (task moved, branch created, working states updated), spawn a fresh agent for implementation with focused context. This ensures a clean context window for the actual work.
 
-#### Quick Context Loading with Explore Agent:
-For efficient context loading, use the Task tool with subagent_type="Explore":
+#### Prepare Agent Context:
+First, read the task file and extract key information:
+- Full task description and acceptance criteria
+- `<done>` criteria if present (explicit completion state)
+- `<verify>` commands if present (machine-verifiable checks)
+- Technical details and dependencies
+
+#### Spawn Implementation Agent:
 
 ```
 Use Task tool with:
-  subagent_type: "Explore"
-  prompt: "Explore the codebase to understand the context for task [task-id].
-          Focus on: 1) Files related to the feature, 2) Existing patterns and
-          conventions, 3) Dependencies and integration points. Be thorough."
+  subagent_type: "general-purpose"
+  prompt: |
+    # Task Implementation: [task-id]
+
+    ## Task
+    [Embed full task file contents here]
+
+    ## Context Files to Read
+    - context/conventions.md (coding standards)
+    - context/features/[feature-path]/overview.md (feature scope)
+
+    ## Done When
+    [Extract <done> criteria if present, otherwise use acceptance criteria]
+
+    ## Instructions
+    1. Use the Read tool to load each of the context files listed above
+    2. Use TodoWrite immediately - create checklist from acceptance criteria
+    3. Explore codebase as needed (use Explore agent for broad searches)
+    4. Implement following project conventions
+    5. Mark TodoWrite items complete as you progress
+    6. Run verification commands if <verify> section exists
+    7. When complete, summarize what was accomplished
+
+    Focus only on this task. Do not load unnecessary context.
 ```
 
-This parallelizes context gathering and provides a focused summary without loading all files sequentially.
-
-#### Traditional Context Loading (fallback):
-If Explore agent is unavailable, load context in order:
-1. `/context/project.md` - Project overview
-2. `/context/conventions.md` - Development conventions
-3. `/context/working-state.md` - Current project state
-4. `/context/features/[feature-path]/overview.md` - Feature scope
-5. `/context/features/[feature-path]/working-state.md` - Feature progress
-6. `/context/features/[feature-path]/tasks/current/[task-file].md` - Task details
-
-Note: CLAUDE.md is automatically loaded. Only load specific knowledge files if referenced in the task.
-
-#### CRITICAL: Populate TodoWrite Immediately
-After loading the task, **IMMEDIATELY use TodoWrite** to create a visible checklist:
-
-```
-Use TodoWrite tool with todos containing:
-1. All acceptance criteria from the task file (status: pending)
-2. Key implementation steps identified during analysis
-3. Testing requirements
-4. Documentation updates needed
-
-Example format:
-[
-  {"content": "Implement user validation logic", "status": "pending", "activeForm": "Implementing user validation"},
-  {"content": "Add unit tests for validation", "status": "pending", "activeForm": "Adding validation tests"},
-  {"content": "Update API documentation", "status": "pending", "activeForm": "Updating API docs"}
-]
-```
-
-This provides real-time visibility in the Claude Code interface. **Mark items as in_progress/completed as you work.**
-
-#### Development Workflow:
-
-**Tool Priority (use whichever is available, in order):**
-
-**Tier 1 - External MCP Tools (if available):**
-1. **Analysis**: Use `mcp__pal__thinkdeep` or `mcp__pal__analyze` to:
-   - Analyze the task requirements
-   - Create detailed implementation plan
-   - Identify potential challenges
-
-2. **Always use `TodoWrite`** to break down into subtasks with real-time tracking
-
-3. Implement the solution following project conventions
-
-4. **Code Review**: Use `mcp__pal__codereview` before marking complete
-
-5. For complex features: Use `Task` tool with `subagent_type: "general-purpose"`
-
-**Tier 2 - Built-in Claude Code Features (always available):**
-1. Use `Task` tool with `subagent_type: "Plan"` to design implementation approach
-2. Use `TodoWrite` for task breakdown and tracking
-3. Implement solution following conventions
-4. Use `Task` tool with `subagent_type: "Explore"` to verify implementation
-5. Perform thorough self-review before completing
-
-**Note:** All PAL MCP tools are optional enhancements. The workflow functions fully without them using Claude Code's built-in Task tool and subagents.
-
-#### Key Implementation Reminders:
-- Create feature branch BEFORE any code changes
-- Check task dependencies in working-state.md
+#### Key Implementation Reminders (passed to agent):
 - Follow project conventions for code style and structure
 - Write tests as specified in task requirements
 - Update documentation as needed
+- Run `<verify>` commands before declaring complete
 
 ### 5. **Task Completion:**
-When development is complete:
-- Move task from `current/` to `completed/`
-- Update working-state.md files
-- Prepare for code review or PR creation
+
+After the agent completes and returns its summary:
+
+1. **Review agent output** - Verify the work was completed successfully
+2. **Run verification** - If `<verify>` commands exist, confirm they pass
+3. **Prompt user** - Display: "Task implementation complete. Run `/ccmagic:verify [task-id]` to validate acceptance criteria, or `/ccmagic:complete-task` when ready to finalize."
+
+The agent handles implementation; the main session handles task lifecycle (moving files, updating states, commits).
 
 ## Notes:
 - Only one task should be active at a time
