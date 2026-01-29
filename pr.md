@@ -1,6 +1,21 @@
+---
+allowed-tools: Read(*), Bash(git:*), Bash(gh:*), Bash(glab:*), Glob(*), Task(*)
+description: Create pull request with platform detection and smart description generation
+argument-hint: [--draft] (optional)
+model: sonnet
+---
+
 # Pull Request Command
 
 Create a well-structured pull request from the current branch to the appropriate target branch based on your configured branching strategy.
+
+## MCP Tool Availability
+
+This command uses built-in git tools and does not require MCP tools. All functionality is available through:
+- Git CLI for repository operations
+- GitHub CLI (`gh`) for GitHub PRs
+- GitLab CLI (`glab`) for GitLab MRs
+- Task tool with Explore agent for analyzing changes
 
 ## Reading Branching Configuration
 
