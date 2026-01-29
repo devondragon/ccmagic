@@ -1,6 +1,21 @@
+---
+allowed-tools: Read(*), Bash(git:*), Bash(gh:*), Bash(glab:*), Bash(curl:*), Glob(*)
+description: Safely merge approved PRs with strategy-aware branch handling
+argument-hint: [PR-number] (optional)
+model: sonnet
+---
+
 # Merge Command
 
 Safely merge approved pull requests to the appropriate target branch based on your configured branching strategy.
+
+## MCP Tool Availability
+
+This command uses built-in git tools and does not require MCP tools. All functionality is available through:
+- Git CLI for merge operations
+- GitHub CLI (`gh`) for PR status and merge
+- GitLab CLI (`glab`) for MR operations
+- Bitbucket API via curl for Bitbucket repos
 
 ## Reading Branching Configuration
 
