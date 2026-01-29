@@ -1,6 +1,18 @@
+---
+allowed-tools: Read(*), Bash(git:*), Glob(*)
+description: Synchronize branch with base, handling conflicts intelligently
+model: sonnet
+---
+
 # Sync Command
 
 Synchronize your current branch with the configured base branch, handling conflicts intelligently and maintaining a clean history.
+
+## MCP Tool Availability
+
+This command uses built-in git tools and does not require MCP tools. All functionality is available through:
+- Git CLI for fetch, merge, rebase, and stash operations
+- Built-in conflict detection and resolution guidance
 
 ## Reading Branching Configuration
 
