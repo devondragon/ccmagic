@@ -1,6 +1,20 @@
+---
+allowed-tools: Read(*), Bash(*), Glob(*), TodoWrite(*)
+description: Run tests with framework auto-detection and smart test selection
+argument-hint: [--coverage] [--watch] [test-pattern] (all optional)
+model: sonnet
+---
+
 # Test Command
 
 Run comprehensive test suite for the current changes and ensure code quality before committing or creating a PR.
+
+## MCP Tool Availability
+
+This command uses built-in tools and does not require MCP tools. All functionality is available through:
+- Framework detection via config file analysis (package.json, pytest.ini, etc.)
+- Bash for running test commands
+- TodoWrite for tracking test failures and fixes needed
 
 ## Test Execution Strategy
 
