@@ -1,5 +1,5 @@
 ---
-allowed-tools: Write(*), Read(*), Bash(mkdir -p:*), Glob(*), LS(*), mcp__pal__planner(*)
+allowed-tools: Write(*), Read(*), Bash(mkdir -p:*), Glob(*), LS(*), mcp__pal__planner(*), Task(*)
 description: Break down an epic into manageable features
 argument-hint: epic-id (optional, e.g., epic-001 or epic-001-mvp)
 model: opus
@@ -16,9 +16,7 @@ This command will:
    - Validate the epic exists before proceeding
 
 2. **Feature Planning:**
-   - First check if mcp__pal__planner tool is available
-   - If available: Use pal:planner to systematically break down the epic into features
-   - If not available: Use interactive session to identify features within the epic
+   - Use tiered approach for feature breakdown (see Tool Priority below)
 
 3. **Create Feature Structure:**
    - Create feature directories: `context/features/epic-XXX-fNN-name/`
@@ -29,10 +27,23 @@ This command will:
      - `tasks/current/` directory - For active task
      - `tasks/completed/` directory - For finished tasks
 
+## Tool Priority (MCP Fallback)
+
+**Tier 1 - MCP Tools (if available):**
+- Use `mcp__pal__planner` for systematic, AI-assisted feature breakdown
+- Provides structured analysis with user value focus and dependency mapping
+
+**Tier 2 - Built-in Claude Code Features (always available):**
+- Use `Task` tool with `subagent_type: "Plan"` to design feature breakdown
+- Analyze epic scope, identify user-facing capabilities, and suggest feature boundaries
+- Consider deployment independence, value delivery, and parallelization opportunities
+
+**Note:** The workflow functions fully without MCP tools. Tier 2 provides equivalent capability using Claude Code's built-in planning features.
+
 ## Workflow:
 - **Step 1:** Determine which epic to work on (provided or selected)
 - **Step 2:** Read the epic file to understand scope and requirements
-- **Step 3:** Use pal:planner (if available) for systematic feature breakdown
+- **Step 3:** Use tool priority above (MCP if available, otherwise built-in Plan agent)
 - **Step 4:** Suggest logical feature boundaries based on:
   - User capabilities and value delivery
   - Technical dependencies
