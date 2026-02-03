@@ -129,6 +129,7 @@ This creates a project management structure in your repository's `context/` dire
 | `/ccmagic:test`          | Run project tests                             | `/ccmagic:test`                    |
 | `/ccmagic:validate`      | Validate code (parallel checks)               | `/ccmagic:validate`                |
 | `/ccmagic:review`        | Code review with parallel exploration         | `/ccmagic:review`                  |
+| `/ccmagic:codex-review`  | Codex CLI review + Claude triage and fix plan | `/ccmagic:codex-review branch`     |
 | `/ccmagic:debug`         | Systematic debugging with persistent state    | `/ccmagic:debug login issue`       |
 | `/ccmagic:analyze-impact`| Analyze dependencies and blast radius         | `/ccmagic:analyze-impact src/auth` |
 
@@ -190,6 +191,15 @@ Commands integrate with external MCP tools when available, with graceful fallbac
 | `mcp__pal__planner` | Planning assistance | Task tool with Plan agent |
 
 **All commands work fully without MCP tools** - they're optional enhancements.
+
+### Optional CLI Tool Integration
+Some commands integrate with external CLI tools for enhanced capabilities:
+
+| Tool | Command | Purpose | Fallback |
+|------|---------|---------|----------|
+| Codex CLI | `/ccmagic:codex-review` | OpenAI's Codex for code review | `/ccmagic:review` |
+
+Install Codex with `npm install -g @openai/codex`. Commands gracefully fall back when tools aren't installed.
 
 ## 🏗️ CCMagic Context System
 
