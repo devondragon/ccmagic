@@ -19,7 +19,8 @@ $ARGUMENTS
 - `PR#` or just a number - Review a specific PR
 
 **Optional flags:**
-- `--model MODEL` - Specify Codex model (e.g., `--model o3`, `--model o4-mini`)
+- `--model MODEL` - Specify Codex model (default: `gpt-5.3-codex`, e.g., `--model o3`)
+- `--fallback-model MODEL` - Fallback model for access errors (default: `gpt-5-codex`)
 
 ## Process
 
@@ -49,8 +50,7 @@ Based on arguments:
 
 **For `branch` (default):**
 ```bash
-# Get the diff for Codex to review
-git diff main...HEAD > /tmp/codex-review-diff.txt
+# Show files changed against main
 git diff --name-only main...HEAD
 ```
 
@@ -70,32 +70,103 @@ gh pr view {PR_NUMBER} --json title,body
 
 Execute Codex with a focused review prompt. Capture output to a file for Claude to analyze.
 
-**For branch/PR changes:**
+**Set model defaults (with fallback):**
 ```bash
-codex --model ${MODEL:-o4-mini} --approval-mode full-auto "Review these code changes for bugs, security issues, performance problems, and code quality. Be specific about file:line locations. Focus on:
-1. Bugs and logic errors
-2. Security vulnerabilities (injection, XSS, auth issues)
-3. Performance concerns
-4. Error handling gaps
-5. Code quality issues
-
-Here are the changes:
-$(cat /tmp/codex-review-diff.txt)" 2>&1 | tee /tmp/codex-review-output.txt
+REVIEW_MODEL="${MODEL:-gpt-5.3-codex}"
+FALLBACK_MODEL="${FALLBACK_MODEL:-gpt-5-codex}"
 ```
 
-**For full codebase:**
+**Create a high-signal review prompt (shared):**
 ```bash
-codex --model ${MODEL:-o4-mini} --approval-mode full-auto "Review this codebase for architectural issues, code quality problems, security vulnerabilities, and areas needing improvement. Focus on:
-1. Architectural concerns and design issues
-2. Security vulnerabilities
-3. Code duplication and DRY violations
-4. Missing error handling
-5. Performance anti-patterns
-6. Dead code or unused exports
+cat > /tmp/codex-review-prompt.txt <<'PROMPT'
+Review for actionable defects only. Prioritize correctness, security, and reliability.
+Do not report style/refactor nits unless they cause a real defect.
 
-Review the following files:
-$(cat /tmp/codex-review-files.txt | head -100)" 2>&1 | tee /tmp/codex-review-output.txt
+For each finding, include:
+- severity: Critical | High | Medium | Low
+- confidence: 0-100
+- location: file:line
+- issue: concise explanation of what is wrong
+- trigger: concrete input/runtime scenario that exposes the issue
+- fix: minimal safe change
+- test: specific test to add/update
+
+Security findings must include attacker preconditions and exploit path.
+Return at most 10 findings, sorted by severity then confidence.
+If there are no actionable findings, output exactly: No actionable findings.
+
+Output format (markdown table):
+| Severity | Confidence | Location | Issue | Trigger | Fix | Test |
+|---|---:|---|---|---|---|---|
+PROMPT
 ```
+
+**For `branch` changes (preferred):**
+```bash
+cat /tmp/codex-review-prompt.txt | \
+  codex --model ${REVIEW_MODEL} --full-auto review --base main - \
+  2>&1 | tee /tmp/codex-review-output.txt
+```
+
+**For PR diff input (`PR#`):**
+```bash
+{
+  cat /tmp/codex-review-prompt.txt
+  echo
+  echo "Diff to review:"
+  cat /tmp/codex-review-diff.txt
+} | codex --model ${REVIEW_MODEL} --full-auto exec - \
+  2>&1 | tee /tmp/codex-review-output.txt
+```
+
+**For `full` codebase:**
+```bash
+cat > /tmp/codex-review-full-prompt.txt <<'PROMPT'
+Review this repository for actionable architectural, security, reliability, and performance issues.
+Do not report style-only feedback.
+
+Focus on:
+1. Architecture/design risks that cause defects or fragility
+2. Security vulnerabilities and unsafe trust boundaries
+3. Error-handling gaps that can fail at runtime
+4. Performance anti-patterns likely to impact production
+5. Dead code/unused exports only when they create risk or maintenance burden
+
+For each finding, include:
+- severity: Critical | High | Medium | Low
+- confidence: 0-100
+- location: file:line (or "multiple")
+- issue
+- trigger
+- fix
+- test
+
+Return at most 10 findings, sorted by severity then confidence.
+If there are no actionable findings, output exactly: No actionable findings.
+
+Output format (markdown table):
+| Severity | Confidence | Location | Issue | Trigger | Fix | Test |
+|---|---:|---|---|---|---|---|
+PROMPT
+
+{
+  cat /tmp/codex-review-full-prompt.txt
+  echo
+  echo "Prioritize these files first (first 200):"
+  head -200 /tmp/codex-review-files.txt
+} | codex --model ${REVIEW_MODEL} --full-auto exec - \
+  2>&1 | tee /tmp/codex-review-output.txt
+```
+
+**If model access fails, retry once with fallback model:**
+```bash
+# Example indicators: "model not found", "not available for your account", "permission denied"
+cat /tmp/codex-review-prompt.txt | \
+  codex --model ${FALLBACK_MODEL} --full-auto review --base main - \
+  2>&1 | tee /tmp/codex-review-output.txt
+```
+
+For PR/full flows, rerun the same command and replace `--model ${REVIEW_MODEL}` with `--model ${FALLBACK_MODEL}`.
 
 ### Step 4: Claude Triage of Codex Findings
 
@@ -211,11 +282,12 @@ For findings Claude disagrees with, use AskUserQuestion:
    - Install Codex now (`npm install -g @openai/codex`)
    - Fall back to Claude-only review (`/ccmagic:review`)
    - Cancel
-3. Run Codex review with appropriate scope
-4. Parse and triage all findings
-5. Verify Critical/High items by reading actual code
-6. Present categorized findings with Claude's assessment
-7. Create TodoWrite entries for approved fixes
-8. Ask about disputed findings before proceeding
+3. Run Codex review with appropriate scope using `REVIEW_MODEL`
+4. If model access fails, retry once with `FALLBACK_MODEL`
+5. Parse and triage all findings
+6. Verify Critical/High items by reading actual code
+7. Present categorized findings with Claude's assessment
+8. Create TodoWrite entries for approved fixes
+9. Ask about disputed findings before proceeding
 
 **Key principle:** Codex provides broad coverage, Claude provides judgment. Not every Codex finding is valid—Claude's job is to separate signal from noise and create an actionable plan.
