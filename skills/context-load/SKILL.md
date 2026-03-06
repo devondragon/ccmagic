@@ -105,8 +105,8 @@ You were working on implementing user authentication with JWT tokens and OAuth2 
 
 ## Recommended Next Steps
 1. Continue with password reset flow
-2. Run `/status.md` to see current state
-3. Run `/sync.md` if needed to update with main
+2. Run `/ccmagic:status` to see current state
+3. Run `/ccmagic:sync` if needed to update with main
 
 ## Important Notes
 - Rate limiting was set to 5 requests per minute
@@ -295,10 +295,10 @@ echo "3. Create new context from current state"
 
 ## Integration with Other Commands
 
-- Automatically load latest context on `/init.md`
+- Automatically load latest context on `/ccmagic:init`
 - Save before load to preserve current state
-- Use with `/handoff.md` for team transitions
-- Update `/status.md` with loaded context info
+- Use with `/ccmagic:handoff` for team transitions
+- Update `/ccmagic:status` with loaded context info
 
 ## Execution
 

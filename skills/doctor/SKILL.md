@@ -57,18 +57,17 @@ echo "Current branch: $(git branch --show-current 2>/dev/null || echo 'N/A')"
 git remote -v 2>/dev/null | head -1 && echo "OK Git remote configured" || echo "WARNING No git remote configured"
 ```
 
-### 4. Check CCMagic Commands Installation
+### 4. Check CCMagic Plugin Installation
 
-Verify CCMagic commands are accessible:
+Verify CCMagic plugin is accessible:
 
 ```bash
-# Check if CCMagic is installed in Claude Code
-test -d ~/.claude/commands/ccmagic && echo "OK CCMagic commands installed" || echo "MISSING CCMagic not found in ~/.claude/commands/ccmagic"
-
-# Count available commands
-if [ -d ~/.claude/commands/ccmagic ]; then
-  CMD_COUNT=$(ls -1 ~/.claude/commands/ccmagic/*.md 2>/dev/null | wc -l)
-  echo "Available commands: $CMD_COUNT"
+# Check for plugin installation (current format)
+if [ -f .claude-plugin/plugin.json ] || find . -path "*/skills/*/SKILL.md" -maxdepth 3 2>/dev/null | head -1 | grep -q .; then
+  SKILL_COUNT=$(find skills -name "SKILL.md" 2>/dev/null | wc -l | tr -d ' ')
+  echo "OK CCMagic plugin installed with $SKILL_COUNT skills"
+else
+  echo "MISSING CCMagic plugin not detected"
 fi
 ```
 

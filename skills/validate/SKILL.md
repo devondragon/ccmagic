@@ -292,9 +292,9 @@ Save validation preferences in `.validation.json`:
 
 ## Integration with Other Commands
 
-- Automatically run before `/pr.md`
-- Include in `/merge.md` workflow
-- Update `/status.md` with validation results
+- Automatically run before `/ccmagic:pr`
+- Include in `/ccmagic:merge` workflow
+- Update `/ccmagic:status` with validation results
 - Use with git pre-commit hooks
 
 ## Failure Handling

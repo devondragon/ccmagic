@@ -368,7 +368,7 @@ Updating `context/working-state.md`:
 🚀 Next Actions:
    1. Review spike details in file
    2. Schedule spike in sprint/week
-   3. Run `/start-spike spike-{{id}}` when ready
+   3. Run `/ccmagic:start-spike spike-{{id}}` when ready
 
 Created successfully! The spike is now in your backlog.
 ```

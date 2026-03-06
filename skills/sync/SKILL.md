@@ -231,8 +231,8 @@ if (conflict.includes('function') || conflict.includes('=>')) {
 ✅ Tests still passing
 
 ## Next Steps
-1. Run tests: `/test.md`
-2. Validate code: `/validate.md`
+1. Run tests: `/ccmagic:test`
+2. Validate code: `/ccmagic:validate`
 3. Continue development
 ```
 
@@ -348,10 +348,10 @@ git stash apply stash@{n}
 
 ## Integration with Other Commands
 
-- Run after `/status.md` shows you're behind
-- Run before `/pr.md` to avoid conflicts
+- Run after `/ccmagic:status` shows you're behind
+- Run before `/ccmagic:pr` to avoid conflicts
 - Include in daily workflow routine
-- Chain with `/validate.md` after sync
+- Chain with `/ccmagic:validate` after sync
 
 ## Execution
 

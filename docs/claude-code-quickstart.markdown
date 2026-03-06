@@ -33,21 +33,20 @@ The Claude Code Team Guide outlines a proven three-phase development process tha
 
 ### For Individual Developers
 ```bash
-# Install globally for all projects
-cd ~/.claude/commands/
-git clone https://github.com/devondragon/ccmagic.git
+# Clone the repository
+git clone https://github.com/devondragon/ccmagic.git ~/ccmagic
 
-# That's it! Commands are now available
+# Use as a plugin with Claude Code
+claude --plugin-dir ~/ccmagic
 ```
 
 ### For Teams
 ```bash
-# Add to your project (using submodule for updates)
-git submodule add https://github.com/devondragon/ccmagic.git .claude/commands/ccmagic
-git commit -m "Add CCMagic for team collaboration"
+# Add to your project
+git clone https://github.com/devondragon/ccmagic.git .claude/plugins/ccmagic
 
-# Team members initialize after cloning
-git submodule update --init --recursive
+# Use with Claude Code
+claude --plugin-dir .claude/plugins/ccmagic
 ```
 
 ---

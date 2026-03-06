@@ -161,10 +161,10 @@ mno7890 docs: Update auth documentation
 - Feature freeze in 5 days
 
 ## Quick Actions
-- Run `/test.md` to verify all tests pass
-- Run `/sync.md` to update with main
-- Run `/pr.md` to create pull request
-- Run `/validate.md` for pre-commit checks
+- Run `/ccmagic:test` to verify all tests pass
+- Run `/ccmagic:sync` to update with main
+- Run `/ccmagic:pr` to create pull request
+- Run `/ccmagic:validate` for pre-commit checks
 ```
 
 ## Interactive Features

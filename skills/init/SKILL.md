@@ -87,7 +87,7 @@ Read and follow the full mode template at `${CLAUDE_SKILL_DIR}/full-template.md`
 1. Update `context/project.md` with your project details
 2. Update `context/conventions.md` with your team standards
 3. Create your first task in `context/tasks/current/`
-4. Run `/start-task [id]` to begin development
+4. Run `/ccmagic:start-task [id]` to begin development
 
 ### Quick Reference:
 - **Check status:** Look at `context/working-state.md`

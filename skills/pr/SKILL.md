@@ -211,9 +211,9 @@ Create as draft if:
 
 ## Integration with Other Commands
 
-- Automatically run `/test.md` before creating PR
-- Use `/review.md` output to enhance PR description
-- Update `/status.md` after PR creation
+- Automatically run `/ccmagic:test` before creating PR
+- Use `/ccmagic:review` output to enhance PR description
+- Update `/ccmagic:status` after PR creation
 
 ## Execution
 

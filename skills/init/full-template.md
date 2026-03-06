@@ -220,7 +220,7 @@ Follow conventional commits:
 1. Select an epic from `context/epics/`
 2. Select a feature from `context/features/XXX-YY-name/`
 3. Choose a task from the feature's `tasks/todo/` directory
-4. Run `/start-task [task-id]` to begin
+4. Run `/ccmagic:start-task [task-id]` to begin
 ```
 
 ### 5. Creating `context/backlog.md`:

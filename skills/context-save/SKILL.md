@@ -317,8 +317,8 @@ cat metadata.json *.md > .claude/contexts/${CONTEXT_ID}.md
 ## Auto-save Triggers
 
 1. **Before Major Operations**
-   - Before running `/sync.md`
-   - Before creating PR with `/pr.md`
+   - Before running `/ccmagic:sync`
+   - Before creating PR with `/ccmagic:pr`
    - Before switching branches
 
 2. **At Milestones**
@@ -333,10 +333,10 @@ cat metadata.json *.md > .claude/contexts/${CONTEXT_ID}.md
 
 ## Integration with Other Commands
 
-- Automatically save before `/handoff.md`
-- Include context ID in `/pr.md` description
-- Reference in `/status.md` output
-- Load with `/context-load.md`
+- Automatically save before `/ccmagic:handoff`
+- Include context ID in `/ccmagic:pr` description
+- Reference in `/ccmagic:status` output
+- Load with `/ccmagic:context-load`
 
 ## Sharing Context
 

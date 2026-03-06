@@ -34,7 +34,7 @@ Then reference it with `claude --plugin-dir .claude/plugins/ccmagic`.
 #### Legacy: Slash Commands (Deprecated)
 
 <details>
-<summary>Previous installation method (still works but no longer recommended)</summary>
+<summary>Previous installation method (no longer supported)</summary>
 
 ```bash
 # Global installation

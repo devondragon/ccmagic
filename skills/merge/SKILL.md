@@ -196,7 +196,7 @@ git pull origin main
 
 ### 3. Task Management Updates
 - Mark task as completed in tracking system
-- Update feature status in `/status.md`
+- Update feature status in `/ccmagic:status`
 - Archive related documentation
 - Close related issues
 
@@ -248,10 +248,10 @@ gh pr create --title "HOTFIX: Fix issue from PR #123"
 
 ## Integration with Other Commands
 
-- Run `/test.md` before merge
-- Update `/status.md` after merge
-- Trigger `/sync.md` for team members
-- Archive context with `/context-save.md`
+- Run `/ccmagic:test` before merge
+- Update `/ccmagic:status` after merge
+- Trigger `/ccmagic:sync` for team members
+- Archive context with `/ccmagic:context-save`
 
 ## Safety Features
 

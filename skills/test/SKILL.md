@@ -114,9 +114,9 @@ If tests fail:
 
 ## Integration with Other Commands
 
-- Run automatically before `/pr.md`
-- Include in `/validate.md` workflow
-- Update status in `/status.md` after completion
+- Run automatically before `/ccmagic:pr`
+- Include in `/ccmagic:validate` workflow
+- Update status in `/ccmagic:status` after completion
 
 ## Execution
 
