@@ -1,66 +1,52 @@
 # ccmagic - Advanced Project Management Commands for Claude Code
 
-A powerful collection of custom slash commands that transform Claude Code into a comprehensive project management system. Maintain organized context, track work progress, manage features and tasks, and enable seamless handoffs between development sessions.
+A powerful collection of skills (formerly slash commands) that transform Claude Code into a comprehensive project management system. Maintain organized context, track work progress, manage features and tasks, and enable seamless handoffs between development sessions.
 
-**Now with Claude Code's latest features**: Parallel subagents, real-time TodoWrite integration, and optional MCP tool enhancements.
+**Now a Claude Code Plugin**: Parallel subagents, real-time TodoWrite integration, optional MCP tool enhancements, auto-invocation for read-only skills, and subagent isolation for heavy operations.
 
-## 🚀 Quick Start
+## Quick Start
 
 ### Installation
 
-#### Option 1: Global Installation (User-wide)
+#### Option 1: Plugin Installation (Recommended)
 
-1. Navigate to your Claude commands directory:
-   ```bash
-   cd ~/.claude/commands/
-   ```
+```bash
+# Clone the repository
+git clone https://github.com/devondragon/ccmagic.git ~/ccmagic
 
-2. Clone the ccmagic repository:
-   ```bash
-   git clone https://github.com/devondragon/ccmagic.git
-   ```
+# Use as a plugin with Claude Code
+claude --plugin-dir ~/ccmagic
+```
 
-3. Start using commands with the `/ccmagic:` prefix in Claude Code!
+Or add to your Claude Code settings to load automatically.
 
-#### Option 2: Project-local Installation
+#### Option 2: Project-local Plugin
 
-For team projects or when you want CCMagic versioned with your codebase:
+For team projects, clone into your project:
 
-**Using Git Submodule (Recommended for version control):**
 ```bash
 # From your project root
+git clone https://github.com/devondragon/ccmagic.git .claude/plugins/ccmagic
+```
+
+Then reference it with `claude --plugin-dir .claude/plugins/ccmagic`.
+
+#### Legacy: Slash Commands (Deprecated)
+
+<details>
+<summary>Previous installation method (still works but no longer recommended)</summary>
+
+```bash
+# Global installation
+cd ~/.claude/commands/
+git clone https://github.com/devondragon/ccmagic.git
+
+# Or as a submodule
 git submodule add https://github.com/devondragon/ccmagic.git .claude/commands/ccmagic
-git commit -m "Add CCMagic as submodule"
-
-# Team members can initialize after cloning
-git submodule update --init --recursive
 ```
 
-**Using Direct Copy (Simpler, no submodule complexity - but no updates):**
-```bash
-# From your project root
-mkdir -p .claude/commands
-
-# Download and extract (using curl)
-curl -L https://github.com/devondragon/ccmagic/archive/main.tar.gz | \
-  tar -xz -C .claude/commands --strip-components=1
-
-# Or using wget
-wget -qO- https://github.com/devondragon/ccmagic/archive/main.tar.gz | \
-  tar -xz -C .claude/commands --strip-components=1
-
-# Optional: Track commands in your project's git
-git add .claude/commands/
-git commit -m "Add CCMagic commands to project"
-
-# Or ignore them if you prefer team members to install separately
-echo ".claude/commands/" >> .gitignore
-```
-
-**Note:** Project-local commands take precedence over global commands. This allows teams to:
-- Pin specific CCMagic versions per project
-- Customize commands for project needs
-- Ensure all team members use the same command versions
+Note: The legacy slash command files have been removed. Use the plugin installation instead.
+</details>
 
 ### Your First Command
 
@@ -72,10 +58,10 @@ Initialize a new project with the CCMagic context system:
 
 This creates a project management structure in your repository's `context/` directory.
 
-## 📋 Available Commands
+## Available Skills
 
 ### Project Setup & Planning
-| Command               | Description                                        | Example                      |
+| Skill                 | Description                                        | Example                      |
 | --------------------- | -------------------------------------------------- | ---------------------------- |
 | `/ccmagic:init`       | Initialize CCMagic context (`--light` for minimal) | `/ccmagic:init --light`      |
 | `/ccmagic:plan`       | Interactive planning with EnterPlanMode support    | `/ccmagic:plan saas-app`     |
@@ -86,7 +72,7 @@ This creates a project management structure in your repository's `context/` dire
 | `/ccmagic:doctor`     | Diagnose setup issues and validate installation    | `/ccmagic:doctor`            |
 
 ### Task Management
-| Command                    | Description                                | Example                             |
+| Skill                      | Description                                | Example                             |
 | -------------------------- | ------------------------------------------ | ----------------------------------- |
 | `/ccmagic:create-features` | Create new features for an epic            | `/ccmagic:create-features epic-001` |
 | `/ccmagic:discuss-feature` | Gather implementation context before tasks | `/ccmagic:discuss-feature`          |
@@ -98,14 +84,14 @@ This creates a project management structure in your repository's `context/` dire
 | `/ccmagic:checkpoint`      | Save current progress                      | `/ccmagic:checkpoint`               |
 
 ### Features & Epics
-| Command                    | Description                        | Example                          |
+| Skill                      | Description                        | Example                          |
 | -------------------------- | ---------------------------------- | -------------------------------- |
 | `/ccmagic:current-feature` | View current feature status        | `/ccmagic:current-feature`       |
 | `/ccmagic:create-spike`    | Create research/investigation task | `/ccmagic:create-spike`          |
 | `/ccmagic:start-spike`     | Begin working on a spike           | `/ccmagic:start-spike spike-001` |
 
 ### Project Status & Documentation
-| Command                  | Description                              | Example                            |
+| Skill                    | Description                              | Example                            |
 | ------------------------ | ---------------------------------------- | ---------------------------------- |
 | `/ccmagic:status`        | Quick project status check (uses haiku)  | `/ccmagic:status`                  |
 | `/ccmagic:progress`      | Check progress and route to next action  | `/ccmagic:progress`                |
@@ -116,14 +102,14 @@ This creates a project management structure in your repository's `context/` dire
 | `/ccmagic:research`      | Deep iterative research with sources     | `/ccmagic:research JWT vs sessions`|
 
 ### Context Management
-| Command                 | Description                         | Example                 |
+| Skill                   | Description                         | Example                 |
 | ----------------------- | ----------------------------------- | ----------------------- |
 | `/ccmagic:context-save` | Save current context state          | `/ccmagic:context-save` |
 | `/ccmagic:context-load` | Load saved context state            | `/ccmagic:context-load` |
 | `/ccmagic:resume`       | Resume work from previous session   | `/ccmagic:resume`       |
 
 ### Development Workflow
-| Command                  | Description                                   | Example                            |
+| Skill                    | Description                                   | Example                            |
 | ------------------------ | --------------------------------------------- | ---------------------------------- |
 | `/ccmagic:quick`         | Execute ad-hoc task without feature overhead  | `/ccmagic:quick fix typo in login` |
 | `/ccmagic:test`          | Run project tests                             | `/ccmagic:test`                    |
@@ -134,7 +120,7 @@ This creates a project management structure in your repository's `context/` dire
 | `/ccmagic:analyze-impact`| Analyze dependencies and blast radius         | `/ccmagic:analyze-impact src/auth` |
 
 ### Git Integration
-| Command              | Description                                      | Example              |
+| Skill                | Description                                      | Example              |
 | -------------------- | ------------------------------------------------ | -------------------- |
 | `/ccmagic:push`      | Smart commit (logical groups) and push           | `/ccmagic:push`      |
 | `/ccmagic:pr`        | Create pull request                              | `/ccmagic:pr`        |
@@ -142,47 +128,38 @@ This creates a project management structure in your repository's `context/` dire
 | `/ccmagic:merge`     | Merge changes                                    | `/ccmagic:merge`     |
 | `/ccmagic:sync`      | Sync with remote repository                      | `/ccmagic:sync`      |
 
-## ⚡ Claude Code Integration
+## Claude Code Plugin Features
 
-CCMagic leverages Claude Code's latest features for maximum efficiency:
+### Auto-Invocation Control
+Skills are categorized by safety:
+
+**Auto-invocable** (read-only/analysis - Claude can suggest these automatically):
+`status`, `current-task`, `current-feature`, `progress`, `blockers`, `daily-standup`, `help`, `doctor`, `review`, `validate`, `test`, `analyze-impact`, `discuss-feature`, `pr-feedback`, `research`
+
+**Manual only** (`disable-model-invocation: true` - require explicit `/ccmagic:` invocation):
+`init`, `checkpoint`, `complete-task`, `push`, `merge`, `pr`, `sync`, `quick`, `quick-start`, `create-features`, `create-tasks`, `create-spike`, `start-task`, `start-spike`, `add-backlog`, `context-save`, `context-load`, `resume`, `settings`, `codex-review`, `plan`, `handoff`, `map-codebase`, `debug`, `verify`
+
+### Subagent Isolation (`context: fork`)
+Heavy skills run in isolated subagents to avoid polluting your main conversation:
+`map-codebase`, `review`, `codex-review`, `validate`, `analyze-impact`, `research`, `daily-standup`, `handoff`, `doctor`
 
 ### Parallel Subagents
-Commands like `/review` and `/analyze-impact` use the **Task tool with Explore agents** to analyze code in parallel:
-```
-# /review launches 3 parallel agents:
-Agent 1: Code quality analysis
-Agent 2: Security & performance review
-Agent 3: Architecture & integration check
-```
+Skills like `/review` and `/analyze-impact` use the Task tool with Explore agents to analyze code in parallel.
 
 ### Real-time Progress with TodoWrite
-Commands populate Claude Code's native todo UI for visibility:
+Skills populate Claude Code's native todo UI for visibility:
 - `/start-task` creates checklist from acceptance criteria
 - `/plan` shows next steps after planning
 - Progress updates in real-time as you work
 
-### Parallel Execution
-Commands like `/validate` run independent checks simultaneously:
-```
-# These run IN PARALLEL (single message, multiple Bash calls):
-- Linting
-- Type checking
-- Format checking
-- Security scanning
-
-# Then SEQUENTIAL (depends on above):
-- Tests
-- Build
-```
-
 ### Model Tiering
-Commands use appropriate models for their complexity:
-- **haiku**: Fast operations (`/status`, `/daily-standup`, `/blockers`)
+Skills use appropriate models for their complexity:
+- **haiku**: Fast operations (`/status`, `/daily-standup`, `/blockers`, `/progress`, `/settings`)
 - **sonnet**: Standard operations (`/review`, `/validate`, `/start-task`)
-- **opus**: Complex reasoning (`/plan`, `/create-features`, `/create-tasks`, `/research`)
+- **opus**: Complex reasoning (`/plan`, `/create-features`, `/research`, `/start-spike`)
 
 ### Optional MCP Tool Integration
-Commands integrate with external MCP tools when available, with graceful fallback:
+Skills integrate with external MCP tools when available, with graceful fallback:
 
 | Tool | Purpose | Fallback |
 |------|---------|----------|
@@ -190,18 +167,18 @@ Commands integrate with external MCP tools when available, with graceful fallbac
 | `mcp__pal__analyze` | Deep analysis | Standard analysis |
 | `mcp__pal__planner` | Planning assistance | Task tool with Plan agent |
 
-**All commands work fully without MCP tools** - they're optional enhancements.
+**All skills work fully without MCP tools** - they're optional enhancements.
 
 ### Optional CLI Tool Integration
-Some commands integrate with external CLI tools for enhanced capabilities:
+Some skills integrate with external CLI tools for enhanced capabilities:
 
-| Tool | Command | Purpose | Fallback |
-|------|---------|---------|----------|
+| Tool | Skill | Purpose | Fallback |
+|------|-------|---------|----------|
 | Codex CLI | `/ccmagic:codex-review` | OpenAI's Codex for code review | `/ccmagic:review` |
 
-Install Codex with `npm install -g @openai/codex`. Commands gracefully fall back when tools aren't installed.
+Install Codex with `npm install -g @openai/codex`. Skills gracefully fall back when tools aren't installed.
 
-## 🏗️ CCMagic Context System
+## CCMagic Context System
 
 CCMagic creates a hierarchical project organization that scales from simple to complex projects:
 
@@ -251,7 +228,7 @@ Tasks follow the format `XXX-YY-ZZZ-description`:
 - `ZZZ`: Task number (003)
 - Example: `001-01-003-add-login-form`
 
-## 🎯 Use Cases
+## Use Cases
 
 ### Solo Developer
 Start simple with minimal setup:
@@ -282,7 +259,7 @@ Manage multiple epics and features:
 /ccmagic:start-task 001-02-005
 ```
 
-## 💡 Best Practices
+## Best Practices
 
 ### For Maximum Productivity
 
@@ -300,66 +277,43 @@ Manage multiple epics and features:
 - Document decisions in working-state files
 - Review `/ccmagic:status` at the start of each session
 
-## 🛠️ Creating Custom Commands
+## Plugin Structure
 
-Add new commands by creating `.md` files in the repository root:
-
-### Example Command Structure
-```markdown
----
-description: Brief description of the command
-argument-hint: expected arguments
-allowed-tools: Read(*), Bash(git:*), Task(*), TodoWrite(*)
-model: sonnet
----
-
-# Command Title
-
-Your command prompt here using:
-- $ARGUMENTS for dynamic values
-- Markdown for formatting
+```
+ccmagic/
+├── .claude-plugin/
+│   └── plugin.json            # Plugin manifest
+├── skills/
+│   ├── add-backlog/SKILL.md   # 40 skill directories
+│   ├── analyze-impact/SKILL.md
+│   ├── ...
+│   └── verify/SKILL.md
+├── docs/                      # Documentation
+├── README.markdown
+└── LICENSE
 ```
 
-### Available Tools
-Commands can request access to:
+## Contributing
 
-**Core Tools:**
-- `Write(*)` - File writing
-- `Read(*)` - File reading
-- `Bash(git:*)` - Git commands (use `Bash(*)` for all shell access)
-- `Glob(*)` - File pattern matching
-- `Grep(*)` - Content searching
-- `LS(*)` - Directory listing
+We welcome contributions! To add new skills:
 
-**Claude Code Features:**
-- `Task(*)` - Spawn subagents (Explore, Plan, general-purpose)
-- `TodoWrite(*)` - Real-time progress tracking in UI
-- `EnterPlanMode(*)` - Interactive planning workflow
-- `AskUserQuestion(*)` - Multi-choice user prompts
+1. Fork the repository
+2. Create a new `skills/<name>/SKILL.md` file
+3. Include comprehensive frontmatter (`description`, `allowed-tools`, `model`)
+4. Add `disable-model-invocation: true` for action skills
+5. Add `context: fork` for heavy/long-running skills
+6. Test thoroughly with Claude Code
+7. Update this README with your skill
+8. Submit a pull request
 
-**Optional MCP Tools (graceful fallback if unavailable):**
-- `mcp__pal__codereview(*)` - Expert code review
-- `mcp__pal__thinkdeep(*)` - Deep analysis
-- `mcp__pal__analyze(*)` - Comprehensive analysis
+### Contribution Guidelines
+- Follow existing skill patterns and frontmatter conventions
+- Keep skill descriptions concise (1 line) for context budget
+- Document complex workflows in the SKILL.md body
+- Extract templates to supporting files if SKILL.md exceeds 500 lines
+- Test with various project types
 
-### Model Selection
-Choose appropriate models in frontmatter (aliases auto-update to latest versions):
-```yaml
-model: haiku   # Fast, simple operations
-model: sonnet  # Standard operations (default)
-model: opus    # Complex reasoning
-```
-
-### Parallel Execution Pattern
-For commands that run independent operations:
-```markdown
-Run these checks IN PARALLEL using multiple Bash tool calls in a single message:
-- Check 1: [command]
-- Check 2: [command]
-- Check 3: [command]
-```
-
-## 📚 Documentation
+## Documentation
 
 Detailed documentation available in the `/docs` directory:
 - [Getting Started Guide](docs/getting-started.markdown)
@@ -368,38 +322,21 @@ Detailed documentation available in the `/docs` directory:
 - [Directory Structure Reference](docs/directory-structure.markdown)
 - [Context Systems Reference](docs/context-systems-reference.markdown)
 
-
-## 🤝 Contributing
-
-We welcome contributions! To add new commands:
-
-1. Fork the repository
-2. Create a new `.md` file for your command
-3. Test thoroughly with Claude Code
-4. Update this README with your command
-5. Submit a pull request
-
-### Contribution Guidelines
-- Follow existing command patterns
-- Include comprehensive frontmatter
-- Document complex workflows
-- Test with various project types
-- Update relevant documentation
-
-## 📝 License
+## License
 
 Apache 2.0 License - See [LICENSE](LICENSE) file for details
 
-## 🔗 Links
+## Links
 
 - [Claude Code Documentation](https://docs.anthropic.com/en/docs/claude-code)
 - [Report Issues](https://github.com/devondragon/ccmagic/issues)
 - [Feature Requests](https://github.com/devondragon/ccmagic/discussions)
 
-## 🎉 Why CCMagic?
+## Why CCMagic?
 
 CCMagic transforms Claude Code from a coding assistant into a complete project management system. It provides:
 
+- **Plugin Architecture**: First-class Claude Code plugin with auto-invocation control and subagent isolation
 - **Structured Organization**: Hierarchical task management that scales from solo to enterprise
 - **Context Preservation**: Never lose track of what you were working on
 - **Team Collaboration**: Smooth handoffs, blocker tracking, and clear communication
