@@ -313,6 +313,14 @@ Detailed documentation available in the `/docs` directory:
 - [Directory Structure Reference](docs/directory-structure.markdown)
 - [Context Systems Reference](docs/context-systems-reference.markdown)
 
+## Legacy Slash Commands Format
+
+Looking for the original slash commands version (root-level `.md` files installed to `~/.claude/commands/`)? It's preserved at the [v1.0.0 release](https://github.com/devondragon/ccmagic/releases/tag/v1.0.0):
+
+```bash
+git clone --branch v1.0.0 https://github.com/devondragon/ccmagic.git ~/.claude/commands/ccmagic
+```
+
 ## License
 
 Apache 2.0 License - See [LICENSE](LICENSE) file for details
