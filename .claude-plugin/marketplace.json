@@ -1,0 +1,29 @@
+{
+  "name": "ccmagic",
+  "owner": {
+    "name": "Devon Dragon",
+    "email": "devondragon@github.com"
+  },
+  "metadata": {
+    "description": "Advanced project management skills for Claude Code"
+  },
+  "plugins": [
+    {
+      "name": "ccmagic",
+      "source": {
+        "source": "github",
+        "repo": "devondragon/ccmagic"
+      },
+      "description": "40 project management skills for Claude Code - task tracking, context management, code review, and team collaboration",
+      "version": "2.0.0",
+      "author": {
+        "name": "Devon Dragon"
+      },
+      "homepage": "https://github.com/devondragon/ccmagic",
+      "repository": "https://github.com/devondragon/ccmagic",
+      "license": "Apache-2.0",
+      "keywords": ["project-management", "task-tracking", "code-review", "context-management", "collaboration", "workflow"],
+      "category": "productivity"
+    }
+  ]
+}

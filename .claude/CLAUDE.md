@@ -2,119 +2,100 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-It is NOT read automatically in this locaiton and must be specifically referenced, however this is the only way to avoid it showing up as a slash command to consuming projects.
+It is NOT read automatically in this location and must be specifically referenced, however this is the only way to avoid it showing up as a slash command to consuming projects.
 
 ## Repository Overview
 
-This is the **ccmagic** project - a collection of custom slash commands for Claude Code that implement a comprehensive project management and context system. These commands help developers maintain organized project context, track work progress, and enable smooth handoffs between development sessions.
+This is the **ccmagic** project - a Claude Code Plugin providing 40 skills for comprehensive project management. Skills help developers maintain organized project context, track work progress, and enable smooth handoffs between development sessions.
 
-## Development Commands
+## Architecture
 
-### Core CCMagic Commands
-All commands are available with the `/ccmagic:` prefix when this repository is cloned to `~/.claude/commands/`:
+### Plugin Format
+CCMagic is a Claude Code Plugin (v2.0+) with this structure:
 
-- `/ccmagic:init` - Initialize CCMagic context structure in a project
-- `/ccmagic:plan` - Interactive project planning and requirements gathering
-- `/ccmagic:start-task [task-id]` - Start working on a specific task
-- `/ccmagic:checkpoint` - Save current progress
-- `/ccmagic:complete-task [task-id]` - Mark task as completed
-- `/ccmagic:handoff` - Create detailed handoff documentation
-- `/ccmagic:status` - Check current project and task status
-- `/ccmagic:add-backlog` - Add items to the project backlog
-- `/ccmagic:context-save` - Save current context state
-- `/ccmagic:context-load` - Load saved context state
-
-### Testing & Validation
-- `/ccmagic:test` - Run project tests
-- `/ccmagic:validate` - Validate code changes
-- `/ccmagic:review` - Code review workflow
-
-### Git Workflow
-- `/ccmagic:pr` - Create pull request
-- `/ccmagic:merge` - Merge changes
-- `/ccmagic:sync` - Sync with remote repository
-
-## Code Architecture
-
-### Repository Structure
 ```
 ccmagic/
-├── *.md                    # Command definition files (each file = one command)
-├── docs/                   # Documentation
-│   ├── getting-started.markdown
-│   ├── directory-structure.markdown
-│   ├── context-systems-reference.markdown
-│   ├── claude-code-quickstart.markdown
-│   └── claude-code-team-guide.markdown
+├── .claude-plugin/
+│   └── plugin.json            # Plugin manifest (name, version, description)
+├── skills/
+│   ├── <name>/SKILL.md        # 40 skill directories, each with SKILL.md
+│   └── init/
+│       ├── SKILL.md           # Skill definition
+│       └── full-template.md   # Supporting file (referenced via ${CLAUDE_SKILL_DIR})
+├── docs/                      # Documentation
+├── README.md            # Installation and usage
 └── LICENSE
 ```
 
-### Command File Structure
-Each `.md` file in the root directory defines a custom command with:
-- **Frontmatter**: YAML configuration including:
-  - `allowed-tools`: Tools the command can use
-  - `description`: Brief command description
-  - `argument-hint`: Expected arguments
-  - `model`: Optional model override
-- **Body**: Command prompt template using:
-  - `$ARGUMENTS` for dynamic values
-  - Markdown formatting for instructions
+### Skill Frontmatter
+Each `SKILL.md` uses YAML frontmatter with these fields:
+- `description` (required): One-line description
+- `allowed-tools` (required): Tool access list
+- `model`: haiku | sonnet | opus
+- `argument-hint`: Expected arguments
+- `disable-model-invocation: true`: Prevents auto-invocation (for action skills)
+- `context: fork`: Runs in subagent isolation (for heavy skills)
 
-### Key Concepts
+### Skill Categories
+- **Auto-invocable** (read-only): `status`, `current-task`, `current-feature`, `progress`, `blockers`, `daily-standup`, `help`, `doctor`, `review`, `validate`, `test`, `analyze-impact`, `discuss-feature`, `pr-feedback`, `research`
+- **Manual only** (`disable-model-invocation: true`): All action/write skills
+- **Forked** (`context: fork`): `map-codebase`, `review`, `codex-review`, `validate`, `analyze-impact`, `research`, `daily-standup`, `handoff`, `doctor`
 
-#### CCMagic Context System
-The commands implement a hierarchical project organization:
-- **Epics**: High-level feature groups (e.g., `epic-001-mvp.md`)
-- **Features**: Implementation units within epics (e.g., `epic-001-f01-core/`)
-- **Tasks**: Specific work items within features
-- **Spikes**: One-off research/investigation tasks
+## Development Commands
 
-#### Directory Structure Created by `/ccmagic:init`
-```
-context/
-├── project.md           # Project overview
-├── conventions.md       # Coding standards
-├── working-state.md     # Current status
-├── backlog.md          # Future work
-├── epics/              # Major initiatives
-├── features/           # Feature implementations
-├── spikes/             # Research tasks
-├── knowledge/          # Technical docs
-└── sessions/           # Work history
+### Testing Locally
+```bash
+# Test the plugin locally
+claude --plugin-dir ./
+
+# Verify all skills appear
+# Then test representative skills: status, init, review, push, research
 ```
 
 ## Important Conventions
 
-### When Modifying Commands
-1. Maintain backward compatibility - existing projects rely on these commands
-2. Test commands in isolation before committing
-3. Update relevant documentation in `/docs` when changing command behavior
-4. Follow the existing command file naming pattern (kebab-case)
+### When Modifying Skills
+1. Maintain backward compatibility - existing projects rely on these skills
+2. Test skills in isolation before committing
+3. Update relevant documentation in `/docs` when changing skill behavior
+4. Follow the existing skill directory naming pattern (kebab-case)
+5. Keep SKILL.md under 500 lines - extract templates to supporting files
+6. Reference supporting files via `${CLAUDE_SKILL_DIR}/filename.md`
 
-### When Adding New Commands
-1. Create a new `.md` file in the root directory
+### When Adding New Skills
+1. Create a new `skills/<name>/SKILL.md` file
 2. Include comprehensive frontmatter configuration
-3. Use clear, actionable prompts in the command body
-4. Document the command in README.markdown
-5. Consider which tools the command needs in `allowed-tools`
+3. Add `disable-model-invocation: true` for skills with side effects
+4. Add `context: fork` for heavy/long-running skills
+5. Keep descriptions concise (1 line) for context budget
+6. Document the skill in README.md
+7. Consider which tools the skill needs in `allowed-tools`
+
+### Frontmatter Fields Reference
+```yaml
+---
+description: Brief one-line description
+allowed-tools: Read(*), Bash(git:*), Glob(*)
+model: sonnet
+argument-hint: [expected-args]
+disable-model-invocation: true  # For action skills
+context: fork                    # For heavy skills
+---
+```
 
 ### Git Workflow
 - Branch from `main` for new features
 - Use descriptive commit messages
-- Test commands thoroughly before creating PRs
+- Test skills thoroughly before creating PRs
 - Update documentation alongside code changes
-
-## Testing
-
-To test a command locally:
-1. Clone to `~/.claude/commands/ccmagic/`
-2. Run the command in Claude Code: `/ccmagic:commandname [args]`
-3. Verify expected behavior and tool usage
 
 ## Notes for Development
 
-- Commands should be self-contained and not depend on external state
-- Use appropriate model selections in frontmatter for command complexity
-- Keep command prompts focused on single responsibilities
-- Document complex workflows in the command body itself
-- Consider token usage when designing commands that read many files
+- Skills should be self-contained and not depend on external state
+- Use appropriate model selections in frontmatter for skill complexity
+- Keep skill prompts focused on single responsibilities
+- Document complex workflows in the skill body itself
+- Consider token usage when designing skills that read many files
+- `$ARGUMENTS` works in skills for dynamic values
+- `${CLAUDE_SKILL_DIR}` references supporting files in the skill directory
+- `${CLAUDE_SESSION_ID}` available for session-specific operations

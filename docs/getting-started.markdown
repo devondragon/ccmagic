@@ -1,6 +1,6 @@
 # Getting Started with CCMagic
 
-This guide will help you get started with the CCMagic custom commands collection for Claude Code.
+This guide will help you get started with CCMagic, a Claude Code plugin for project management.
 
 ## Prerequisites
 
@@ -9,27 +9,34 @@ This guide will help you get started with the CCMagic custom commands collection
 
 ## Installation
 
-### Option 1: Global Installation (Recommended for Individual Developers)
+### Option 1: Marketplace (Recommended)
 
-```bash
-# Navigate to your Claude commands directory
-cd ~/.claude/commands/
+```shell
+# Add the ccmagic marketplace
+/plugin marketplace add devondragon/ccmagic
 
-# Clone the ccmagic repository
-git clone https://github.com/devondragon/ccmagic.git
-
-# That's it! Commands are now available with /ccmagic: prefix
+# Install the plugin
+/plugin install ccmagic@ccmagic
 ```
 
-### Option 2: Project-Local Installation (Recommended for Teams)
+### Option 2: Direct Plugin Installation
 
 ```bash
-# From your project root - using git submodule
-git submodule add https://github.com/devondragon/ccmagic.git .claude/commands/ccmagic
-git commit -m "Add CCMagic commands"
+# Clone the repository
+git clone https://github.com/devondragon/ccmagic.git ~/ccmagic
 
-# Team members initialize after cloning
-git submodule update --init --recursive
+# Use as a plugin with Claude Code
+claude --plugin-dir ~/ccmagic
+```
+
+### Option 3: Project-Local Plugin (Recommended for Teams)
+
+```bash
+# From your project root
+git clone https://github.com/devondragon/ccmagic.git .claude/plugins/ccmagic
+
+# Use with Claude Code
+claude --plugin-dir .claude/plugins/ccmagic
 ```
 
 ## Verify Installation
@@ -39,7 +46,7 @@ In Claude Code, try:
 /ccmagic:help
 ```
 
-You should see the CCMagic help system with available commands.
+You should see the CCMagic help system with available skills.
 
 ## Your First Project
 
@@ -68,10 +75,10 @@ You should see the CCMagic help system with available commands.
 # - Session tracking
 ```
 
-## Essential Commands
+## Essential Skills
 
-| Command | Purpose |
-|---------|---------|
+| Skill | Purpose |
+|-------|---------|
 | `/ccmagic:init` | Initialize project structure |
 | `/ccmagic:status` | Check current project status |
 | `/ccmagic:progress` | Check progress and route to next action |
@@ -82,7 +89,7 @@ You should see the CCMagic help system with available commands.
 | `/ccmagic:verify` | Verify acceptance criteria are met |
 | `/ccmagic:resume` | Resume work from previous session |
 | `/ccmagic:research` | Deep research with source evaluation |
-| `/ccmagic:help` | Get help with all commands |
+| `/ccmagic:help` | Get help with all skills |
 
 ## Typical Workflow
 
@@ -114,6 +121,6 @@ When returning to a project after a break:
 
 ## Getting Help
 
-- Run `/ccmagic:help` for command reference
+- Run `/ccmagic:help` for skill reference
 - Run `/ccmagic:doctor` to diagnose setup issues
 - Check [GitHub Issues](https://github.com/devondragon/ccmagic/issues) for support
