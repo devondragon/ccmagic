@@ -8,7 +8,17 @@ A powerful collection of skills (formerly slash commands) that transform Claude 
 
 ### Installation
 
-#### Option 1: Plugin Installation (Recommended)
+#### Option 1: Marketplace (Recommended)
+
+```shell
+# Add the ccmagic marketplace
+/plugin marketplace add devondragon/ccmagic
+
+# Install the plugin
+/plugin install ccmagic@ccmagic
+```
+
+#### Option 2: Direct Plugin Installation
 
 ```bash
 # Clone the repository
@@ -18,9 +28,7 @@ git clone https://github.com/devondragon/ccmagic.git ~/ccmagic
 claude --plugin-dir ~/ccmagic
 ```
 
-Or add to your Claude Code settings to load automatically.
-
-#### Option 2: Project-local Plugin
+#### Option 3: Project-local Plugin
 
 For team projects, clone into your project:
 
@@ -30,23 +38,6 @@ git clone https://github.com/devondragon/ccmagic.git .claude/plugins/ccmagic
 ```
 
 Then reference it with `claude --plugin-dir .claude/plugins/ccmagic`.
-
-#### Legacy: Slash Commands (Deprecated)
-
-<details>
-<summary>Previous installation method (no longer supported)</summary>
-
-```bash
-# Global installation
-cd ~/.claude/commands/
-git clone https://github.com/devondragon/ccmagic.git
-
-# Or as a submodule
-git submodule add https://github.com/devondragon/ccmagic.git .claude/commands/ccmagic
-```
-
-Note: The legacy slash command files have been removed. Use the plugin installation instead.
-</details>
 
 ### Your First Command
 
@@ -289,7 +280,7 @@ ccmagic/
 │   ├── ...
 │   └── verify/SKILL.md
 ├── docs/                      # Documentation
-├── README.markdown
+├── README.md
 └── LICENSE
 ```
 
