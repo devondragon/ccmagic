@@ -9,7 +9,17 @@ This guide will help you get started with CCMagic, a Claude Code plugin for proj
 
 ## Installation
 
-### Option 1: Plugin Installation (Recommended)
+### Option 1: Marketplace (Recommended)
+
+```shell
+# Add the ccmagic marketplace
+/plugin marketplace add devondragon/ccmagic
+
+# Install the plugin
+/plugin install ccmagic@ccmagic
+```
+
+### Option 2: Direct Plugin Installation
 
 ```bash
 # Clone the repository
@@ -19,7 +29,7 @@ git clone https://github.com/devondragon/ccmagic.git ~/ccmagic
 claude --plugin-dir ~/ccmagic
 ```
 
-### Option 2: Project-Local Plugin (Recommended for Teams)
+### Option 3: Project-Local Plugin (Recommended for Teams)
 
 ```bash
 # From your project root
@@ -28,19 +38,6 @@ git clone https://github.com/devondragon/ccmagic.git .claude/plugins/ccmagic
 # Use with Claude Code
 claude --plugin-dir .claude/plugins/ccmagic
 ```
-
-### Legacy: Slash Commands (Deprecated)
-
-<details>
-<summary>Previous installation via ~/.claude/commands/ (no longer recommended)</summary>
-
-```bash
-cd ~/.claude/commands/
-git clone https://github.com/devondragon/ccmagic.git
-```
-
-Note: The legacy slash command files have been removed in v2.0. Use the plugin installation instead.
-</details>
 
 ## Verify Installation
 

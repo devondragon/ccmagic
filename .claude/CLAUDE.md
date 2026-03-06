@@ -23,7 +23,7 @@ ccmagic/
 │       ├── SKILL.md           # Skill definition
 │       └── full-template.md   # Supporting file (referenced via ${CLAUDE_SKILL_DIR})
 ├── docs/                      # Documentation
-├── README.markdown            # Installation and usage
+├── README.md            # Installation and usage
 └── LICENSE
 ```
 
@@ -68,7 +68,7 @@ claude --plugin-dir ./
 3. Add `disable-model-invocation: true` for skills with side effects
 4. Add `context: fork` for heavy/long-running skills
 5. Keep descriptions concise (1 line) for context budget
-6. Document the skill in README.markdown
+6. Document the skill in README.md
 7. Consider which tools the skill needs in `allowed-tools`
 
 ### Frontmatter Fields Reference

@@ -5,11 +5,11 @@
 
 ## Introduction: What is CCMagic?
 
-CCMagic is a powerful collection of custom slash commands that implement the structured AI-assisted development methodology described in the [Claude Code Team Guide](claude-code-team-guide.markdown). It transforms Claude Code from a coding assistant into a comprehensive project management system that enforces best practices, manages context efficiently, and enables seamless collaboration.
+CCMagic is a powerful Claude Code plugin that implements the structured AI-assisted development methodology described in the [Claude Code Team Guide](claude-code-team-guide.markdown). It transforms Claude Code from a coding assistant into a comprehensive project management system that enforces best practices, manages context efficiently, and enables seamless collaboration.
 
 ### Why CCMagic?
 
-The Claude Code Team Guide outlines a proven three-phase development process that maximizes AI productivity while avoiding common pitfalls. However, manually following all these practices can be overwhelming. CCMagic automates the process through simple slash commands, making it easy to:
+The Claude Code Team Guide outlines a proven three-phase development process that maximizes AI productivity while avoiding common pitfalls. However, manually following all these practices can be overwhelming. CCMagic automates the process through skills, making it easy to:
 
 - **Maintain Clean Context**: Automatically organize and load only relevant files
 - **Structure Work Hierarchically**: Manage epics → features → tasks effortlessly
