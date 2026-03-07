@@ -10,9 +10,9 @@
   "plugins": [
     {
       "name": "ccmagic",
-      "source": ".",
+      "source": "./",
       "description": "40 project management skills for Claude Code - task tracking, context management, code review, and team collaboration",
-      "version": "2.1.0",
+      "version": "2.1.1",
       "author": {
         "name": "Devon Hillard"
       },
