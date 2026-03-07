@@ -4,7 +4,6 @@ allowed-tools: Write(*), Read(*), Bash(git:*), Glob(*), LS(*), TodoWrite(*), Tas
 description: Start working on a specific task and begin development
 argument-hint: task-id (optional, e.g., task-001 or epic-001-f01-task-001)
 model: sonnet
-disable-model-invocation: true
 ---
 
 # Start Task and Begin Development

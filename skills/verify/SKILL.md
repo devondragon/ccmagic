@@ -4,7 +4,6 @@ allowed-tools: Read(*), Bash(*), Glob(*), LS(*), Grep(*), Task(*), Write(*), Ask
 description: Interactive verification of task acceptance criteria
 argument-hint: "[task-id or 'current']"
 model: sonnet
-disable-model-invocation: true
 ---
 
 # Verify Task Completion

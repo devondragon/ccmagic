@@ -3,7 +3,6 @@ user-invocable: true
 allowed-tools: Read(*), Write(*), AskUserQuestion(*)
 description: Configure CCMagic preferences
 model: haiku
-disable-model-invocation: true
 ---
 
 # CCMagic Settings

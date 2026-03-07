@@ -4,7 +4,6 @@ allowed-tools: Write(*), Read(*), Bash(git:*), LS(*)
 description: Save current progress and update working state
 argument-hint: [optional commit message]
 model: sonnet
-disable-model-invocation: true
 ---
 
 # Checkpoint Progress

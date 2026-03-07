@@ -4,7 +4,6 @@ allowed-tools: Read(*), Bash(git:*), Bash(gh:*), Bash(glab:*), Bash(curl:*), Glo
 description: Safely merge approved PRs with strategy-aware branch handling
 argument-hint: [PR-number] (optional)
 model: sonnet
-disable-model-invocation: true
 ---
 
 # Merge Command

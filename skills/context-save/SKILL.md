@@ -3,7 +3,6 @@ user-invocable: true
 description: Save current context state
 allowed-tools: Read(*), Write(*), Bash(git:*), Glob(*)
 model: sonnet
-disable-model-invocation: true
 ---
 
 # Context Save Command

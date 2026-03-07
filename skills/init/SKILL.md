@@ -4,7 +4,6 @@ allowed-tools: Write(*), Bash(git add:*), Bash(git status:*), Bash(git commit:*)
 description: Initializes CCMagic context (use --light for minimal setup)
 argument-hint: [--light | --full]
 model: sonnet
-disable-model-invocation: true
 ---
 
 # Initialize CCMagic Project

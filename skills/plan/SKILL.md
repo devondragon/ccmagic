@@ -4,7 +4,6 @@ allowed-tools: Write(*), Read(*), Bash(mkdir -p:*), Bash(mkdir:*), Bash(touch:*)
 description: Interactive project planning session to define scope and generate technical requirements
 argument-hint: [project-type or domain]
 model: opus
-disable-model-invocation: true
 ---
 
 # Project Planning Session

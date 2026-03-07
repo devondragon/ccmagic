@@ -4,7 +4,6 @@ allowed-tools: Read(*), Write(*), Bash(*), Glob(*), Grep(*), Task(*), AskUserQue
 description: Systematic debugging with persistent investigation
 argument-hint: "[description of the bug]"
 model: sonnet
-disable-model-invocation: true
 ---
 
 # Structured Debugging

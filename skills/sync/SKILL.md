@@ -3,7 +3,6 @@ user-invocable: true
 allowed-tools: Read(*), Bash(git:*), Glob(*)
 description: Synchronize branch with base, handling conflicts intelligently
 model: sonnet
-disable-model-invocation: true
 ---
 
 # Sync Command

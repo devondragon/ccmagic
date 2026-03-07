@@ -4,7 +4,6 @@ allowed-tools: Write(*), Read(*), Edit(*), Bash(*), Glob(*), LS(*), Grep(*), Tas
 description: Execute ad-hoc task without feature overhead
 argument-hint: "[description of what to do]"
 model: sonnet
-disable-model-invocation: true
 ---
 
 # Quick Task Execution

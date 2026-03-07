@@ -3,7 +3,6 @@ user-invocable: true
 allowed-tools: Read(*), Glob(*), LS(*), Write(*), Task(*), Bash(rm:*)
 description: Resume work from previous session
 model: sonnet
-disable-model-invocation: true
 ---
 
 # Resume Previous Work

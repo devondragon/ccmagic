@@ -33,13 +33,15 @@ Each `SKILL.md` uses YAML frontmatter with these fields:
 - `allowed-tools` (required): Tool access list
 - `model`: haiku | sonnet | opus
 - `argument-hint`: Expected arguments
-- `disable-model-invocation: true`: Prevents auto-invocation (for action skills)
 - `context: fork`: Runs in subagent isolation (for heavy skills)
 
 ### Skill Categories
-- **Auto-invocable** (read-only): `status`, `current-task`, `current-feature`, `progress`, `blockers`, `daily-standup`, `help`, `doctor`, `review`, `validate`, `test`, `analyze-impact`, `discuss-feature`, `pr-feedback`, `research`
-- **Manual only** (`disable-model-invocation: true`): All action/write skills
+- **All skills are user-invocable and model-invocable** (see note below)
 - **Forked** (`context: fork`): `map-codebase`, `review`, `codex-review`, `validate`, `analyze-impact`, `research`, `daily-standup`, `handoff`, `doctor`
+
+> **Note:** `disable-model-invocation: true` is intentionally NOT used because it is broken
+> for plugin skills (see [#22345](https://github.com/anthropics/claude-code/issues/22345),
+> [#24042](https://github.com/anthropics/claude-code/issues/24042)). Re-evaluate when fixed upstream.
 
 ## Development Commands
 
@@ -65,7 +67,7 @@ claude --plugin-dir ./
 ### When Adding New Skills
 1. Create a new `skills/<name>/SKILL.md` file
 2. Include comprehensive frontmatter configuration
-3. Add `disable-model-invocation: true` for skills with side effects
+3. Do NOT use `disable-model-invocation: true` (broken for plugin skills, see note above)
 4. Add `context: fork` for heavy/long-running skills
 5. Keep descriptions concise (1 line) for context budget
 6. Document the skill in README.md
@@ -78,7 +80,6 @@ description: Brief one-line description
 allowed-tools: Read(*), Bash(git:*), Glob(*)
 model: sonnet
 argument-hint: [expected-args]
-disable-model-invocation: true  # For action skills
 context: fork                    # For heavy skills
 ---
 ```

@@ -3,7 +3,6 @@ user-invocable: true
 description: Smart commit and push with logical grouping
 allowed-tools: Read(*), Bash(git:*), Glob(*), AskUserQuestion(*), Write(*)
 model: sonnet
-disable-model-invocation: true
 ---
 
 # Push Command

@@ -4,7 +4,6 @@ allowed-tools: Write(*), Read(*), Bash(git:*), Glob(*), LS(*), TodoWrite(*), mcp
 description: Start working on a research spike or investigation task
 argument-hint: spike-id (optional, e.g., spike-001 or spike-001-research-auth)
 model: opus
-disable-model-invocation: true
 ---
 
 # Start Spike and Begin Investigation

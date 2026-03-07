@@ -4,7 +4,6 @@ allowed-tools: Write(*), Read(*), Bash(mkdir -p:*), Glob(*), LS(*), mcp__pal__pl
 description: Generate tasks for a specific feature
 argument-hint: feature-path (optional, e.g., epic-001-f01-core or epic-002-f01-login)
 model: sonnet
-disable-model-invocation: true
 ---
 
 # Task Generation for Feature

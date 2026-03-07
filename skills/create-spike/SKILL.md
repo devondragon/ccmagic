@@ -4,7 +4,6 @@ allowed-tools: Write(*), Read(*), LS(*), Glob(*), Bash(mkdir:*)
 description: Create a research or investigation task
 argument-hint: spike-description (e.g., "evaluate caching strategies")
 model: sonnet
-disable-model-invocation: true
 ---
 
 # Create Spike Task

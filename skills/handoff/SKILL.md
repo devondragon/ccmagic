@@ -4,7 +4,6 @@ allowed-tools: Write(*), Read(*), Bash(git:*), LS(*), Glob(*), Task(*), TodoWrit
 description: Create detailed handoff documentation for context switching
 argument-hint: [next-developer-name or 'general']
 model: sonnet
-disable-model-invocation: true
 context: fork
 ---
 
