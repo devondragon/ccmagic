@@ -1,4 +1,5 @@
 ---
+user-invocable: true
 allowed-tools: Read(*), Bash(*), Glob(*), TodoWrite(*)
 description: Run tests with framework auto-detection and smart test selection
 argument-hint: [--coverage] [--watch] [test-pattern] (all optional)

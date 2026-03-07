@@ -1,4 +1,5 @@
 ---
+user-invocable: true
 allowed-tools: Read(*), LS(*), Glob(*)
 description: Display current active feature with all its tasks and progress
 model: sonnet

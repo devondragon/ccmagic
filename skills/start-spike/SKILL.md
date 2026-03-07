@@ -1,4 +1,5 @@
 ---
+user-invocable: true
 allowed-tools: Write(*), Read(*), Bash(git:*), Glob(*), LS(*), TodoWrite(*), mcp__pal__thinkdeep(*), mcp__pal__analyze(*), Task(*), Bash(mv:*)
 description: Start working on a research spike or investigation task
 argument-hint: spike-id (optional, e.g., spike-001 or spike-001-research-auth)

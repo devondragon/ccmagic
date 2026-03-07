@@ -1,4 +1,5 @@
 ---
+user-invocable: true
 allowed-tools: Read(*), Bash(git:*), Glob(*), Grep(*), Task(*), TodoWrite(*), Write(*)
 description: Surface and track blockers across all features and tasks
 model: haiku

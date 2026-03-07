@@ -1,4 +1,5 @@
 ---
+user-invocable: true
 allowed-tools: Read(*), Glob(*), Bash(git:*), TodoWrite(*)
 description: Interactive help and command reference with examples
 model: sonnet

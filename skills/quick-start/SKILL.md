@@ -1,4 +1,5 @@
 ---
+user-invocable: true
 allowed-tools: Write(*), Read(*), Bash(git:*), Bash(mkdir:*), Bash(touch:*), TodoWrite(*)
 description: Fast-track feature setup - creates structure and starts work
 argument-hint: "[feature-name]"

@@ -1,4 +1,5 @@
 ---
+user-invocable: true
 allowed-tools: Read(*), Glob(*), LS(*), Grep(*), AskUserQuestion(*), Write(*), Task(*)
 description: Gather implementation context before task creation
 argument-hint: feature-path (e.g., epic-001-f01-core)

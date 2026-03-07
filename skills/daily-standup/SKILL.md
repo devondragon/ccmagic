@@ -1,4 +1,5 @@
 ---
+user-invocable: true
 allowed-tools: Read(*), Glob(*), Bash(git:*), Bash(gh:*), TodoWrite(*)
 description: Generate daily progress summary for standup meetings
 model: haiku

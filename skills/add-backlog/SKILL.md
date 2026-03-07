@@ -1,4 +1,5 @@
 ---
+user-invocable: true
 description: Add new items to the product backlog
 allowed-tools: Read(*), Write(*), Bash(git:*), Glob(*)
 model: sonnet

@@ -1,4 +1,5 @@
 ---
+user-invocable: true
 allowed-tools: Read(*), Bash(*), Glob(*), Task(*), TodoWrite(*), AskUserQuestion(*)
 description: Use Codex CLI for review, then Claude triages findings and plans fixes
 argument-hint: "[branch|full] [--model MODEL]"

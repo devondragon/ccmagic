@@ -1,4 +1,5 @@
 ---
+user-invocable: true
 description: Load saved context state
 allowed-tools: Read(*), Bash(git:*), Glob(*), Write(*)
 model: sonnet

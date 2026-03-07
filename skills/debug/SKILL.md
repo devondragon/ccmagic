@@ -1,4 +1,5 @@
 ---
+user-invocable: true
 allowed-tools: Read(*), Write(*), Bash(*), Glob(*), Grep(*), Task(*), AskUserQuestion(*)
 description: Systematic debugging with persistent investigation
 argument-hint: "[description of the bug]"

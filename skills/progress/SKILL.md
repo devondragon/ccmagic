@@ -1,4 +1,5 @@
 ---
+user-invocable: true
 allowed-tools: Read(*), Glob(*), LS(*), Grep(*)
 description: Check progress and route to next action
 model: haiku

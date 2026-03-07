@@ -1,4 +1,5 @@
 ---
+user-invocable: true
 allowed-tools: Read(*), Bash(git:*), Bash(gh:*), Bash(glab:*), Glob(*), Task(*)
 description: Create pull request with platform detection and smart description generation
 argument-hint: [--draft] (optional)

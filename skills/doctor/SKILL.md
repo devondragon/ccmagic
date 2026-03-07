@@ -1,4 +1,5 @@
 ---
+user-invocable: true
 allowed-tools: Read(*), Glob(*), Bash(*)
 description: Diagnose CCMagic setup issues and validate installation
 model: sonnet

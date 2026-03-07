@@ -1,4 +1,5 @@
 ---
+user-invocable: true
 allowed-tools: Write(*), Read(*), Bash(mkdir -p:*), Glob(*), LS(*), mcp__pal__planner(*), Bash(mv:*), Task(*)
 description: Generate tasks for a specific feature
 argument-hint: feature-path (optional, e.g., epic-001-f01-core or epic-002-f01-login)

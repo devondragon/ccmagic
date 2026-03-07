@@ -1,4 +1,5 @@
 ---
+user-invocable: true
 allowed-tools: Read(*), Bash(*), Glob(*), Task(*), TodoWrite(*)
 description: Comprehensive pre-commit validation with parallel checks
 model: sonnet

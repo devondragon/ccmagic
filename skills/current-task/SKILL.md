@@ -1,4 +1,5 @@
 ---
+user-invocable: true
 allowed-tools: Read(*), LS(*), Glob(*)
 description: Display current active task, feature, and epic information
 model: sonnet

@@ -1,4 +1,5 @@
 ---
+user-invocable: true
 allowed-tools: Read(*), Bash(git:*, gh:*), Glob(*), Task(*), TodoWrite(*), AskUserQuestion(*)
 description: Review PR comments and plan fixes for valid concerns
 model: sonnet

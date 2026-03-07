@@ -1,4 +1,5 @@
 ---
+user-invocable: true
 allowed-tools: Read(*), Bash(git:*), Bash(gh:*), Glob(*), LS(*)
 description: Show current work status (fast, lightweight check)
 model: haiku

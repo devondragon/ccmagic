@@ -1,4 +1,5 @@
 ---
+user-invocable: true
 allowed-tools: Read(*), Bash(git:*), Glob(*), Task(*), TodoWrite(*), mcp__pal__codereview(*)
 description: Comprehensive code review using parallel exploration and expert analysis
 model: sonnet

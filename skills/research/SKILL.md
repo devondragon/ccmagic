@@ -1,4 +1,5 @@
 ---
+user-invocable: true
 description: Deep iterative research with source evaluation and confidence scoring
 argument-hint: <topic or question to research>
 allowed-tools: Read(*), Write(*), Glob(*), Grep(*), WebSearch(*), WebFetch(*), Task(*), TodoWrite(*), mcp__context7__*

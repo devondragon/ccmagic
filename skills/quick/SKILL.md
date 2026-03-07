@@ -1,4 +1,5 @@
 ---
+user-invocable: true
 allowed-tools: Write(*), Read(*), Edit(*), Bash(*), Glob(*), LS(*), Grep(*), Task(*), TodoWrite(*), AskUserQuestion(*)
 description: Execute ad-hoc task without feature overhead
 argument-hint: "[description of what to do]"

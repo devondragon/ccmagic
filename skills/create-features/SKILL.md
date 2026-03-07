@@ -1,4 +1,5 @@
 ---
+user-invocable: true
 allowed-tools: Write(*), Read(*), Bash(mkdir -p:*), Glob(*), LS(*), mcp__pal__planner(*), Task(*)
 description: Break down an epic into manageable features
 argument-hint: epic-id (optional, e.g., epic-001 or epic-001-mvp)

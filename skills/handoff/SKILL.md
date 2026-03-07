@@ -1,4 +1,5 @@
 ---
+user-invocable: true
 allowed-tools: Write(*), Read(*), Bash(git:*), LS(*), Glob(*), Task(*), TodoWrite(*)
 description: Create detailed handoff documentation for context switching
 argument-hint: [next-developer-name or 'general']

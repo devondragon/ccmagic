@@ -1,4 +1,5 @@
 ---
+user-invocable: true
 allowed-tools: Read(*), Bash(*), Glob(*), LS(*), Grep(*), Task(*), Write(*), AskUserQuestion(*)
 description: Interactive verification of task acceptance criteria
 argument-hint: "[task-id or 'current']"

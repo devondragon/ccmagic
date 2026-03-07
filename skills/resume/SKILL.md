@@ -1,4 +1,5 @@
 ---
+user-invocable: true
 allowed-tools: Read(*), Glob(*), LS(*), Write(*), Task(*), Bash(rm:*)
 description: Resume work from previous session
 model: sonnet

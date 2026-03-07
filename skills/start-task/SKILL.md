@@ -1,4 +1,5 @@
 ---
+user-invocable: true
 allowed-tools: Write(*), Read(*), Bash(git:*), Glob(*), LS(*), TodoWrite(*), Task(*), mcp__pal__thinkdeep(*), mcp__pal__codereview(*), mcp__pal__analyze(*)
 description: Start working on a specific task and begin development
 argument-hint: task-id (optional, e.g., task-001 or epic-001-f01-task-001)

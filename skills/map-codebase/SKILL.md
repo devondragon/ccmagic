@@ -1,4 +1,5 @@
 ---
+user-invocable: true
 allowed-tools: Read(*), Glob(*), LS(*), Grep(*), Task(*), Write(*), Bash(mkdir:*)
 description: Analyze existing codebase and document patterns
 model: sonnet
