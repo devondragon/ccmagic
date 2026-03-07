@@ -10,12 +10,9 @@
   "plugins": [
     {
       "name": "ccmagic",
-      "source": {
-        "source": "url",
-        "url": "https://github.com/devondragon/ccmagic.git"
-      },
+      "source": ".",
       "description": "40 project management skills for Claude Code - task tracking, context management, code review, and team collaboration",
-      "version": "2.0.0",
+      "version": "2.1.0",
       "author": {
         "name": "Devon Hillard"
       },
