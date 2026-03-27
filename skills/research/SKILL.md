@@ -1,149 +1,212 @@
 ---
 user-invocable: true
-description: Deep iterative research with source evaluation and confidence scoring
+description: Deep iterative research with parallel exploration, source evaluation, and confidence scoring
 argument-hint: <topic or question to research>
-allowed-tools: Read(*), Write(*), Glob(*), Grep(*), WebSearch(*), WebFetch(*), Task(*), TodoWrite(*), mcp__context7__*
+allowed-tools: Read(*), Write(*), Glob(*), Grep(*), WebSearch(*), WebFetch(*), Task(*), TodoWrite(*), mcp__context7__*, mcp__pal__analyze(*), mcp__pal__thinkdeep(*)
 model: opus
 context: fork
 ---
 
 # Deep Research: $ARGUMENTS
 
-Execute iterative, multi-hop research to thoroughly investigate this topic. Continue until reaching **80% confidence** or completing **5 search iterations**.
+Execute rigorous, multi-phase research with parallel source exploration, structured evaluation, and confidence-gated iteration. Research continues until the confidence threshold is met or evidence is exhausted — not after an arbitrary number of loops.
 
-> **Parallel execution:** When operations are independent, run them simultaneously—searching multiple sources, fetching unrelated URLs, or analyzing separate aspects of the topic. Claude Code will determine when this is safe and helpful.
+> **Parallel execution:** Launch multiple Explore agents simultaneously to investigate different angles. Claude Code determines when parallel execution is safe.
 
-## Research Protocol
+## Step 0: Classify Research Type
 
-### Phase 0: Context Check
-1. Check if `context/knowledge/` directory exists
-2. Search for existing research files related to this topic
-3. Review prior findings to avoid duplication and build on existing knowledge
+Determine which research template applies. Load `${CLAUDE_SKILL_DIR}/output-templates.md` for the output format matching the detected type.
+
+| Pattern | Type | Key Focus |
+|---------|------|-----------|
+| "X vs Y", "which library", "should we use" | `technology-choice` | Comparison matrix with weighted criteria |
+| "how should we structure", "design for", "pattern for" | `architecture-decision` | Trade-off analysis, ADR format |
+| "why is X failing", "root cause", "debug" | `bug-investigation` | Causal chain, reproduction steps |
+| "evaluate X", "is X good for", "X review" | `library-evaluation` | Fitness scoring against requirements |
+| "migrate from X to Y", "upgrade path", "transition" | `migration-planning` | Risk matrix, phased rollout plan |
+| *(other)* | `general` | Standard findings format |
+
+Store the detected type as `{RESEARCH_TYPE}`. If ambiguous, default to `general`.
+
+## Step 1: Context and Prior Knowledge
+
+1. Check if `context/knowledge/` directory exists — search for prior research on this topic
+2. Search codebase for files related to the research topic (configs, implementations, dependencies)
+3. Review CLAUDE.md and project conventions for relevant context
 4. Use TodoWrite to create a research progress tracker
 
-### Phase 1: Preliminary Discovery
+Record what is already known vs what needs investigation. This prevents redundant work.
 
-*This phase establishes baseline understanding and is not counted toward the iteration limit.*
+## Step 2: Decompose the Question
 
-1. Perform initial web search on the core topic
-2. Identify key entities, concepts, and authoritative sources
-3. Note knowledge gaps and follow-up questions
+Break the research topic into 2-4 independent investigation angles. Each angle becomes a parallel exploration track.
 
-### Phase 2: Iterative Deep Dive (up to 5 iterations)
+**Example decomposition for "Should we migrate from Express to Fastify?":**
+- Track A: Performance and scalability characteristics of both frameworks
+- Track B: Migration effort — API compatibility, plugin ecosystem, breaking changes
+- Track C: Community health — maintenance activity, adoption trends, corporate backing
 
-Each iteration follows the structured cycle below. Stop when confidence >=80% or 5 iterations complete.
+Each track should be investigable independently. Tracks that depend on another track's results belong in a later iteration.
 
-For each iteration:
+## Step 3: Source Strategy Selection
 
-**Search** -> **Evaluate** -> **Expand** -> **Assess Confidence**
+Load `${CLAUDE_SKILL_DIR}/research-methodology.md` for detailed source evaluation criteria.
 
-#### Source Evaluation Criteria
-Score each source 0.0-1.0 based on:
-- **Authority** (0.3): Official docs, peer-reviewed, recognized experts
-- **Recency** (0.2): How current is the information
-- **Specificity** (0.3): Directly addresses the question vs tangential
-- **Corroboration** (0.2): Confirmed by multiple independent sources
+Choose the right tool for each investigation track:
 
-Only incorporate sources scoring **>=0.6** (acceptable quality) into findings.
+| Source Need | Tool | When to Use |
+|-------------|------|-------------|
+| Library/framework docs | `mcp__context7__resolve-library-id` then `mcp__context7__query-docs` | API syntax, config options, version-specific behavior |
+| Current state of the art | `WebSearch` | Trends, benchmarks, recent announcements, community sentiment |
+| Deep article content | `WebFetch` | When search snippets are insufficient — read full articles |
+| Codebase patterns | `Grep`, `Glob`, `Read` | How the project currently uses a technology, existing patterns |
+| Deep analytical reasoning | `mcp__pal__thinkdeep` | Complex trade-off analysis, architectural reasoning |
+| Structured analysis | `mcp__pal__analyze` | When you need a second analytical perspective on findings |
 
-*Note: Sources scoring >=0.7 are considered "high-quality" for confidence assessment purposes (see table below).*
+**Priority order:** context7 docs > codebase exploration > web search > web fetch. Prefer authoritative primary sources over aggregators.
 
-#### Expansion Strategies (use as appropriate)
-- **Entity expansion**: Topic -> Key people/orgs -> Their work/positions
-- **Concept deepening**: Overview -> Technical details -> Implementation examples
-- **Temporal progression**: Current state -> Historical context -> Future trajectory
-- **Causal chains**: Effect -> Root cause -> Contributing factors
+## Step 4: Parallel Exploration (Round 1)
 
-### Phase 3: Synthesis
+Launch 2-3 Explore agents simultaneously, one per investigation track from Step 2.
 
-After reaching confidence threshold or max iterations:
+Each agent receives:
+- Its assigned track and specific questions to answer
+- Source strategy guidance from Step 3
+- Instructions to evaluate every source using the criteria in `${CLAUDE_SKILL_DIR}/research-methodology.md`
+- The source record format (URL/location, authority score, recency, specificity, key claims)
 
-1. **Create findings summary** with:
-   - Key findings (bulleted, prioritized by relevance)
-   - Confidence level (Low/Medium/High/Very High) with rationale
-   - Source quality assessment
-   - Knowledge gaps that remain
-   - Recommended follow-up research if needed
+Each agent returns:
+- Findings with source attributions and quality scores
+- Confidence estimate for its track (0-100)
+- Unresolved questions or conflicts discovered
+- Leads for further investigation
 
-2. **Save to context** (if context/ directory exists):
-   - Write findings to `context/knowledge/research-YYYY-MM-DD-[topic-slug].md`
-   - Include source URLs and evaluation scores
-   - Date prefix enables historical tracking and avoids overwrites
+## Step 5: Synthesize and Assess
 
-## Confidence Assessment
+After Round 1 agents complete:
 
-Calculate overall confidence based on:
-- Number of high-quality sources (>=0.7 score; see note in Phase 2)
-- Source agreement/disagreement
-- Coverage of key aspects
-- Recency of information
+### 5a. Merge Findings
+- Combine findings from all tracks
+- Identify corroborating evidence (same claim from independent sources)
+- Flag contradictions between tracks or sources
 
-| Sources (>=0.7) | Agreement | Confidence |
-|----------------|-----------|------------|
-| 5+             | High      | Very High (90%+) |
-| 5+             | Mixed     | High (80-89%) |
-| 5+             | Low       | Medium (60-79%) |
-| 3-4            | High      | High (80-89%) |
-| 3-4            | Mixed     | Medium (60-79%) |
-| 3-4            | Low       | Low (<60%) |
-| 2-3            | High      | High (70-79%) |
-| 2-3            | Mixed     | Medium (60-69%) |
-| 2-3            | Low       | Low (<60%) |
-| 1-2            | Any       | Low (<60%) |
+### 5b. Evaluate Source Quality
+Apply the weighted scoring from `${CLAUDE_SKILL_DIR}/research-methodology.md`:
 
-**Stop iterating when confidence >=80% OR 5 iterations complete.**
+| Criterion | Weight | Score Range |
+|-----------|--------|-------------|
+| Authority | 0.30 | 0.0 - 1.0 |
+| Recency | 0.20 | 0.0 - 1.0 |
+| Specificity | 0.30 | 0.0 - 1.0 |
+| Corroboration | 0.20 | 0.0 - 1.0 |
 
-## Output Format
+**Minimum quality threshold:** 0.6 (sources below this are noted but not used for conclusions)
+
+### 5c. Calculate Confidence
+
+Confidence is calculated from evidence strength, not iteration count:
+
+| Condition | Confidence Band |
+|-----------|----------------|
+| 4+ high-quality sources (>=0.7) agreeing, key aspects covered | Very High (90-100%) |
+| 3+ high-quality sources agreeing, most aspects covered | High (80-89%) |
+| 2-3 sources agreeing, some gaps remain | Medium (60-79%) |
+| Few sources, significant conflicts, or major gaps | Low (< 60%) |
+
+**Confidence threshold: 80%.** If met, proceed to Step 7 (Synthesis). If not, proceed to Step 6.
+
+### 5d. Resolve Conflicts
+
+When sources disagree, do NOT simply pick one. Follow the conflict resolution process from `${CLAUDE_SKILL_DIR}/research-methodology.md`:
+
+1. Document both positions with their sources and quality scores
+2. Identify the nature of disagreement (factual, methodological, outdated, context-dependent)
+3. If resolvable by source quality alone (high-authority vs low-authority), resolve and note
+4. If genuinely contested, mark as "disputed" and investigate further in Step 6
+
+## Step 6: Targeted Follow-up (Conditional)
+
+Only execute if confidence < 80% after Step 5.
+
+### 6a. Identify Gaps
+From Step 5, determine:
+- Which specific questions remain unanswered
+- Which conflicts need resolution
+- Which aspects lack sufficient source coverage
+
+### 6b. Focused Exploration
+Launch 1-2 targeted Explore agents to address specific gaps. These are NOT broad searches — each agent has a precise question and knows what evidence would resolve it.
+
+### 6c. Re-assess Confidence
+Merge new findings and recalculate confidence. If still below threshold:
+- If progress was made (confidence increased by 10+), run one more targeted round
+- If no meaningful progress, accept current confidence and note gaps explicitly
+- Maximum 3 total exploration rounds (initial + 2 follow-ups)
+
+### 6d. MCP Deep Analysis (if available)
+When confidence remains below threshold after exploration rounds, use analytical MCP tools:
+- `mcp__pal__thinkdeep`: For complex reasoning about trade-offs or architectural implications
+- `mcp__pal__analyze`: For structured analysis of collected evidence
+
+Integrate MCP insights as additional high-weight sources.
+
+## Step 7: Generate Output
+
+Select the appropriate template from `${CLAUDE_SKILL_DIR}/output-templates.md` based on `{RESEARCH_TYPE}` from Step 0.
+
+### All research types include these common sections:
 
 ```markdown
 # Research: [Topic]
 
-**Date:** [YYYY-MM-DD]
-**Confidence:** [X%] - [Low/Medium/High/Very High]
-**Iterations:** [N] searches performed
-**Sources evaluated:** [N] total, [N] incorporated (>=0.6 quality)
+**Date:** YYYY-MM-DD
+**Type:** [technology-choice | architecture-decision | bug-investigation | library-evaluation | migration-planning | general]
+**Confidence:** [X%] — [Low | Medium | High | Very High]
+**Exploration Rounds:** [N] (initial + [N-1] follow-ups)
+**Sources:** [N] evaluated, [N] incorporated (>= 0.6 quality)
+```
 
-## Key Findings
+Then the type-specific body (see output-templates.md), followed by:
 
-1. [Most important finding]
-2. [Second finding]
-...
+```markdown
+## Source Registry
 
-## Source Summary
+| # | Source | Type | Quality | Key Contribution |
+|---|--------|------|---------|------------------|
+| 1 | [URL or location] | [docs/article/code/benchmark] | [0.XX] | [What it established] |
 
-| Source | Quality Score | Key Contribution |
-|--------|---------------|------------------|
-| [URL]  | [0.X]         | [What it provided] |
+## Confidence Breakdown
 
-## Knowledge Gaps
+| Factor | Status | Impact |
+|--------|--------|--------|
+| Source agreement | [High/Mixed/Low] | [+/-] |
+| Aspect coverage | [X of Y covered] | [+/-] |
+| Source quality | [avg score] | [+/-] |
+| Recency | [current/dated] | [+/-] |
 
-- [What remains unknown or uncertain]
+## Open Questions
+
+- [Remaining unknowns that could change the recommendation]
 
 ## Recommended Follow-up
 
-- [Suggested additional research if confidence <80%]
+- [Specific next steps if confidence < 80% or decision requires validation]
 ```
 
-## Execution Notes
+## Step 8: Persist Results
 
-- Use WebFetch to read full articles when snippets are insufficient
-- Prefer primary sources over aggregators/summaries
-- For technical topics, prioritize official documentation and GitHub repos
-- For current events, prioritize sources from last 30 days
-- If sources conflict, follow the conflict resolution process below
+If `context/` directory exists:
+1. Write findings to `context/knowledge/research-YYYY-MM-DD-[topic-slug].md`
+2. Include full source registry with evaluation scores
+3. Date prefix enables historical tracking
 
-### Handling Conflicting Sources
+## Step 9: Task Integration
 
-When sources disagree:
-1. Note both positions explicitly in findings
-2. Weight by: Authority & Specificity (0.3 each), then Recency & Corroboration (0.2 each)
-3. If still unresolved, mark as "contested" in findings
-4. Document the nature of the disagreement for future reference
+1. Create TodoWrite entries for any recommended follow-up actions
+2. For technology choices and architecture decisions, note if a formal ADR should be created
 
-### Edge Case Handling
+## Execution
 
-- If no relevant results found after 2 iterations, pivot search terms or ask user for clarification
-- If WebFetch fails repeatedly, note URL in sources as "inaccessible" and continue with available sources
-- For library/API research, use context7 tools to fetch official documentation directly
+Begin research immediately. Be thorough but efficient — every exploration round must have a clear purpose, and iteration stops when evidence supports a confident conclusion, not after burning through arbitrary rounds. Quality of sources matters more than quantity.
 
-Begin research now on: **$ARGUMENTS**
+Start now on: **$ARGUMENTS**
