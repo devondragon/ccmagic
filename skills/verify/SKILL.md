@@ -1,6 +1,6 @@
 ---
 user-invocable: true
-allowed-tools: Read(*), Bash(*), Glob(*), LS(*), Grep(*), Task(*), Write(*), AskUserQuestion(*)
+allowed-tools: Read(*), Bash(*), Glob(*), Grep(*), Task(*), TodoWrite(*), AskUserQuestion(*), Write(*)
 description: Interactive verification of task acceptance criteria
 argument-hint: "[task-id or 'current']"
 model: sonnet
@@ -8,162 +8,238 @@ model: sonnet
 
 # Verify Task Completion
 
-Interactively verify acceptance criteria and spawn debug agents for failures.
+Run machine-verifiable checks, interactively confirm done criteria, and diagnose failures with Explore agents.
 
-## Process
+> **Parallel execution:** Independent verify commands and diagnostic agents run simultaneously.
 
-### 1. Load Task
+## Step 1: Locate and Parse Task File
 
-Locate the task file:
-- If `$ARGUMENTS` is "current" or empty: Find task in `context/features/*/tasks/current/`
-- If task-id provided: Search for matching task file
+### 1a. Find the task file
 
-Read the task file and extract:
-- **Acceptance criteria** - The checklist items
-- **`<verify>` commands** - Machine-verifiable checks (if present)
-- **`<done>` criteria** - Explicit completion state (if present)
+If `$ARGUMENTS` is "current" or empty:
+```bash
+ls context/features/*/tasks/current/*.md 2>/dev/null
+```
 
-### 2. Run Automated Checks
+If a task-id is provided:
+```bash
+find context/features/ -name "*$ARGUMENTS*" -path "*/tasks/*" 2>/dev/null
+```
 
-For each `<verify>` command found in the task:
+If no task file is found, report the error and stop.
+
+### 1b. Read and parse the task file
+
+Read the task file. Load `${CLAUDE_SKILL_DIR}/verification-guide.md` for parsing rules and failure classification.
+
+Extract three categories of criteria:
+
+**Verify commands** -- shell commands inside `<verify>` tags:
+```
+<verify>npm test -- --testPathPattern="auth"</verify>
+```
+Each `<verify>` tag contains exactly one shell command that returns exit code 0 on success.
+
+**Done criteria** -- human-readable statements inside `<done>` tags:
+```
+<done>
+- User table exists with required columns
+- All existing tests still pass
+</done>
+```
+Parse each line starting with `- ` as a separate done criterion.
+
+**Acceptance criteria** -- checklist items in the task body (lines matching `- [ ]` or `- [x]`). These serve as the master checklist for TodoWrite integration.
+
+Record the feature path from the task file location for report output later.
+
+## Step 2: Run Verify Commands (Parallel)
+
+Execute all `<verify>` commands simultaneously. For each command:
 
 ```bash
-verify_cmd="[verify command]"  # Replace with the actual verify command from task file
-echo "Running: $verify_cmd"
-
-# Execute the command
-bash -c "$verify_cmd"
-
-if [ $? -eq 0 ]; then
-  echo "✅ PASS: $verify_cmd"
-else
-  echo "❌ FAIL: $verify_cmd"
-  # Store failure for later handling
-fi
+bash -c '{verify_command}' 2>&1; echo "EXIT_CODE:$?"
 ```
 
-Display summary:
-```
-Automated Verification Results:
-- [command 1]: PASS/FAIL
-- [command 2]: PASS/FAIL
-...
-```
+Capture both stdout/stderr and exit code for every command.
 
-### 3. Interactive Walkthrough
+Build the results table:
 
-For each acceptance criterion that doesn't have an automated `<verify>`:
+| # | Command | Status | Exit Code | Output (truncated) |
+|---|---------|--------|-----------|--------------------|
+| 1 | `npm test ...` | PASS | 0 | ... |
+| 2 | `curl -sf ...` | FAIL | 1 | Connection refused... |
 
-Use AskUserQuestion to prompt:
-```
-Criterion: [criterion text]
+Display the results table immediately so the user sees progress.
 
-Can you confirm this is working?
-```
+### Handling verify edge cases
 
-Options:
-- "Yes, verified" - Mark as passing
-- "No, failing" - Mark as failing (will trigger debug options)
-- "Skip for now" - Skip this criterion
+- **Timeout**: If a command runs longer than 60 seconds, kill it and record as TIMEOUT
+- **No verify blocks**: Skip to Step 3 (done criteria check). Note: "No machine-verifiable checks found in task file."
+- **All pass**: Proceed to Step 3
 
-### 4. Handle Failures
+## Step 3: Diagnose Failures (Parallel Explore Agents)
 
-For each failing criterion (automated or manual), present options using AskUserQuestion:
+For each failed verify command, launch a diagnostic Explore agent. Launch up to 3 agents simultaneously for independent failures.
 
-```
-Failed: [criterion or verify command]
-[Include error output if from automated check]
+Before spawning, read the relevant source files. Use Grep to find code related to the failure:
+- Parse the verify command for file paths, module names, test patterns
+- Read error output for file:line references
+- Identify the subsystem under test
 
-How would you like to proceed?
-```
-
-Options:
-1. **"Spawn debug agent"** - Launch agent to investigate and fix
-2. **"Create fix task"** - Add to backlog for later
-3. **"Mark as known issue"** - Continue with noted limitation
-4. **"Retry verification"** - Run the check again
-
-#### Debug Agent (Option 1):
+### Spawn diagnostic agent
 
 ```
 Use Task tool with:
-  subagent_type: "general-purpose"
+  subagent_type: "Explore"
   prompt: |
-    # Debug: [criterion that failed]
+    # Diagnostic: Verify command failed
 
-    ## Context
-    The following acceptance criterion is failing:
-    [criterion text]
+    ## Failed Command
+    ```
+    {verify_command}
+    ```
 
-    Verification command (if any): [verify command]
-    Output: [command output or user description]
+    ## Exit Code: {exit_code}
+
+    ## Output
+    ```
+    {captured_output}
+    ```
+
+    ## Task Context
+    This verification is for task: {task_id}
+    Task description: {task_description}
 
     ## Instructions
-    1. Investigate why this is failing
-    2. Identify the root cause
-    3. If fix is straightforward, implement it
-    4. Run the verification again to confirm
-    5. Report what you found and what you fixed (if anything)
+    1. Read the relevant source files to understand what the command tests
+    2. Identify why the command fails — missing file, wrong output, test error, build failure
+    3. Classify the failure:
+       - MISSING_IMPL: Feature not yet implemented
+       - BUG: Implementation exists but behaves incorrectly
+       - ENV_ISSUE: Environment, config, or dependency problem
+       - TEST_ISSUE: The verify command itself is wrong or outdated
+    4. Report:
+       - Classification: one of the four types above
+       - Root cause: specific explanation with file:line references
+       - Suggested fix: concrete steps to resolve
+       - Confidence: High / Medium / Low
 ```
 
-After debug agent returns, automatically re-run the specific failed verification command to check if the issue was resolved.
+After all diagnostic agents return, collect their classifications and suggested fixes.
 
-### 5. Generate Report
+## Step 4: Check Done Criteria (Interactive)
 
-Create verification report:
+For each done criterion parsed from the `<done>` block, use `AskUserQuestion` to confirm:
+
+```
+Done Criterion: {criterion text}
+
+Can you confirm this is complete?
+- Yes — verified and working
+- No — not yet done
+- Skip — defer for now
+```
+
+If the user answers "No", ask a follow-up:
+```
+What's the issue with: {criterion text}
+- Describe the problem briefly so a diagnostic agent can investigate.
+```
+
+For each "No" response with a description, spawn a diagnostic Explore agent (same pattern as Step 3 but using the user's description instead of command output).
+
+Record each criterion as PASS / FAIL / SKIP.
+
+## Step 5: Update Acceptance Criteria Checklist
+
+Map verify results and done criteria back to the acceptance criteria checklist items from the task body.
+
+Use `TodoWrite` to update status:
+- Verify PASS + related done criterion PASS = mark complete
+- Any FAIL in the chain = mark incomplete with failure note
+- SKIP = leave unchanged
+
+Create TodoWrite entries for each unresolved failure:
+```
+TodoWrite: "VERIFY FAIL: {criterion} — {classification}: {root cause summary}"
+```
+
+## Step 6: Generate Verification Report
+
+Build the report and display it directly (do not write to file unless all criteria are checked):
 
 ```markdown
-# Verification Report: [task-id]
-Generated: [timestamp]
+# Verification Report: {task-id}
+Date: {YYYY-MM-DD}
 
 ## Summary
-- Total criteria: X
-- Passed: Y
-- Failed: Z
-- Skipped: W
+| Metric | Count |
+|--------|-------|
+| Verify commands | {total} |
+| Passed | {pass_count} |
+| Failed | {fail_count} |
+| Timed out | {timeout_count} |
+| Done criteria | {done_total} |
+| Confirmed | {confirmed_count} |
+| Not done | {notdone_count} |
+| Skipped | {skip_count} |
 
-## Automated Checks
-| Command | Status | Output |
-|---------|--------|--------|
-| [cmd] | PASS/FAIL | [output snippet] |
+## Verify Command Results
+| # | Command | Status | Classification | Root Cause |
+|---|---------|--------|----------------|------------|
+| 1 | `{cmd}` | PASS/FAIL | — / {type} | — / {cause} |
 
-## Manual Verification
-| Criterion | Status | Notes |
-|-----------|--------|-------|
-| [text] | PASS/FAIL/SKIP | [user notes] |
+## Done Criteria Results
+| # | Criterion | Status | Notes |
+|---|-----------|--------|-------|
+| 1 | {text} | PASS/FAIL/SKIP | {user notes or agent finding} |
 
-## Issues Found
-[List any failures with details]
-
-## Follow-up Tasks Created
-[If any fix tasks were added to backlog]
+## Failure Analysis
+For each failure:
+### {criterion or command}
+- **Classification**: {MISSING_IMPL / BUG / ENV_ISSUE / TEST_ISSUE}
+- **Root cause**: {explanation with file:line}
+- **Suggested fix**: {concrete steps}
+- **Confidence**: {High / Medium / Low}
 
 ## Verdict
-[READY FOR COMPLETION / NEEDS FIXES]
+{READY FOR COMPLETION / NEEDS FIXES ({fail_count} issues remaining)}
 ```
 
-Save report to: `context/features/[feature-path]/tasks/current/[task-id]-verification.md`
+If all criteria pass, also save the report to:
+`context/features/{feature-path}/tasks/current/{task-id}-verification.md`
 
-### 6. Final Prompt
+## Step 7: Offer Next Steps
 
-Based on results:
+Based on the verdict:
 
-**If all pass:**
+### All pass
 ```
-All acceptance criteria verified. Ready to complete task.
-Run `/ccmagic:complete-task` to finalize.
-```
+All acceptance criteria verified.
 
-**If failures remain:**
-```
-[N] criteria still failing. Options:
-- Fix issues and run `/ccmagic:verify` again
-- Run `/ccmagic:complete-task --force` to complete with known issues
+Next: Run /ccmagic:complete-task to finalize.
 ```
 
-## Notes
+### Failures remain
+Present options via `AskUserQuestion`:
 
-- Verification is non-destructive - can be run multiple times
-- Debug agents get focused context on the specific failure
-- Report provides audit trail for what was verified
-- Works with or without `<verify>` commands (falls back to manual)
+```
+{fail_count} verification(s) failed. How to proceed?
+- Fix now — I'll address the issues, then re-verify
+- Re-run — retry all failed verifications (after making changes)
+- Force complete — complete task with known issues noted
+- Abort — stop verification, return to development
+```
+
+**If "Re-run"**: Re-execute only the previously failed verify commands and re-check failed done criteria. Update the report with new results. Repeat Step 7.
+
+**If "Fix now"**: Display the failure analysis summary and let the user work. Remind them to run `/ccmagic:verify` again when ready.
+
+**If "Force complete"**: Note unresolved issues in TodoWrite entries and proceed.
+
+**If "Abort"**: End verification. TodoWrite entries for failures remain for tracking.
+
+## Execution
+
+When invoked, immediately locate the task file and begin verification. Do not ask for confirmation before running verify commands — they are designed to be safe, read-only checks. Run verify commands in parallel for speed. Display results progressively: verify results first, then interactive done criteria, then the full report. Every failure gets a diagnostic agent so the user receives actionable fix suggestions, not just pass/fail status.
