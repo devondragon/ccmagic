@@ -1,295 +1,347 @@
 ---
 user-invocable: true
-allowed-tools: Read(*), Bash(*), Glob(*), Task(*), TodoWrite(*), AskUserQuestion(*)
-description: Use Codex CLI for review, then Claude triages findings and plans fixes
-argument-hint: "[branch|full] [--model MODEL]"
+allowed-tools: Read(*), Bash(*), Glob(*), Grep(*), Task(*), TodoWrite(*), AskUserQuestion(*)
+description: Multi-model code review (Codex + Gemini + Claude triage) with dimension-focused passes
+argument-hint: "[branch|full|PR#] [--model MODEL] [--focus DIMENSION] [--threshold N]"
 model: sonnet
 context: fork
 ---
 
 # Codex Review Command
 
-Use OpenAI's Codex CLI to review code, then have Claude triage the findings and create an actionable fix plan.
+Multi-model code review: Codex and/or Gemini CLI provide broad coverage across focused dimensions, Claude triages findings, adds its own review pass, and creates an actionable fix plan.
 
 ## Arguments
 
-$ARGUMENTS
+Parse `$ARGUMENTS`:
 
-**Scope options:**
-- `branch` (default) - Review changes on current branch vs main
-- `full` - Review the entire codebase
-- `PR#` or just a number - Review a specific PR
+| Argument | Mode | Description |
+|----------|------|-------------|
+| *(empty)* | `branch` | Diff current branch vs main (default) |
+| `branch` | `branch` | Explicit branch diff |
+| `full` | `full` | Full codebase — module-aware chunking |
+| `<number>` | `pr` | Review PR by number |
+| `--model MODEL` | *(modifier)* | Codex model (default: `gpt-5.3-codex`, fallback: `gpt-5-codex`) |
+| `--focus DIM` | *(modifier)* | Run only one dimension: `security`, `architecture`, `correctness`, `errors`, `tests`, `deps` |
+| `--threshold N` | *(modifier)* | Confidence threshold, default 80 |
 
-**Optional flags:**
-- `--model MODEL` - Specify Codex model (default: `gpt-5.3-codex`, e.g., `--model o3`)
-- `--fallback-model MODEL` - Fallback model for access errors (default: `gpt-5-codex`)
+## Step 1: Verify Tool Installation
 
-## Process
-
-### Step 1: Verify Codex Installation
+Check for available review tools:
 
 ```bash
-# Check if codex CLI is available
-which codex || command -v codex
-codex --version 2>/dev/null || echo "NOT_INSTALLED"
+# Check Codex
+which codex 2>/dev/null && codex --version 2>/dev/null
+# Check Gemini CLI
+which gemini 2>/dev/null && gemini --version 2>/dev/null
 ```
 
-If Codex is not installed, inform the user:
-```
-Codex CLI is not installed. Install it with:
-  npm install -g @openai/codex
+**Tool availability determines the review strategy:**
+- **Both available**: Run Codex + Gemini in parallel, Claude triages and reconciles. Multi-model agreement boosts confidence.
+- **Codex only**: Run Codex passes, Claude triages.
+- **Gemini only**: Run Gemini passes, Claude triages.
+- **Neither**: Inform user and fall back to `/ccmagic:review`.
 
-Or see: https://github.com/openai/codex
+```
+Neither Codex CLI nor Gemini CLI is installed.
+  Codex: npm install -g @openai/codex (https://github.com/openai/codex)
+  Gemini: npm install -g @anthropic-ai/gemini-cli
 
 Falling back to Claude-only review...
 ```
 
-If not installed, fall back to running `/ccmagic:review` instead.
+## Step 2: Load Project Conventions
 
-### Step 2: Determine Review Scope
+Read convention files (silent skip if missing):
+1. `CLAUDE.md` in project root
+2. `.claude/CLAUDE.md`
+3. `context/conventions.md`
 
-Based on arguments:
+Collect into `{PROJECT_CONVENTIONS}` for the Claude triage pass and Claude-originated review.
 
-**For `branch` (default):**
+## Step 3: Determine Scope and Discover Files
+
+### Branch mode
 ```bash
-# Show files changed against main
 git diff --name-only main...HEAD
+git diff --stat main...HEAD
+git log --oneline main...HEAD
 ```
 
-**For `full`:**
+### PR mode
 ```bash
-# List all source files for full codebase review
-find . -type f \( -name "*.ts" -o -name "*.tsx" -o -name "*.js" -o -name "*.jsx" -o -name "*.py" -o -name "*.go" -o -name "*.rs" -o -name "*.java" -o -name "*.rb" -o -name "*.swift" -o -name "*.kt" \) -not -path "*/node_modules/*" -not -path "*/.git/*" -not -path "*/dist/*" -not -path "*/build/*" -not -path "*/__pycache__/*" -not -path "*/vendor/*" -not -path "*/target/*" > /tmp/codex-review-files.txt
+gh pr diff {N} --name-only
+gh pr view {N} --json title,body,baseRefName
+gh pr diff {N} > /tmp/codex-review-diff.txt
 ```
 
-**For PR number:**
+### Full mode — Module-Aware Chunking
+
+Instead of `head -200`, discover project structure and partition intelligently:
+
 ```bash
-gh pr diff {PR_NUMBER} > /tmp/codex-review-diff.txt
-gh pr view {PR_NUMBER} --json title,body
+# 1. Detect project type from build configs
+ls package.json go.mod Cargo.toml pyproject.toml pom.xml build.gradle 2>/dev/null
 ```
 
-### Step 3: Run Codex Review
+**Discover ALL relevant files** (expanded from source-only):
 
-Execute Codex with a focused review prompt. Capture output to a file for Claude to analyze.
+```bash
+find . -type f \( \
+  -name "*.ts" -o -name "*.tsx" -o -name "*.js" -o -name "*.jsx" \
+  -o -name "*.py" -o -name "*.go" -o -name "*.rs" -o -name "*.java" \
+  -o -name "*.rb" -o -name "*.swift" -o -name "*.kt" -o -name "*.scala" \
+  -o -name "*.cs" -o -name "*.php" -o -name "*.vue" -o -name "*.svelte" \
+  -o -name "pom.xml" -o -name "build.gradle" -o -name "build.gradle.kts" \
+  -o -name "package.json" -o -name "Cargo.toml" -o -name "go.mod" \
+  -o -name "pyproject.toml" -o -name "requirements*.txt" -o -name "Gemfile" \
+  -o -name "Dockerfile" -o -name "docker-compose*.yml" \
+  -o -name "*.tf" -o -name "*.tfvars" \
+  -o -name "application.yml" -o -name "application.properties" \
+  -o -name "*.env.example" -o -name ".env.example" \
+  -o -name "*.yaml" -o -name "*.toml" \
+\) \
+  -not -path "*/node_modules/*" -not -path "*/.git/*" \
+  -not -path "*/dist/*" -not -path "*/build/*" \
+  -not -path "*/__pycache__/*" -not -path "*/vendor/*" \
+  -not -path "*/target/*" -not -path "*/.next/*" \
+  -not -path "*/.terraform/*" \
+  > /tmp/codex-review-files.txt
+```
 
-**Set model defaults (with fallback):**
+**Partition into modules** by top-level source directory:
+```bash
+# Group files by first meaningful directory (src/*, app/*, lib/*, cmd/*, pkg/*, etc.)
+# Create one file list per module: /tmp/codex-module-{name}.txt
+# Cap at 6 modules. Group smaller dirs together if >6.
+```
+
+Run separate Codex/Gemini passes **per module** and aggregate findings. This replaces the `head -200` cap with intelligent partitioning.
+
+### File Prioritization (branch/PR modes)
+
+Same tiering as the review skill:
+- **Tier 1**: auth/security/crypto paths, API boundaries, new files, data access layers
+- **Tier 2**: error handling, config, service/business logic
+- **Tier 3**: tests, docs, CSS, small mods to established files
+
+For >50 files, focus Codex/Gemini on Tier 1+2 only.
+
+## Step 4: Run Multi-Dimension Review Passes
+
+Load `${CLAUDE_SKILL_DIR}/codex-prompts.md` for dimension-specific prompt templates.
+
+### Dimension Selection
+
+**Default (no --focus):** Run all applicable dimensions:
+- `security` — always
+- `correctness` — always
+- `errors` — always
+- `architecture` — always for full mode, branch/PR if >10 files changed
+- `tests` — always for full mode, branch/PR if test files exist
+- `deps` — only for full mode or if dependency files changed
+
+**With --focus:** Run only the specified dimension.
+
+### Execution Strategy
+
+For each dimension, run available tools in parallel:
+
+**Codex pass:**
 ```bash
 REVIEW_MODEL="${MODEL:-gpt-5.3-codex}"
 FALLBACK_MODEL="${FALLBACK_MODEL:-gpt-5-codex}"
-```
 
-**Create a high-signal review prompt (shared):**
-```bash
-cat > /tmp/codex-review-prompt.txt <<'PROMPT'
-Review for actionable defects only. Prioritize correctness, security, and reliability.
-Do not report style/refactor nits unless they cause a real defect.
-
-For each finding, include:
-- severity: Critical | High | Medium | Low
-- confidence: 0-100
-- location: file:line
-- issue: concise explanation of what is wrong
-- trigger: concrete input/runtime scenario that exposes the issue
-- fix: minimal safe change
-- test: specific test to add/update
-
-Security findings must include attacker preconditions and exploit path.
-Return at most 10 findings, sorted by severity then confidence.
-If there are no actionable findings, output exactly: No actionable findings.
-
-Output format (markdown table):
-| Severity | Confidence | Location | Issue | Trigger | Fix | Test |
-|---|---:|---|---|---|---|---|
-PROMPT
-```
-
-**For `branch` changes (preferred):**
-```bash
-cat /tmp/codex-review-prompt.txt | \
+# Inject dimension-specific prompt from codex-prompts.md
+cat /tmp/codex-{dimension}-prompt.txt | \
   codex --model ${REVIEW_MODEL} --full-auto review --base main - \
-  2>&1 | tee /tmp/codex-review-output.txt
+  2>&1 | tee /tmp/codex-{dimension}-output.txt
 ```
 
-**For PR diff input (`PR#`):**
+**Gemini pass (if available):**
 ```bash
-{
-  cat /tmp/codex-review-prompt.txt
-  echo
-  echo "Diff to review:"
-  cat /tmp/codex-review-diff.txt
-} | codex --model ${REVIEW_MODEL} --full-auto exec - \
-  2>&1 | tee /tmp/codex-review-output.txt
+# Run same dimension prompt through Gemini for cross-model coverage
+gemini --model gemini-2.5-pro -p "$(cat /tmp/codex-{dimension}-prompt.txt)" \
+  2>&1 | tee /tmp/gemini-{dimension}-output.txt
 ```
 
-**For `full` codebase:**
+**For full mode:** Run each dimension per module, then aggregate:
 ```bash
-cat > /tmp/codex-review-full-prompt.txt <<'PROMPT'
-Review this repository for actionable architectural, security, reliability, and performance issues.
-Do not report style-only feedback.
-
-Focus on:
-1. Architecture/design risks that cause defects or fragility
-2. Security vulnerabilities and unsafe trust boundaries
-3. Error-handling gaps that can fail at runtime
-4. Performance anti-patterns likely to impact production
-5. Dead code/unused exports only when they create risk or maintenance burden
-
-For each finding, include:
-- severity: Critical | High | Medium | Low
-- confidence: 0-100
-- location: file:line (or "multiple")
-- issue
-- trigger
-- fix
-- test
-
-Return at most 10 findings, sorted by severity then confidence.
-If there are no actionable findings, output exactly: No actionable findings.
-
-Output format (markdown table):
-| Severity | Confidence | Location | Issue | Trigger | Fix | Test |
-|---|---:|---|---|---|---|---|
-PROMPT
-
-{
-  cat /tmp/codex-review-full-prompt.txt
-  echo
-  echo "Prioritize these files first (first 200):"
-  head -200 /tmp/codex-review-files.txt
-} | codex --model ${REVIEW_MODEL} --full-auto exec - \
-  2>&1 | tee /tmp/codex-review-output.txt
+# Per module, per dimension
+cat /tmp/codex-{dimension}-prompt.txt <(echo "Files to review:") /tmp/codex-module-{name}.txt | \
+  codex --model ${REVIEW_MODEL} --full-auto exec - \
+  2>&1 | tee /tmp/codex-{dimension}-{module}-output.txt
 ```
 
-**If model access fails, retry once with fallback model:**
+**Model fallback:** If primary model access fails (check for "model not found", "not available", "permission denied"), retry once with `FALLBACK_MODEL`.
+
+### Parallel Execution
+
+- Different dimensions are independent — run in parallel
+- For full mode: different modules within the same dimension are independent — run in parallel
+- Cap total concurrent external CLI calls at 4
+
+## Step 5: Claude Triage
+
+Load `${CLAUDE_SKILL_DIR}/codex-triage.md` for full triage instructions.
+
+### 5a. Read all external outputs
 ```bash
-# Example indicators: "model not found", "not available for your account", "permission denied"
-cat /tmp/codex-review-prompt.txt | \
-  codex --model ${FALLBACK_MODEL} --full-auto review --base main - \
-  2>&1 | tee /tmp/codex-review-output.txt
+cat /tmp/codex-*-output.txt /tmp/gemini-*-output.txt 2>/dev/null
 ```
 
-For PR/full flows, rerun the same command and replace `--model ${REVIEW_MODEL}` with `--model ${FALLBACK_MODEL}`.
+### 5b. Load convention context
+Apply `{PROJECT_CONVENTIONS}` from Step 2 when evaluating findings.
 
-### Step 4: Claude Triage of Codex Findings
+### 5c. Per-finding evaluation
+For each finding, assess:
+1. **Validity**: Read actual code. Is this real, mitigated, false positive, or convention-allowed?
+2. **Severity**: Is the classification correct? Adjust with reasoning.
+3. **Actionability**: Fix now, design decision, defer, or dismiss.
 
-Read the Codex output and perform critical analysis:
+### 5d. Multi-model agreement scoring
+- 3 models agree on same finding → confidence +15 (capped at 100)
+- 2 models agree → confidence +10
+- 1 model only → keep original confidence
+- Models disagree → flag for user decision in Step 10
 
-```bash
-cat /tmp/codex-review-output.txt
-```
+### 5e. Deduplicate
+Same file + overlapping lines + same issue type → merge. Keep highest confidence, most specific detail.
 
-For each finding from Codex, evaluate:
+### 5f. Apply confidence threshold
+Drop findings below threshold (default 80, `--threshold N` override). Exception: Critical findings with confidence 60+ survive.
 
-1. **Validity** - Is this a real issue?
-   - Read the actual code to verify the concern
-   - Check if it's already handled elsewhere
-   - Determine if it's a false positive
+## Step 6: Claude-Originated Review Pass
 
-2. **Severity Classification:**
-   - **Critical** - Security vulnerabilities, data loss risks, crashes
-   - **High** - Bugs affecting functionality, missing error handling
-   - **Medium** - Code quality, performance concerns, maintainability
-   - **Low** - Style issues, minor improvements, nice-to-haves
-   - **Invalid** - False positives, already addressed, not applicable
+After triaging external findings, Claude reviews areas where it has an advantage (full codebase access, convention knowledge). See Part 2 of `${CLAUDE_SKILL_DIR}/codex-triage.md`.
 
-3. **Actionability** - Can this be fixed in this PR/session?
+Launch parallel Explore agents for:
 
-### Step 5: Verification Deep Dive
+1. **Codebase Consistency** — Does new code follow established patterns? Are there existing utilities it should reuse? Duplicated logic?
+2. **Convention Compliance** — Violations of explicit CLAUDE.md/conventions.md rules that Codex/Gemini wouldn't know about.
+3. **Integration Completeness** — Missing exports, route registrations, middleware, DI bindings that peer code has.
+4. **Cross-Cutting Gaps** — Inconsistencies across related files that per-file review misses.
 
-For Critical and High severity items, use Task agents to verify:
+Claude-originated findings are tagged with `source: claude` and enter the same severity/confidence pipeline. Skip anything already covered by a triaged external finding.
 
-```
-Launch parallel Explore agents to:
-1. Verify each Critical/High finding by reading the actual code
-2. Check if the issue is already mitigated elsewhere
-3. Understand the full context of the flagged code
-```
+## Step 7: Verify Critical/High Findings
 
-### Step 6: Create Fix Plan
+For all Critical and High findings from any source (Codex, Gemini, Claude), launch parallel verification Explore agents (capped at 4):
+- Read actual code in full context
+- Check for mitigation elsewhere
+- Construct concrete triggering scenario
+- Verdict: **CONFIRMED** / **MITIGATED** / **FALSE_POSITIVE**
 
-For valid findings that should be addressed:
+Process verdicts:
+- CONFIRMED → keep with "[Verified]" tag and source attribution
+- MITIGATED → downgrade severity one level
+- FALSE_POSITIVE → move to Dismissed section
 
-1. Group by file to minimize context switching
-2. Order by severity (Critical > High > Medium > Low)
-3. Create TodoWrite entries with specific fix instructions
-4. Note any findings that require design decisions
-
-### Step 7: Handle Disputed Findings
-
-For findings Claude disagrees with, use AskUserQuestion:
-- Present the Codex finding
-- Explain Claude's assessment
-- Ask user to decide: Fix, Defer, or Dismiss
-
-## Output Format
+## Step 8: Generate Report
 
 ```markdown
-# Codex Review Analysis
+# Cross-Model Code Review
 
-## Review Summary
-- **Scope**: [branch changes | full codebase | PR #X]
-- **Model Used**: [codex model]
-- **Files Analyzed**: [count]
-- **Total Findings**: [count]
-- **Valid Findings**: [count]
-- **False Positives**: [count]
+## Summary
+- **Scope**: branch changes | full codebase | PR #X
+- **Tools Used**: Codex ({model}) [+ Gemini] + Claude
+- **Dimensions**: [list of passes run]
+- **Files Analyzed**: N total (M prioritized)
+- **Confidence Threshold**: [threshold]
+- **Convention Sources**: [files loaded or "none"]
+- **Findings**: X Critical, Y High, Z Medium, W Low
 
-## Findings by Severity
+## Critical Issues ({count}) — Verified
+For each:
+> **[severity] [confidence]% [source: codex|gemini|claude|multi]** `file:line`
+> **Issue**: one-line summary
+> **Trigger**: concrete scenario
+> **Verification**: CONFIRMED — [evidence]
+> **Fix**: minimal safe change
+> **Test**: specific test to add
 
-### Critical ({count})
-| Finding | Location | Codex Says | Claude's Assessment | Action |
-|---------|----------|------------|---------------------|--------|
-| [issue] | file:line | [codex note] | [validation] | [fix plan] |
+## High Priority Issues ({count}) — Verified
+[same format]
 
-### High ({count})
-| Finding | Location | Codex Says | Claude's Assessment | Action |
-|---------|----------|------------|---------------------|--------|
+## Medium Priority Issues ({count})
+[same format, without verification]
 
-### Medium ({count})
-| Finding | Location | Codex Says | Claude's Assessment | Action |
-|---------|----------|------------|---------------------|--------|
+## Convention Violations ({count})
+> **[confidence]% [source: claude]** `file:line`
+> **Rule**: [quoted convention]
+> **Violation**: what differs
+> **Fix**: how to comply
 
-### Low ({count})
-| Finding | Location | Codex Says | Claude's Assessment | Action |
-|---------|----------|------------|---------------------|--------|
+## Low Priority / Suggestions ({count})
+[grouped by file]
 
-### Dismissed ({count})
-| Finding | Location | Reason for Dismissal |
-|---------|----------|---------------------|
-| [issue] | file:line | [why invalid/already handled] |
+## Dismissed Findings ({count})
+> ~~`file:line` — [issue] (source: {tool})~~
+> **Dismissed**: [reason]
 
-## Recommended Actions
+## Model Agreement
+[Where models agreed vs disagreed, how disagreements were resolved]
 
-### Immediate Fixes (this session)
-1. [Specific fix with file:line]
-2. [Specific fix with file:line]
+## Positive Findings
+[Good patterns observed]
 
-### Deferred Items
-- [Item requiring design discussion]
-- [Item out of current scope]
+## Overall Assessment
+[Quality rating, key risks, recommendation]
 
-## Codex Raw Output
+## Raw Tool Output
 <details>
-<summary>Full Codex output (click to expand)</summary>
+<summary>Codex output (click to expand)</summary>
 
-[raw codex output]
+[raw codex output per dimension]
+
+</details>
+
+<details>
+<summary>Gemini output (click to expand)</summary>
+
+[raw gemini output per dimension, if used]
 
 </details>
 ```
 
+## Step 9: Task Integration
+
+1. Create **TodoWrite** entries for all confirmed findings, grouped by severity then file:
+   - Critical/High: one todo per finding with fix instructions
+   - Medium: group related findings per file
+   - Low/Convention: one summary todo per category
+
+2. For Critical and High findings, ask via `AskUserQuestion`:
+   > "**{count}** Critical/High findings confirmed. Create ccmagic tasks for tracking?"
+   > - **Yes** — create tasks in `context/features/*/tasks/`
+   > - **No** — TodoWrite entries only
+   > - **Pick** — select specific findings
+
+## Step 10: Handle Disputed Findings
+
+For findings where models disagree or verification was uncertain:
+
+Present both assessments via `AskUserQuestion`:
+> **Disputed**: [issue at file:line]
+> **Codex says**: [assessment]
+> **Gemini says**: [assessment]  *(if applicable)*
+> **Claude says**: [assessment]
+> **Options**: Fix | Defer | Dismiss
+
+Record decision in report.
+
 ## Execution
 
-1. Check for Codex installation immediately
-2. If not installed, ask user if they want to:
-   - Install Codex now (`npm install -g @openai/codex`)
-   - Fall back to Claude-only review (`/ccmagic:review`)
-   - Cancel
-3. Run Codex review with appropriate scope using `REVIEW_MODEL`
-4. If model access fails, retry once with `FALLBACK_MODEL`
-5. Parse and triage all findings
-6. Verify Critical/High items by reading actual code
-7. Present categorized findings with Claude's assessment
-8. Create TodoWrite entries for approved fixes
-9. Ask about disputed findings before proceeding
+1. Check tool installation immediately
+2. If neither installed → offer install or fall back to `/ccmagic:review`
+3. Load project conventions
+4. Determine scope and partition files (module-aware for full mode)
+5. Run dimension-focused passes through available tools (parallel)
+6. Claude triages with convention awareness and multi-model scoring
+7. Claude runs supplementary review (codebase consistency, conventions, integration)
+8. Verify Critical/High findings
+9. Generate cross-model report
+10. Create TodoWrite/task entries
+11. Resolve disputed findings with user
 
-**Key principle:** Codex provides broad coverage, Claude provides judgment. Not every Codex finding is valid--Claude's job is to separate signal from noise and create an actionable plan.
+**Key principle:** Multiple models catch different things. Codex and Gemini provide broad, independent coverage. Claude provides judgment, convention awareness, and codebase-wide context. Findings that survive multi-model agreement and verification are high-confidence signals worth acting on.
