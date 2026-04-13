@@ -12,9 +12,13 @@ Every finding reported by a review agent MUST use this exact structure. Omitting
 - issue: <one-line summary>
 - detail: <explanation with evidence — what the code does wrong, concrete triggering scenario>
 - suggestion: <minimal fix — what to change, not a rewrite>
+- specialist: <agent name that produced this finding — e.g. correctness, security, testing, performance, migration>
+- fixable: <true | false — true if the fix is mechanical and can be auto-applied without judgment>
 ```
 
 Use one block per finding. Separate findings with a blank line.
+
+The `specialist` field enables multi-specialist confirmation (boosted confidence when 2+ agents flag the same issue). The `fixable` field drives the fix-first workflow — mechanical fixes are auto-applied, judgment calls are batched for user decision.
 
 ## Severity Definitions
 

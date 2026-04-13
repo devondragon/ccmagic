@@ -1,6 +1,6 @@
 ---
 user-invocable: true
-allowed-tools: Read(*), Bash(git:*, gh:*), Glob(*), Grep(*), Task(*), TodoWrite(*), AskUserQuestion(*), mcp__pal__codereview(*)
+allowed-tools: Read(*), Edit(*), Bash(git:*, gh:*), Glob(*), Grep(*), Agent(*), Task(*), TodoWrite(*), AskUserQuestion(*), mcp__pal__codereview(*)
 description: Comprehensive code review with validation, confidence scoring, and convention awareness
 argument-hint: "[branch|full|PR#] [--threshold N]"
 model: sonnet
@@ -82,6 +82,48 @@ Sort changed files into tiers for agent attention:
 
 For diffs with **>50 files**: agents focus on Tier 1 and 2. Tier 3 files get a brief summary pass only.
 
+## Step 2.5: Scope Drift Detection
+
+Cross-reference the diff against stated intent to detect scope creep and missing requirements.
+
+### Gather intent sources (in priority order)
+
+1. **Plan file**: Check `~/.claude/plans/` for recent `.md` files referencing the current branch or repo. Read the most recent match.
+2. **PR description**: `gh pr view --json body -q .body 2>/dev/null`
+3. **Commit messages**: `git log --oneline main...HEAD`
+
+If no intent source exists, skip this step silently.
+
+### Analyze
+
+From the intent source, extract the **stated goal** — what this branch is supposed to accomplish.
+
+Compare against `git diff --name-only main...HEAD`:
+
+**Scope creep** — files changed that are unrelated to the stated intent:
+- Changes to modules not mentioned in the plan
+- New features or refactors not in scope
+- "While I was in there..." changes
+
+**Missing requirements** — intent items with no evidence in the diff:
+- Plan items not addressed
+- Requirements mentioned but not implemented
+
+### Output (informational, does not block)
+
+```
+Scope Check: [CLEAN | DRIFT DETECTED | REQUIREMENTS MISSING]
+Intent: <1-line summary of what was requested>
+Source: <plan file | PR description | commit messages>
+Delivered: <1-line summary of what the diff actually does>
+[If drift: list each out-of-scope change]
+[If missing: list each unaddressed requirement]
+```
+
+This output appears before the main review findings. It gives context for interpreting the review — a finding in out-of-scope code is a stronger signal to revert than fix.
+
+---
+
 ## Step 3: Launch Parallel Review Agents (Round 1)
 
 Load `${CLAUDE_SKILL_DIR}/agent-instructions.md` for detailed agent prompts.
@@ -102,6 +144,48 @@ Each agent receives:
 - The actual diff or file contents
 - The `{PROJECT_CONVENTIONS}` string
 - Instructions to use the finding schema exactly
+
+### Conditional Specialist Agents
+
+After the 4 core agents are launched, detect scope signals from the diff and dispatch additional specialist agents in parallel. These are additive — they run alongside the core agents.
+
+**Scope detection:**
+```bash
+# Detect what the diff touches
+CHANGED=$(git diff --name-only main...HEAD)
+HAS_TESTS=$(echo "$CHANGED" | grep -E '(test|spec|__tests__)' | head -1)
+HAS_SOURCE=$(echo "$CHANGED" | grep -vE '(test|spec|__tests__|\.test\.|\.spec\.|_test\.)' | grep -E '\.(ts|js|py|rb|go|rs|java|kt|swift|php)$' | head -1)
+HAS_MIGRATIONS=$(echo "$CHANGED" | grep -iE '(migrat|\.up\.sql|\.down\.sql|alembic|db/migrate)' | head -1)
+HAS_BACKEND=$(echo "$CHANGED" | grep -iE '(model|service|controller|handler|endpoint|api|route|repo)' | head -1)
+HAS_FRONTEND=$(echo "$CHANGED" | grep -iE '(component|page|hook|view|template|\.tsx|\.jsx|\.vue|\.svelte)' | head -1)
+DIFF_LINES=$(git diff --stat main...HEAD | tail -1 | grep -oE '[0-9]+ insertion' | grep -oE '[0-9]+')
+```
+
+**Dispatch rules:**
+
+| Specialist | Condition | Agent prompt |
+|------------|-----------|--------------|
+| **Testing** | `HAS_SOURCE` is non-empty (source code changed) | Testing Agent from agent-instructions.md |
+| **Performance** | `HAS_BACKEND` or `HAS_FRONTEND` is non-empty | Performance Agent from agent-instructions.md |
+| **Data Migration** | `HAS_MIGRATIONS` is non-empty | Data Migration Agent from agent-instructions.md |
+
+Launch all matching specialists in a single message alongside the core agents (up to 7 total agents in parallel).
+
+**Adaptive gating** (skip specialists that consistently produce zero findings):
+
+If this project has a review history file at `context/review-stats.json`, read it before dispatching. The file tracks per-specialist hit rates:
+
+```json
+{"testing": {"dispatched": 8, "findings": 12}, "performance": {"dispatched": 8, "findings": 0}, "migration": {"dispatched": 3, "findings": 2}}
+```
+
+- If a specialist has 0 findings across 10+ dispatches, **skip it**. Print: `[specialist] auto-gated (0 findings in N reviews)`
+- Exception: **Security** is never gated — it's an insurance policy
+- Override: `--all-specialists` flag forces all specialists regardless of gating
+
+After the review completes (Step 7), update `context/review-stats.json` with the dispatch and finding counts from this review.
+
+---
 
 ### Full mode — module-based agents:
 
@@ -152,9 +236,13 @@ If MCP and Explore agents disagree on a finding → flag for user decision in St
 - **Scope**: branch changes | full codebase | PR #X
 - **Branch**: [current branch or PR base]
 - **Files Analyzed**: N total (M in Tier 1/2)
+- **Agents**: 4 core + N specialists (testing, performance, migration — list which ran)
 - **Confidence Threshold**: [threshold used]
 - **Convention Sources**: [files loaded, or "none found"]
 - **Findings**: X Critical, Y High, Z Medium, W Low, V Convention
+
+## Scope Check
+[Output from Step 2.5 — CLEAN / DRIFT DETECTED / REQUIREMENTS MISSING]
 
 ## Critical Issues ({count}) — Verified
 For each:
@@ -185,27 +273,73 @@ For each:
 > ~~`file:line` — [original issue]~~
 > **Dismissed**: [reason — FALSE_POSITIVE or below threshold]
 
+## Fixes Applied ({count})
+[List of auto-fixed and user-approved fixes with commit hashes]
+> `abc1234` fix(review): FINDING-003 — missing null check in user handler
+> `def5678` fix(review): FINDING-007 — N+1 query in order listing
+
 ## Positive Findings
 [Well-implemented patterns, good practices observed]
+
+## Specialist Report
+[Which specialists ran, which were skipped (scope), which were gated (0 findings in N+ reviews)]
 
 ## Overall Assessment
 [Quality rating, key risks, actionable recommendation]
 ```
 
-## Step 7: Task Integration
+## Step 7: Fix-First & Task Integration
 
-1. Create **TodoWrite** entries for all confirmed findings, grouped by severity then by file:
+### 7a. Auto-fix mechanical findings
+
+For findings marked `fixable: true` by triage (see triage-instructions.md Step 7):
+- Apply each fix directly in source code
+- Prefer minimal changes — one fix per finding
+- Commit each fix atomically: `git commit -m "fix(review): FINDING-NNN — description"`
+- Output per fix: `[AUTO-FIXED] file:line — issue → what was changed`
+
+Skip auto-fix if the working tree was dirty at the start of the review (detected in Step 0).
+
+### 7b. Batch-ask about judgment calls
+
+For findings marked `fixable: false`, present via a single `AskUserQuestion`:
+
+```
+I auto-fixed N issues. M need your input:
+
+1. [HIGH] file:line — issue description
+   Suggested fix: what to change
+   → A) Fix  B) Skip
+
+2. [MEDIUM] file:line — issue description
+   Suggested fix: what to change
+   → A) Fix  B) Skip
+
+RECOMMENDATION: Fix #1 because [reason]. Skip #2 because [reason].
+```
+
+Apply fixes for items where the user chose "Fix." Commit each individually.
+
+If 0 fixable findings exist, skip 7a. If 0 judgment-call findings exist, skip 7b.
+
+### 7c. Task integration
+
+1. Create **TodoWrite** entries for all remaining (unfixed) findings, grouped by severity then by file:
    - Critical/High: one todo per finding
    - Medium: group related findings per file into one todo
    - Low/Convention: one summary todo per category
 
-2. For Critical and High findings, ask:
-   > "**{count}** Critical/High findings confirmed. Create ccmagic tasks for tracking?"
+2. For Critical and High findings that weren't fixed, ask:
+   > "**{count}** Critical/High findings remain unfixed. Create ccmagic tasks for tracking?"
    > - **Yes** — create tasks in `context/features/*/tasks/` grouped by related findings
    > - **No** — TodoWrite entries only
    > - **Pick** — select specific findings to create tasks for
 
 Use `AskUserQuestion` for this decision.
+
+### 7d. Update review stats
+
+If `context/review-stats.json` exists (or conditional specialists were dispatched), update per-specialist dispatch and finding counts for adaptive gating in future reviews.
 
 ## Step 8: Handle Disputed Findings
 

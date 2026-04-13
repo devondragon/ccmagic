@@ -46,12 +46,17 @@ You are verifying a single code review finding. Your job is to determine whether
 
 ## Triage Process (orchestrator logic)
 
-### 1. Deduplicate
+### 1. Deduplicate and Confirm
 Before verification, merge findings that refer to the same issue:
 - Same file + overlapping line range + same issue category → merge
 - Keep highest confidence score
 - Keep most specific detail (the version with a concrete scenario)
 - If severities differ, keep higher but note disagreement
+
+**Multi-specialist confirmation:** When 2+ specialists flag the same issue (matched by file + line range + issue type):
+- Boost confidence by +10 (cap at 100)
+- Tag finding: `[MULTI-SPECIALIST: correctness + security]` (list confirming specialists)
+- This is strong signal — multiple independent reviewers found the same problem
 
 ### 2. Apply Confidence Threshold
 - Default threshold: 80 (overridable via `--threshold N`)
@@ -75,7 +80,36 @@ When MCP expert analysis and Explore agents disagree on the same finding:
 - If Explore says issue exists and MCP doesn't mention it → keep the Explore finding (MCP may have missed it)
 - If both agree → high confidence, no dispute
 
-### 6. Final Ordering
+### 6. Confidence Display Gates
+
+After triage, apply display rules based on final confidence:
+
+| Confidence | Display | Label |
+|------------|---------|-------|
+| 90-100 | Show normally | — |
+| 70-89 | Show normally | — |
+| 50-69 | Show with caveat | `(medium confidence — verify this is actually an issue)` |
+| Below 50 | Suppress entirely | Should already be filtered by threshold, but safety net |
+
+### 7. Classify Fix-First
+
+For each surviving finding, classify for the fix-first workflow:
+
+**AUTO-FIX** (fixable: true) — Mechanical changes that don't require judgment:
+- Missing null/undefined checks on obvious code paths
+- Wrong comparison operator (e.g., `=` instead of `===`)
+- Missing error handling where the fix pattern is clear
+- Type mismatches with obvious correct type
+- Missing `await` on async calls
+- Convention violations with clear fix (e.g., wrong import style)
+
+**ASK** (fixable: false) — Requires design decisions or judgment:
+- Architectural changes (restructuring, new abstractions)
+- Security findings where the mitigation strategy has options
+- Performance fixes that involve tradeoffs (caching strategy, query restructuring)
+- Any finding where "the fix" depends on business context
+
+### 8. Final Ordering
 After triage, order findings for the report:
 1. Critical (verified) — by confidence descending
 2. High (verified) — by confidence descending
