@@ -108,6 +108,8 @@ This creates a project management structure in your repository's `context/` dire
 | `/ccmagic:review`        | Code review with parallel exploration         | `/ccmagic:review`                  |
 | `/ccmagic:codex-review`  | Codex CLI review + Claude triage and fix plan | `/ccmagic:codex-review branch`     |
 | `/ccmagic:design-qa`     | Design quality audit with AI slop detection   | `/ccmagic:design-qa localhost:3000`|
+| `/ccmagic:design-explore`| Generate multiple design variants, compare, pick| `/ccmagic:design-explore landing page`|
+| `/ccmagic:browser-qa`    | Interactive browser QA — test, fix, verify     | `/ccmagic:browser-qa localhost:3000`|
 | `/ccmagic:debug`         | Systematic debugging with persistent state    | `/ccmagic:debug login issue`       |
 | `/ccmagic:analyze-impact`| Analyze dependencies and blast radius         | `/ccmagic:analyze-impact src/auth` |
 
@@ -133,7 +135,7 @@ Skills are categorized by safety:
 
 ### Subagent Isolation (`context: fork`)
 Heavy skills run in isolated subagents to avoid polluting your main conversation:
-`map-codebase`, `review`, `codex-review`, `design-qa`, `validate`, `analyze-impact`, `research`, `daily-standup`, `handoff`, `doctor`
+`map-codebase`, `review`, `codex-review`, `design-qa`, `design-explore`, `browser-qa`, `validate`, `analyze-impact`, `research`, `daily-standup`, `handoff`, `doctor`
 
 ### Parallel Subagents
 Skills like `/review` and `/analyze-impact` use the Task tool with Explore agents to analyze code in parallel.
