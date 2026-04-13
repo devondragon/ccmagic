@@ -107,6 +107,7 @@ This creates a project management structure in your repository's `context/` dire
 | `/ccmagic:validate`      | Validate code (parallel checks)               | `/ccmagic:validate`                |
 | `/ccmagic:review`        | Code review with parallel exploration         | `/ccmagic:review`                  |
 | `/ccmagic:codex-review`  | Codex CLI review + Claude triage and fix plan | `/ccmagic:codex-review branch`     |
+| `/ccmagic:design-qa`     | Design quality audit with AI slop detection   | `/ccmagic:design-qa localhost:3000`|
 | `/ccmagic:debug`         | Systematic debugging with persistent state    | `/ccmagic:debug login issue`       |
 | `/ccmagic:analyze-impact`| Analyze dependencies and blast radius         | `/ccmagic:analyze-impact src/auth` |
 
@@ -132,7 +133,7 @@ Skills are categorized by safety:
 
 ### Subagent Isolation (`context: fork`)
 Heavy skills run in isolated subagents to avoid polluting your main conversation:
-`map-codebase`, `review`, `codex-review`, `validate`, `analyze-impact`, `research`, `daily-standup`, `handoff`, `doctor`
+`map-codebase`, `review`, `codex-review`, `design-qa`, `validate`, `analyze-impact`, `research`, `daily-standup`, `handoff`, `doctor`
 
 ### Parallel Subagents
 Skills like `/review` and `/analyze-impact` use the Task tool with Explore agents to analyze code in parallel.
@@ -157,6 +158,7 @@ Skills integrate with external MCP tools when available, with graceful fallback:
 | `mcp__pal__codereview` | Expert code review | Explore agents |
 | `mcp__pal__analyze` | Deep analysis | Standard analysis |
 | `mcp__pal__planner` | Planning assistance | Task tool with Plan agent |
+| `mcp__chrome_devtools__*` | Design QA browser inspection | Source-code-only audit |
 
 **All skills work fully without MCP tools** - they're optional enhancements.
 
