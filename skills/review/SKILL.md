@@ -1,6 +1,6 @@
 ---
 user-invocable: true
-allowed-tools: Read(*), Edit(*), Bash(git:*, gh:*), Glob(*), Grep(*), Agent(*), Task(*), TodoWrite(*), AskUserQuestion(*), mcp__pal__codereview(*)
+allowed-tools: Read(*), Edit(*), Bash(git:*, gh:*, codex:*, which:*), Glob(*), Grep(*), Agent(*), Task(*), TodoWrite(*), AskUserQuestion(*), mcp__pal__codereview(*)
 description: Comprehensive code review with validation, confidence scoring, and convention awareness
 argument-hint: "[branch|full|PR#] [--threshold N]"
 model: sonnet
@@ -24,6 +24,8 @@ Parse `$ARGUMENTS` to determine review mode and options:
 | `full` | `full` | Full codebase review — partition into modules |
 | `<number>` | `pr` | Review PR by number (e.g., `42`) |
 | `--threshold N` | *(modifier)* | Confidence threshold, default 80. Findings below this are dropped. |
+| `--no-codex` | *(modifier)* | Skip Codex CLI review even if installed |
+| `--all-specialists` | *(modifier)* | Force all conditional specialists, bypass adaptive gating |
 
 If on `main` with no changes and no argument:
 > "No branch changes detected. Use `/ccmagic:review full` for a full codebase review, or switch to a feature branch."
@@ -192,6 +194,41 @@ After the review completes (Step 7), update `context/review-stats.json` with the
 1. Launch **1 Explore agent per module** (capped at 6) covering all 4 concern areas within that module. Use the "Module Agent" prompt from agent-instructions.md.
 2. After module agents complete, launch a **Cross-Module Agent** to check inter-module concerns.
 
+## Step 3.5: Codex CLI Review (optional, parallel)
+
+Check for Codex CLI availability:
+
+```bash
+which codex 2>/dev/null && echo "CODEX_AVAILABLE" || echo "CODEX_NOT_AVAILABLE"
+```
+
+**If Codex is available**, launch an adversarial review pass via Bash. This runs in the background alongside the Explore agents from Step 3 — it's an independent voice, not a replacement.
+
+```bash
+codex exec "Review the changes on this branch against the base branch. Run git diff main...HEAD to see the diff. Find ways this code will fail in production: edge cases, race conditions, security holes, resource leaks, failure modes, silent data corruption, logic errors that produce wrong results silently, error handling that swallows failures. Be adversarial. For each finding, output: severity (Critical/High/Medium/Low), confidence (0-100), file, line, issue, detail, suggestion. No compliments — just problems." -C "$(git rev-parse --show-toplevel)" -s read-only 2>/dev/null
+```
+
+Use a 5-minute timeout (`timeout: 300000`). Run via the Bash tool with `run_in_background: true` so it doesn't block the Explore agents.
+
+**Processing Codex output:**
+
+After Codex completes, parse its findings into the same finding schema:
+- Tag each finding with `specialist: codex`
+- Set `fixable` based on the fix-first classification rules in triage-instructions.md
+- Findings enter the same deduplication and triage pipeline as all other findings
+
+**Multi-model confirmation:** When a Codex finding matches a finding from an Explore agent (same file + overlapping line range + same issue type), apply the multi-specialist confirmation boost (+10 confidence, tag as `[MULTI-MODEL: codex + {agent}]`). Cross-model agreement is a strong signal.
+
+**Error handling (all non-blocking):**
+- Auth failure (stderr contains "auth", "login", "unauthorized"): `Codex authentication failed. Run 'codex login' to authenticate.`
+- Timeout: `Codex timed out after 5 minutes — continuing without Codex findings.`
+- Empty response or error: `Codex returned no findings — continuing.`
+- Any failure: proceed with Explore agent findings only. Codex is additive, never blocking.
+
+**If Codex is not available:** Print `Codex CLI not found — skipping cross-model review. Install: npm install -g @openai/codex` and continue. This is informational, not an error.
+
+---
+
 ## Step 4: Expert Analysis (MCP Fallback)
 
 **Priority order — use first available:**
@@ -236,7 +273,7 @@ If MCP and Explore agents disagree on a finding → flag for user decision in St
 - **Scope**: branch changes | full codebase | PR #X
 - **Branch**: [current branch or PR base]
 - **Files Analyzed**: N total (M in Tier 1/2)
-- **Agents**: 4 core + N specialists (testing, performance, migration — list which ran)
+- **Agents**: 4 core + N specialists (testing, performance, migration — list which ran) [+ Codex CLI]
 - **Confidence Threshold**: [threshold used]
 - **Convention Sources**: [files loaded, or "none found"]
 - **Findings**: X Critical, Y High, Z Medium, W Low, V Convention
