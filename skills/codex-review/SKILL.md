@@ -66,6 +66,7 @@ Collect into `{PROJECT_CONVENTIONS}` for the Claude triage pass and Claude-origi
 git diff --name-only main...HEAD
 git diff --stat main...HEAD
 git log --oneline main...HEAD
+git diff main...HEAD > /tmp/codex-review-diff.txt
 ```
 
 ### PR mode
@@ -152,9 +153,10 @@ For each dimension, run available tools in parallel:
 REVIEW_MODEL="${MODEL:-gpt-5.3-codex}"
 FALLBACK_MODEL="${FALLBACK_MODEL:-gpt-5-codex}"
 
-# Inject dimension-specific prompt from codex-prompts.md
-cat /tmp/codex-{dimension}-prompt.txt | \
-  codex --model ${REVIEW_MODEL} --full-auto exec review --base main - \
+# Inject dimension-specific prompt and diff content via stdin
+# (--base and [PROMPT] are mutually exclusive in codex; pipe diff instead)
+cat /tmp/codex-{dimension}-prompt.txt /tmp/codex-review-diff.txt | \
+  codex --model ${REVIEW_MODEL} --full-auto exec - \
   2>&1 | tee /tmp/codex-{dimension}-output.txt
 ```
 
