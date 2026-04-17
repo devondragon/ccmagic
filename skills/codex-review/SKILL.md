@@ -154,7 +154,7 @@ FALLBACK_MODEL="${FALLBACK_MODEL:-gpt-5-codex}"
 
 # Inject dimension-specific prompt from codex-prompts.md
 cat /tmp/codex-{dimension}-prompt.txt | \
-  codex --model ${REVIEW_MODEL} --full-auto review --base main - \
+  codex --model ${REVIEW_MODEL} --full-auto exec review --base main - \
   2>&1 | tee /tmp/codex-{dimension}-output.txt
 ```
 
