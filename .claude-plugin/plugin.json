@@ -1,7 +1,7 @@
 {
   "name": "ccmagic",
   "description": "Advanced project management commands for Claude Code",
-  "version": "2.3.0",
+  "version": "2.3.1",
   "author": { "name": "Devon Hillard", "url": "https://github.com/devondragon" },
   "repository": "https://github.com/devondragon/ccmagic",
   "license": "Apache-2.0"
