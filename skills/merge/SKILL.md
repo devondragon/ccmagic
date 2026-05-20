@@ -38,8 +38,9 @@ fi
 2. **Verify PR Status**: Ensure PR is approved and checks pass
 3. **Update Local**: Sync with remote before merge
 4. **Perform Merge**: Execute merge strategy based on configuration
-5. **Cleanup**: Delete branches and update tracking
-6. **Post-merge**: Update task status and documentation
+5. **Cleanup**: Delete local and remote branches
+
+> If the PR is tied to a tracker ticket, prefer `/ccmagic:finish-ticket` instead — it adds a tracker-side comment and status update on top of the merge.
 
 ## Pre-Merge Verification
 
@@ -67,25 +68,14 @@ git merge --abort  # After checking
 ### Strategy-Aware Merging
 
 ```bash
-# Determine merge approach based on strategy
+# Determine merge approach. ccmagic's documented prefixes are feature/, bugfix/,
+# hotfix/, chore/ (all squash-merged into the base branch) and release/
+# (merge-committed into the base branch). Anything else falls back to the base.
 CURRENT_BRANCH=$(git branch --show-current)
-
-if [[ "$STRATEGY" == *"A"* ]]; then
-    # Hierarchical: Different merge for task vs feature
-    if [[ "$CURRENT_BRANCH" == task/* ]]; then
-        echo "Merging task to feature branch"
-        TARGET="feature/[extracted-feature-id]"
-    else
-        echo "Merging feature to $BASE_BRANCH"
-        TARGET="$BASE_BRANCH"
-    fi
-elif [[ "$STRATEGY" == *"B"* ]] || [[ "$STRATEGY" == *"C"* ]]; then
-    # Direct or Single Feature: Merge to base
-    TARGET="$BASE_BRANCH"
-fi
+TARGET="$BASE_BRANCH"
 ```
 
-### 1. Squash and Merge (Recommended for feature branches)
+### 1. Squash and Merge (Recommended for feature/bugfix/hotfix/chore branches)
 ```bash
 # GitHub CLI
 gh pr merge --squash --delete-branch
@@ -94,7 +84,7 @@ gh pr merge --squash --delete-branch
 git checkout $TARGET
 git pull origin $TARGET
 git merge --squash $CURRENT_BRANCH
-git commit -m "[TASK-XXX] Feature: Description of changes"
+git commit -m "feat(scope): TICKET-ID short description"
 git push origin $TARGET
 ```
 
@@ -135,7 +125,6 @@ git push origin $TARGET
    - Commit history complexity
 5. Execute merge
 6. Cleanup local and remote branches
-7. Update task tracking
 ```
 
 ## Platform-Specific Commands
@@ -146,7 +135,7 @@ git push origin $TARGET
 gh pr merge [PR-NUMBER] \
   --squash \
   --delete-branch \
-  --subject "[TASK-XXX] Feature description" \
+  --subject "feat(scope): TICKET-ID short description" \
   --body "Detailed description of changes"
 
 # Check merge status
@@ -202,7 +191,7 @@ git pull origin main
 ```markdown
 ## Merge Completed
 
-**Branch**: feature/TASK-XXX-description
+**Branch**: feature/TICKET-ID-short-description
 **PR**: #123
 **Commits**: 15 commits squashed
 **Changes**: +500 -200 lines

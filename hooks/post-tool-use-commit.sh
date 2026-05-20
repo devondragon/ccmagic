@@ -48,20 +48,29 @@ if [ -z "$COMMIT_MSG" ]; then
   exit 0
 fi
 
-# Canonical pattern: {TYPE}({scope}): [TICKET-ID] {description}
+# Skip git-generated or intentionally-non-conventional subjects. The hook is a
+# helper, not a gate — no point warning on commits the user can't reasonably
+# reformat (merges, reverts, fixup/squash autosquash markers, initial commits).
+case "$COMMIT_MSG" in
+  Merge\ *|Revert\ *|"Revert \""*|fixup!\ *|squash!\ *|amend!\ *|"Initial commit"*) exit 0 ;;
+esac
+
+# Canonical pattern: {TYPE}({scope})!?: [TICKET-ID] {description}
 # Types match the list documented in .claude/CLAUDE.md.
-# Scope, ticket ID, and the space before the description are all optional.
+# Scope, breaking-change marker (`!`), ticket ID, and the space before the
+# description are all optional.
 # Ticket-ID regex: [A-Z][A-Z0-9]+-[0-9]+ (or a plain integer for GitHub issues)
-PATTERN='^(feat|fix|docs|style|refactor|test|chore|perf|ci)(\([a-zA-Z0-9_-]+\))?: (([A-Z][A-Z0-9]+-[0-9]+|#?[0-9]+) )?.+'
+PATTERN='^(feat|fix|docs|style|refactor|test|chore|perf|ci)(\([a-zA-Z0-9_-]+\))?!?: (([A-Z][A-Z0-9]+-[0-9]+|#?[0-9]+) )?.+'
 
 if ! printf '%s' "$COMMIT_MSG" | grep -qE "$PATTERN"; then
   echo ""
   echo "WARNING: Commit message does not follow the project's conventional-commit format."
-  echo "Expected format: {TYPE}({scope}): [TICKET-ID] {description}"
+  echo "Expected format: {TYPE}({scope})!?: [TICKET-ID] {description}"
   echo "  Types: feat, fix, docs, style, refactor, test, chore, perf, ci"
-  echo "  Scope is optional. Ticket ID is optional but encouraged."
+  echo "  Scope, breaking-change marker (!), and ticket ID are optional."
   echo "  Example: feat(catalog): PROJ-123 add configurable product price override"
   echo "  Example: fix(checkout): #42 prevent duplicate order submission"
+  echo "  Example: feat(api)!: drop deprecated /v1 endpoints"
   echo "  Example: docs(api): add endpoint documentation for returns"
   echo ""
   echo "Actual subject: $COMMIT_MSG"

@@ -57,7 +57,7 @@ Teams without a formal ticket system can drop the `{TICKET-ID}` segment.
 **Format:**
 
 ```
-{TYPE}({scope}): [TICKET-ID] {description}
+{TYPE}({scope})!?: [TICKET-ID] {description}
 
 [optional body]
 ```
@@ -66,6 +66,7 @@ Teams without a formal ticket system can drop the `{TICKET-ID}` segment.
 
 - **Type:** see [Conventional commit types](#conventional-commit-types).
 - **Scope:** module or component name. Optional — if scope isn't obvious or the change is cross-cutting, omit the parentheses entirely (`feat: add ...`).
+- **Breaking-change marker:** append `!` after the type or scope to flag a breaking change (Conventional Commits 1.0). Optional.
 - **Ticket ID:** include if your team uses one (either format). Otherwise omit it.
 - **Description:** imperative mood, no period at the end, max 72 characters.
 - **Body:** optional, wrap at 72 characters, explain *why* not *what*.
@@ -75,16 +76,17 @@ Teams without a formal ticket system can drop the `{TICKET-ID}` segment.
 ```
 feat(catalog): ENG-123 add configurable product price override
 fix(checkout): #42 prevent duplicate order submission
+feat(api)!: drop deprecated /v1 endpoints
 docs(api): add endpoint documentation for returns
 refactor(auth): extract token validation into shared service
 chore: bump minor deps
 ```
 
-The commit-format hook (`hooks/post-tool-use-commit.sh`) validates the subject line post-commit. It's non-blocking — it warns but never rejects.
+The commit-format hook (`hooks/post-tool-use-commit.sh`) validates the subject line post-commit. It's non-blocking — it warns but never rejects. Git-generated subjects (merge, revert, fixup!/squash! autosquash markers, initial commit) are skipped silently.
 
 ## PR standards
 
-- **Title** follows the same commit message format: `{TYPE}({scope}): [TICKET-ID] {description}`
+- **Title** follows the same commit message format: `{TYPE}({scope})!?: [TICKET-ID] {description}`
 - **Description** should include: what changed, why, how to test, link to tracking ticket (if applicable).
 - Have at least **1 reviewer** assigned
 - All **CI checks must pass** before merge
