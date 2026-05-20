@@ -2,14 +2,15 @@
 # PostToolUse hook: validates commit message format after git commit commands.
 # Receives tool input as JSON on stdin. Non-blocking — always exits 0.
 #
-# Canonical commit types and ticket-ID regex are documented in .claude/CLAUDE.md.
-# This script hardcodes the same regex below — keep them in sync if you change either.
+# Canonical commit types and ticket-ID regex are documented in the ccmagic
+# plugin's .claude/CLAUDE.md (not the consuming project's .claude/CLAUDE.md).
+# This script hardcodes the same regex — keep them in sync if you change either.
 
 set -euo pipefail
 
 INPUT=$(cat)
 
-# Extract the command. Prefer jq (robust against escapes); fall back to grep.
+# Extract the command. Prefer jq (robust against escapes); fall back to Perl.
 if command -v jq >/dev/null 2>&1; then
   COMMAND=$(printf '%s' "$INPUT" | jq -r '.tool_input.command // empty' 2>/dev/null || true)
 else

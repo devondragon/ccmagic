@@ -34,7 +34,7 @@ The `--qa` argument always forces the QA path regardless of config.
 
 ### 0b. Resolve tracker (cascade — runs when `tracker: auto` or unset)
 
-1. **Branch hint:** parse the current branch for a ticket ID. Integer-only (e.g. `bugfix/42-...`) suggests GitHub; `[A-Z]+-[0-9]+` suggests Linear or JIRA.
+1. **Branch hint:** parse the current branch for a ticket ID. Integer-only (e.g. `bugfix/42-...`) suggests GitHub; `[A-Z][A-Z0-9]+-[0-9]+` suggests Linear or JIRA.
 2. **MCP probe:** check available tools.
    - Linear MCP: any tool matching `mcp__*Linear*__get_issue`.
    - Atlassian/JIRA MCP: any tool matching `mcp__*atlassian*__*` or `mcp__*Atlassian*__*`.

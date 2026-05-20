@@ -25,7 +25,7 @@ Same cascade as `/ccmagic:work-ticket`:
 
 1. Read `.claude/ccmagic.local.md` (if present) for `tracker:`, `ticket_url_base:`, `ticket_id_regex:`, `github_repo:`.
 2. If `tracker:` is `auto` or unset, run the detection cascade:
-   - **Arg shape:** integer-only ticket ID → GitHub; `[A-Z]+-[0-9]+` → Linear or JIRA.
+   - **Arg shape:** integer-only ticket ID → GitHub; `[A-Z][A-Z0-9]+-[0-9]+` → Linear or JIRA.
    - **MCP probe:** Linear MCP (`mcp__*Linear*__get_issue`), Atlassian/JIRA MCP (`mcp__*atlassian*__*` or `mcp__*Atlassian*__*`).
    - **CLI probe:** `command -v gh && gh repo view --json nameWithOwner 2>/dev/null`.
    - **Branch hint:** match against `ticket_url_base` if ambiguous.
