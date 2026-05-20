@@ -1,0 +1,64 @@
+---
+# Active tracker. Options: linear | github | jira | auto
+# - `auto` runs a detection cascade (MCP probe → CLI probe → branch hint → prompt).
+# - Setting this explicitly skips the cascade.
+tracker: auto
+
+# Base URL for ticket links. Skills append the ticket ID (or /N for GitHub).
+# Examples:
+#   Linear:  https://linear.app/yourteam/issue
+#   JIRA:    https://your-org.atlassian.net/browse
+#   GitHub:  https://github.com/owner/repo/issues
+ticket_url_base: https://linear.app/yourteam/issue
+
+# Regex for matching ticket IDs in branch names and commit messages.
+# Default works for Linear and JIRA. For GitHub-only projects you can leave this
+# as-is — the tracker resolution also recognizes plain integers.
+ticket_id_regex: "[A-Z][A-Z0-9]+-[0-9]+"
+
+# Only used when tracker is `github` (or auto-detected to github).
+# If omitted, /ccmagic:work-ticket runs `gh repo view --json nameWithOwner` to detect.
+# github_repo: owner/repo
+
+# If true, /ccmagic:finish-ticket defaults to the QA path (move ticket to a QA
+# state and assign a reviewer). If false or absent, the default disposition is Done
+# and QA must be requested explicitly via --qa.
+default_qa_workflow: false
+
+# Optional: label applied on GitHub Issues when the QA path is selected
+# (GitHub has no built-in QA state). Ignored for Linear/JIRA.
+# qa_label: needs-qa
+---
+
+# ccmagic project settings
+
+Copy this file to **`.claude/ccmagic.local.md`** in your project root and edit the frontmatter to match your team's setup. The three tracker-aware ccmagic skills (`work-ticket`, `finish-ticket`, `review-ticket`) read this file if present; otherwise they auto-detect.
+
+## Recognized keys
+
+| Key | Purpose | Default if absent |
+|-----|---------|-------------------|
+| `tracker` | Active tracker — `linear`, `github`, `jira`, or `auto`. | `auto` |
+| `ticket_url_base` | Base URL for ticket links. | placeholder |
+| `ticket_id_regex` | Branch/commit detection regex. | `[A-Z][A-Z0-9]+-[0-9]+` |
+| `github_repo` | `owner/repo` for GitHub issues. | auto-detected via `gh repo view` |
+| `default_qa_workflow` | If `true`, `finish-ticket` defaults to the QA path. | `false` |
+| `qa_label` | Label applied to GitHub issues on the QA path. | none (skill asks first time) |
+
+## How the detection cascade works
+
+When `tracker: auto` (or unset), the tracker-aware skills run this cascade:
+
+1. **Arg/branch shape hint** — integer-only ticket ID → GitHub; `[A-Z]+-[0-9]+` → Linear or JIRA.
+2. **MCP probe** — check for `mcp__*Linear*__get_issue` (Linear) and `mcp__*atlassian*__*` (JIRA).
+3. **CLI probe** — `command -v gh && gh repo view` (GitHub).
+4. **Branch hint** — match the current branch against `ticket_url_base` if ambiguous.
+5. **Ask once** — if multiple match or none match, prompt the user and offer to save the choice here.
+
+## Optional markdown body
+
+Anything below the frontmatter is free-form context that skills may read for project-specific guidance (e.g. naming conventions for branches, required reviewers, deploy notes). Keep it short — it's loaded into context whenever a ccmagic skill reads this file.
+
+## How skills read this
+
+Skills check for `.claude/ccmagic.local.md` relative to the git repo root (`git rev-parse --show-toplevel`). If the file exists, parse the YAML frontmatter and use the values. If it doesn't exist, run the auto-detection cascade.

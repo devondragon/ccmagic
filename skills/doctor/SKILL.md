@@ -6,313 +6,149 @@ model: sonnet
 context: fork
 ---
 
-# CCMagic Doctor - System Health Check
+# ccmagic Doctor — Setup Health Check
 
-Run comprehensive diagnostics to identify and help fix CCMagic setup issues.
+Run diagnostics on the consuming project's ccmagic setup. Reports what's configured, what's missing, and what to do about each gap.
 
 ## Diagnostic Process
 
-### 1. Check Directory Structure
+Run all sections, then produce the report at the end. Don't stop on the first failure — the user wants the full picture.
 
-Verify that all required directories exist:
+### 1. Project config files
+
+Verify the non-planning context files ccmagic skills depend on:
 
 ```bash
-# Core directories
-test -d context && echo "OK context/ exists" || echo "MISSING context/ missing"
-test -d context/epics && echo "OK context/epics/ exists" || echo "WARNING context/epics/ missing"
-test -d context/features && echo "OK context/features/ exists" || echo "WARNING context/features/ missing"
-test -d context/spikes && echo "OK context/spikes/ exists" || echo "WARNING context/spikes/ missing"
-test -d context/knowledge && echo "OK context/knowledge/ exists" || echo "WARNING context/knowledge/ missing"
-test -d context/sessions && echo "OK context/sessions/ exists" || echo "WARNING context/sessions/ missing"
+test -f context/conventions.md && echo "OK   context/conventions.md (read by review, codex-review, pr-feedback, push, quick)" || echo "WARN context/conventions.md missing — run /ccmagic:init to bootstrap"
+test -f context/branching.md && echo "OK   context/branching.md (read by pr, merge)" || echo "WARN context/branching.md missing — run /ccmagic:init to bootstrap"
+test -d context/knowledge && echo "OK   context/knowledge/ exists" || echo "INFO context/knowledge/ missing — run /ccmagic:map-codebase to populate"
+test -f context/knowledge/STACK.md && echo "OK   context/knowledge/STACK.md" || echo "INFO STACK.md missing — run /ccmagic:map-codebase"
+test -f context/knowledge/ARCHITECTURE.md && echo "OK   context/knowledge/ARCHITECTURE.md" || echo "INFO ARCHITECTURE.md missing — run /ccmagic:map-codebase"
+test -f context/knowledge/CONVENTIONS.md && echo "OK   context/knowledge/CONVENTIONS.md" || echo "INFO CONVENTIONS.md missing — run /ccmagic:map-codebase"
 ```
 
-### 2. Check Core Files
-
-Verify essential configuration files:
+### 2. ccmagic project configuration
 
 ```bash
-# Core configuration files
-test -f context/project.md && echo "OK project.md exists" || echo "MISSING project.md missing"
-test -f context/conventions.md && echo "OK conventions.md exists" || echo "MISSING conventions.md missing"
-test -f context/working-state.md && echo "OK working-state.md exists" || echo "MISSING working-state.md missing"
-test -f context/backlog.md && echo "OK backlog.md exists" || echo "WARNING backlog.md missing"
-test -f context/branching.md && echo "OK branching.md exists" || echo "WARNING branching.md missing"
+test -f .claude/ccmagic.local.md && echo "OK   .claude/ccmagic.local.md" || echo "INFO .claude/ccmagic.local.md missing — tracker will auto-detect"
 ```
 
-### 3. Git Configuration
+If `.claude/ccmagic.local.md` exists, read its YAML frontmatter and report:
+- Active `tracker:` value (`linear`, `github`, `jira`, or `auto`)
+- `ticket_url_base` (or "not set")
+- `ticket_id_regex` (or the default `[A-Z][A-Z0-9]+-[0-9]+`)
+- `default_qa_workflow` (`true` / `false`)
 
-Check git setup:
+If the file is missing entirely, note that tracker auto-detection will run on each ticket skill invocation — not broken, just not pinned.
+
+### 3. Tracker integration availability
+
+Probe for available tracker integrations:
 
 ```bash
-# Git repository check
-git rev-parse --git-dir 2>/dev/null && echo "OK Git repository initialized" || echo "MISSING Not a git repository"
+# Linear MCP — check if any tool named mcp__*Linear*__get_issue is registered.
+# (You cannot list MCP tools from bash directly; surface this as a guideline:
+# the user should verify in their Claude Code MCP settings if the Linear server is connected.)
 
-# Git configuration
-git config user.name >/dev/null 2>&1 && echo "OK Git user.name configured: $(git config user.name)" || echo "WARNING Git user.name not set"
-git config user.email >/dev/null 2>&1 && echo "OK Git user.email configured: $(git config user.email)" || echo "WARNING Git user.email not set"
+# GitHub CLI
+command -v gh >/dev/null 2>&1 && {
+  gh repo view --json nameWithOwner 2>/dev/null \
+    && echo "OK   gh CLI installed and authenticated for $(gh repo view --json nameWithOwner -q .nameWithOwner)" \
+    || echo "WARN gh CLI installed but not authenticated or not in a repo — run 'gh auth login'"
+} || echo "INFO gh CLI not installed — GitHub tracker unavailable (install: brew install gh)"
 
-# Current branch
-echo "Current branch: $(git branch --show-current 2>/dev/null || echo 'N/A')"
-
-# Remote configuration
-git remote -v 2>/dev/null | head -1 && echo "OK Git remote configured" || echo "WARNING No git remote configured"
+# Atlassian (JIRA) MCP — same caveat as Linear; the user verifies via MCP settings.
 ```
 
-### 4. Check CCMagic Plugin Installation
+For Linear and JIRA, surface this checklist in the report instead of trying to probe MCP from bash:
 
-Verify CCMagic plugin is accessible:
+> **Linear MCP:** Verify in Claude Code MCP settings that a Linear server is connected. Tool names look like `mcp__claude_ai_Linear__*` or `mcp__plugin_linear_linear__*`.
+>
+> **JIRA (Atlassian) MCP:** Verify in Claude Code MCP settings that an Atlassian server is connected. Tool names look like `mcp__claude_ai_Atlassian__*` or `mcp__plugin_atlassian_atlassian__*`.
+
+### 4. Commit hook
 
 ```bash
-# Check for plugin installation (current format)
-if [ -f .claude-plugin/plugin.json ] || find . -path "*/skills/*/SKILL.md" -maxdepth 3 2>/dev/null | head -1 | grep -q .; then
-  SKILL_COUNT=$(find skills -name "SKILL.md" 2>/dev/null | wc -l | tr -d ' ')
-  echo "OK CCMagic plugin installed with $SKILL_COUNT skills"
-else
-  echo "MISSING CCMagic plugin not detected"
-fi
+test -f "$(claude plugins show ccmagic --path 2>/dev/null)/hooks/post-tool-use-commit.sh" \
+  && echo "OK   commit-format hook installed" \
+  || echo "INFO commit-format hook not found via plugin path — check that ccmagic is installed as a plugin"
 ```
 
-### 5. Check Epics and Features
+If the `claude plugins` CLI isn't available, fall back to a softer check: just note in the report that the hook ships with the plugin and runs automatically on `git commit` calls made by Claude Code.
 
-Analyze project structure:
+### 5. Git configuration
 
 ```bash
-# Count epics
-EPIC_COUNT=$(ls -1 context/epics/*.md 2>/dev/null | wc -l)
-echo "Epics defined: $EPIC_COUNT"
+git rev-parse --git-dir 2>/dev/null \
+  && echo "OK   Git repository" \
+  || echo "FAIL Not in a git repository — most ccmagic skills require git"
 
-# Count features
-FEATURE_COUNT=$(ls -d context/features/*/ 2>/dev/null | wc -l)
-echo "Features defined: $FEATURE_COUNT"
-
-# Count tasks
-TODO_COUNT=$(find context/features/*/tasks/todo/ -name "*.md" 2>/dev/null | wc -l)
-CURRENT_COUNT=$(find context/features/*/tasks/current/ -name "*.md" 2>/dev/null | wc -l)
-COMPLETED_COUNT=$(find context/features/*/tasks/completed/ -name "*.md" 2>/dev/null | wc -l)
-echo "Tasks - Todo: $TODO_COUNT, Current: $CURRENT_COUNT, Completed: $COMPLETED_COUNT"
+git config user.name >/dev/null 2>&1 && echo "OK   git user.name set" || echo "WARN git user.name not set"
+git config user.email >/dev/null 2>&1 && echo "OK   git user.email set" || echo "WARN git user.email not set"
 ```
 
-### 6. Working State Validation
+### 6. Branch convention
 
-Check current work status from working-state.md:
-
-Read `context/working-state.md` and extract:
-- Current Epic
-- Current Feature
-- Current Task
-- Branch status
-- Last updated date
-
-### 7. File Permissions
-
-Check that files are readable and writable:
+Read the active `ticket_id_regex` from `.claude/ccmagic.local.md` (default `[A-Z][A-Z0-9]+-[0-9]+`).
 
 ```bash
-# Check key file permissions
-for file in context/project.md context/conventions.md context/working-state.md; do
-  if [ -f "$file" ]; then
-    if [ -r "$file" ] && [ -w "$file" ]; then
-      echo "OK $file: Read/Write OK"
-    else
-      echo "MISSING $file: Permission issue"
-      ls -l "$file"
-    fi
-  fi
-done
-```
-
-### 8. Branch Naming Convention Check
-
-Verify branch follows naming conventions:
-
-```bash
-# Get current branch
 CURRENT_BRANCH=$(git branch --show-current 2>/dev/null)
-
-if [ ! -z "$CURRENT_BRANCH" ]; then
-  echo "Current branch: $CURRENT_BRANCH"
-
-  # Check if branch follows CCMagic conventions
-  if [[ "$CURRENT_BRANCH" =~ ^(feature|task|spike)/.* ]]; then
-    echo "OK Branch follows naming convention"
-  elif [ "$CURRENT_BRANCH" = "main" ] || [ "$CURRENT_BRANCH" = "master" ] || [ "$CURRENT_BRANCH" = "develop" ]; then
-    echo "WARNING Working on base branch (not recommended for active development)"
+if [ -n "$CURRENT_BRANCH" ]; then
+  if [[ "$CURRENT_BRANCH" =~ ^(feature|bugfix|hotfix|chore|release)/ ]]; then
+    echo "OK   Current branch follows convention: $CURRENT_BRANCH"
   else
-    echo "WARNING Branch doesn't follow recommended convention (feature/*, task/*, spike/*)"
+    echo "INFO Branch '$CURRENT_BRANCH' doesn't follow ccmagic prefixes (feature/, bugfix/, hotfix/, chore/, release/)"
   fi
 fi
 ```
 
-### 9. Check for Common Issues
+Then test the branch name against the ticket regex (or integer for GitHub) and report whether a ticket ID is detectable.
 
-Identify common problems:
-
-#### Issue: Multiple tasks in current/
-```bash
-CURRENT_TASKS=$(find context/features/*/tasks/current/ -name "*.md" 2>/dev/null | wc -l)
-if [ "$CURRENT_TASKS" -gt 1 ]; then
-  echo "WARNING: Multiple tasks in current/ directory"
-  echo "   Found $CURRENT_TASKS tasks - should typically have only 1"
-  find context/features/*/tasks/current/ -name "*.md" 2>/dev/null
-fi
-```
-
-#### Issue: Uncommitted changes
-```bash
-if ! git diff-index --quiet HEAD -- 2>/dev/null; then
-  echo "WARNING Uncommitted changes detected"
-  echo "   Run 'git status' to see changes"
-else
-  echo "OK No uncommitted changes"
-fi
-```
-
-#### Issue: Behind remote
-```bash
-git fetch origin 2>/dev/null
-LOCAL=$(git rev-parse @ 2>/dev/null)
-REMOTE=$(git rev-parse @{u} 2>/dev/null)
-if [ ! -z "$LOCAL" ] && [ ! -z "$REMOTE" ]; then
-  if [ "$LOCAL" = "$REMOTE" ]; then
-    echo "OK Up to date with remote"
-  else
-    BASE=$(git merge-base @ @{u} 2>/dev/null)
-    if [ "$LOCAL" = "$BASE" ]; then
-      echo "WARNING Behind remote - need to pull"
-    elif [ "$REMOTE" = "$BASE" ]; then
-      echo "OK Ahead of remote"
-    else
-      echo "WARNING Branches have diverged"
-    fi
-  fi
-fi
-```
-
-### 10. Dependency Check
-
-Check if required tools are available:
+### 7. Skill availability
 
 ```bash
-# Check for required tools
-command -v git >/dev/null 2>&1 && echo "OK git installed" || echo "MISSING git not found"
-command -v gh >/dev/null 2>&1 && echo "OK gh (GitHub CLI) installed" || echo "WARNING gh not installed (optional)"
-command -v node >/dev/null 2>&1 && echo "OK node installed: $(node --version)" || echo "WARNING node not found"
-command -v npm >/dev/null 2>&1 && echo "OK npm installed: $(npm --version)" || echo "WARNING npm not found"
+ls "$(claude plugins show ccmagic --path 2>/dev/null)/skills" 2>/dev/null | head -50
 ```
 
-## Diagnostic Report Summary
+Compare against the expected skill list. If the `claude plugins` CLI isn't available, skip this check.
 
-Generate a summary report:
+## Report Output
+
+After all checks, produce a single report:
 
 ```markdown
-# CCMagic Doctor Report
-Generated: [timestamp]
+# ccmagic Doctor Report
 
-## Status Overview
-- **Overall Health**: [Healthy | Warnings | Critical Issues]
-- **Project**: [project name from project.md]
-- **Current Branch**: [branch name]
-- **Active Task**: [task from working-state.md]
+## Status
+OK PASS | WARN ISSUES | FAIL CANNOT OPERATE
 
-## Issues Found
-[List of issues with severity]
+## Project setup
+- {list of OK / WARN / INFO lines from sections 1-2}
 
-### Critical (Must Fix)
-- [Critical issue 1]
-- [Critical issue 2]
+## Tracker integration
+- Active tracker: {linear | github | jira | auto}
+- {Per-tracker status from section 3}
 
-### Warnings (Should Fix)
-- [Warning 1]
-- [Warning 2]
+## Commit hook
+- {OK / INFO from section 4}
 
-### Info
-- [Info item 1]
+## Git
+- {lines from section 5}
+
+## Branch
+- {lines from section 6}
 
 ## Recommendations
-
-### Immediate Actions
-1. [Action 1]
-2. [Action 2]
-
-### Optional Improvements
-1. [Improvement 1]
-2. [Improvement 2]
-
-## Quick Fixes
-
-### If CCMagic not initialized:
-Run: `/ccmagic:init`
-
-### If git not configured:
-```bash
-git config user.name "Your Name"
-git config user.email "your.email@example.com"
+For each WARN/FAIL/INFO above, suggest a concrete next step:
+- `/ccmagic:init` to bootstrap missing context files
+- `/ccmagic:map-codebase` to populate knowledge files
+- `gh auth login` to authenticate the GitHub CLI
+- Update `.claude/ccmagic.local.md` with the right tracker
+- ...
 ```
 
-### If missing directories:
-Run: `/ccmagic:init` to recreate structure
+Keep the recommendations actionable — each one should be a single command the user can run.
 
-### If multiple current tasks:
-Move extra tasks back to todo/ or completed/
+## Quick mode
 
-### If working-state.md is stale:
-Run: `/ccmagic:status` to refresh
-
-## System Information
-- **OS**: [OS type]
-- **Git Version**: [version]
-- **Node Version**: [version if applicable]
-- **CCMagic Version**: [check README or package.json]
-
-## Next Steps
-Based on the health check results:
-1. [Step 1 based on findings]
-2. [Step 2 based on findings]
-3. [Step 3 based on findings]
-```
-
-## Auto-Fix Suggestions
-
-For each issue found, provide specific fix commands:
-
-### Missing directory structure
-```bash
-# Run init command to create missing directories
-/ccmagic:init
-```
-
-### Git not configured
-```bash
-git config --global user.name "Your Name"
-git config --global user.email "your.email@example.com"
-```
-
-### Multiple current tasks
-```
-Move extra tasks:
-- Review each task in context/features/*/tasks/current/
-- Move completed ones to completed/
-- Move pending ones to todo/
-- Keep only the active task in current/
-```
-
-### Outdated working-state.md
-```bash
-# Update working state with current status
-/ccmagic:status
-```
-
-## Preventive Health Tips
-
-1. **Daily**: Run `/ccmagic:daily-standup` to keep tracking current
-2. **Before work**: Run `/ccmagic:sync` to stay updated
-3. **After work**: Run `/ccmagic:checkpoint` to save state
-4. **Weekly**: Review and clean up completed tasks
-5. **Monthly**: Archive old sessions and spikes
-
----
-
-**Doctor Complete!**
-
-If any critical issues were found, address them before continuing development.
-For questions about specific issues, check `/ccmagic:help` for detailed command information.
+If invoked as `/ccmagic:doctor --quick`, skip sections 3, 4, 6, 7 and run only the project-config check (sections 1-2).

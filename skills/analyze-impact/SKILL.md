@@ -22,9 +22,9 @@ If no argument provided, analyze currently staged or uncommitted changes.
 ### Step 1: Identify Target
 
 Determine what to analyze:
-- If file path provided: Analyze that specific file
-- If feature name provided: Find related files in `context/features/`
-- If no argument: Analyze `git diff --name-only` (uncommitted changes)
+- If a file path or directory path is provided: Analyze those files.
+- If a free-text name is provided (e.g. a feature name or component name): use `git ls-files` and `grep` to find files matching that name in their path or contents, then analyze the most relevant set.
+- If no argument: Analyze `git diff --name-only` (uncommitted changes).
 
 ### Step 2: Parallel Dependency Analysis
 
@@ -147,10 +147,10 @@ These modifications may break dependents:
 3. [ ] Update documentation if API changed
 4. [ ] Consider deprecation warnings for removed APIs
 
-## Related Context Files
-- Feature: `context/features/001-02-authentication/`
-- Architecture: `context/knowledge/architecture.md`
-- API Contracts: `context/knowledge/api-contracts.md`
+## Related Knowledge Files (if /ccmagic:map-codebase has been run)
+- Architecture: `context/knowledge/ARCHITECTURE.md`
+- Conventions: `context/knowledge/CONVENTIONS.md`
+- Stack: `context/knowledge/STACK.md`
 ```
 
 ## Quick Analysis Mode

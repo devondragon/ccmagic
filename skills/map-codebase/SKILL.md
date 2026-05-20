@@ -8,8 +8,9 @@ context: fork
 
 # Map Codebase
 
-Analyze an existing codebase to understand its structure, patterns, and conventions.
-Run this before `/ccmagic:init` on brownfield projects.
+Analyze an existing codebase to understand its structure, patterns, and conventions. Produces durable knowledge files in `context/knowledge/` that other ccmagic skills (`review`, `codex-review`, `analyze-impact`, `pr-feedback`) read for project-specific guidance.
+
+Run this on brownfield projects when you first onboard ccmagic, or when major structural changes have happened.
 
 ## Process
 
@@ -237,9 +238,9 @@ Concerns identified:
 - [concern 2]
 
 Next steps:
-- Run `/ccmagic:init` to set up project structure
-- Or `/ccmagic:plan` to start planning features
-- Review knowledge files to familiarize with codebase
+- Review the generated knowledge files to confirm they capture the codebase accurately
+- Other ccmagic skills (`review`, `codex-review`, `pr-feedback`, `analyze-impact`) will now read these files for project-specific guidance
+- Optionally run `/ccmagic:init` to bootstrap `context/conventions.md` and `.claude/ccmagic.local.md` if not already set up
 ```
 
 ## Notes

@@ -1,401 +1,186 @@
 ---
 user-invocable: true
-allowed-tools: Read(*), Glob(*), Bash(git:*), TodoWrite(*)
+allowed-tools: Read(*), Glob(*), Bash(git:*)
 description: Interactive help and command reference with examples
 model: sonnet
 ---
 
-# CCMagic Help System
+# ccmagic Help
 
-Display comprehensive help information about CCMagic commands with practical examples and workflow guidance.
+Display the ccmagic skill reference with practical examples and workflow guidance.
 
-## Command Categories
+## How to use this
 
-### Getting Started
-Commands for initializing and setting up your project:
+If the user asks a freeform question ("how do I X?"), match it to the appropriate skill below. If they invoke `/ccmagic:help` with no arguments, print the full reference. If they invoke `/ccmagic:help <skill-name>`, jump to that skill's section.
 
-**`/ccmagic:init`**
-- **Purpose**: Initialize the complete CCMagic context structure
-- **When to use**: First time setting up CCMagic in a project
-- **Creates**: Directory structure, epics, features, tasks, knowledge base
-- **Example**:
-  ```
-  /ccmagic:init
-  ```
+## Skill categories
 
-**`/ccmagic:doctor`**
-- **Purpose**: Diagnose setup issues and validate installation
-- **When to use**: When something isn't working or to verify setup
-- **Checks**: Directory structure, git configuration, file permissions
-- **Example**:
-  ```
-  /ccmagic:doctor
-  ```
+### Tracker workflow
 
-**`/ccmagic:quick-start [feature-name]`**
-- **Purpose**: Fast-track setup for new features
-- **When to use**: Starting a new feature without manual setup
-- **Does**: Creates feature structure, initial task, starts work
-- **Example**:
-  ```
-  /ccmagic:quick-start user-authentication
-  ```
+End-to-end ticket lifecycle backed by Linear, GitHub Issues, or JIRA. Auto-detected unless `.claude/ccmagic.local.md` pins a tracker.
 
-### Planning & Management
-Commands for organizing and planning work:
+**`/ccmagic:work-ticket {TICKET-ID}`**
+- **Purpose:** End-to-end ticket workflow — lookup, assign, branch, work, review, PR.
+- **When to use:** Starting work on a new ticket from your tracker.
+- **Example:** `/ccmagic:work-ticket ENG-123` (Linear/JIRA) or `/ccmagic:work-ticket 42` (GitHub).
+- **What it does:** Classifies the ticket (Quick Fix / Complex Feature / Debugging), creates a branch with the right prefix, executes the work (delegating to `/ccmagic:debug` for bugs), validates scope against the ticket, then opens a PR.
 
-**`/ccmagic:plan`**
-- **Purpose**: Interactive project planning and requirements gathering
-- **When to use**: Beginning of projects or major features
-- **Output**: Structured epic/feature breakdown with tasks
-- **Example**:
-  ```
-  /ccmagic:plan
-  ```
+**`/ccmagic:review-ticket [TICKET-ID]`**
+- **Purpose:** Code review grounded in the ticket's stated scope and acceptance criteria.
+- **When to use:** Before merging a branch tied to a tracker ticket — catches scope drift, not just code-quality issues.
+- **Example:** `/ccmagic:review-ticket` (auto-detects from branch) or `/ccmagic:review-ticket PROJ-456`.
+- **What it does:** Fetches the ticket, extracts AC, runs `/ccmagic:review` with the ticket as the primary intent source, and adds a Ticket-scope drift section (in-scope / out-of-scope / missing-from-ticket).
 
-**`/ccmagic:create-features`**
-- **Purpose**: Break plan into feature epics
-- **When to use**: After planning, before implementation
-- **Example**:
-  ```
-  /ccmagic:create-features
-  ```
+**`/ccmagic:finish-ticket [--qa]`**
+- **Purpose:** Close out a ticket end-to-end after the PR is ready.
+- **When to use:** Final step before merging.
+- **Example:** `/ccmagic:finish-ticket` (Done path) or `/ccmagic:finish-ticket --qa` (QA path).
+- **What it does:** Detects the ticket from the branch, sanity-checks the PR (CI, reviews, scope), confirms disposition, merges, updates the tracker with a comment and final status.
 
-**`/ccmagic:create-tasks`**
-- **Purpose**: Decompose features into tasks
-- **When to use**: Breaking down features into work items
-- **Example**:
-  ```
-  /ccmagic:create-tasks
-  ```
+### Code review & quality
 
-**`/ccmagic:create-spike`**
-- **Purpose**: Define research/exploration spikes
-- **When to use**: Need to investigate or research
-- **Example**:
-  ```
-  /ccmagic:create-spike
-  ```
+**`/ccmagic:review [branch|full|PR#] [--quick|--deep] [--threshold N]`**
+- **Purpose:** Adaptive code review — auto-routes between QUICK (inline checklist) and DEEP (multi-agent pipeline). Biased toward depth.
+- **When to use:** Before PR, after major changes, or to audit a PR.
+- **Example:** `/ccmagic:review` (auto-route), `/ccmagic:review --deep`, `/ccmagic:review 1234` (review PR #1234).
+- **What it does:** Picks QUICK only for clearly trivial changes; otherwise dispatches 4 core agents + conditional specialists + optional Codex CLI + MCP fallback + verification of Critical/High findings.
 
-**`/ccmagic:add-backlog`**
-- **Purpose**: Add items to project backlog
-- **When to use**: Capturing ideas without immediate implementation
-- **Updates**: `context/backlog.md`
-- **Example**:
-  ```
-  /ccmagic:add-backlog
-  ```
+**`/ccmagic:codex-review [branch|full|PR#] [--focus DIMENSION]`**
+- **Purpose:** Multi-model code review (Codex + Gemini + Claude triage).
+- **When to use:** High-stakes changes where you want adversarial cross-model agreement.
+- **Example:** `/ccmagic:codex-review`, `/ccmagic:codex-review 1234 --focus security`.
 
-### Daily Workflow
-Commands for day-to-day development:
+**`/ccmagic:pr-feedback [PR#]`**
+- **Purpose:** Triage PR review comments and plan fixes for the valid ones.
+- **When to use:** After reviewers leave comments.
 
-**`/ccmagic:start-task [task-id]`**
-- **Purpose**: Begin work on a specific task
-- **When to use**: Starting any new task
-- **Does**: Creates branch, moves task to current, updates working-state
-- **Example**:
-  ```
-  /ccmagic:start-task 001-01-001-initial-setup
-  ```
+### Git workflow
 
-**`/ccmagic:start-spike`**
-- **Purpose**: Start research/exploration spike
-- **When to use**: Beginning investigation work
-- **Example**:
-  ```
-  /ccmagic:start-spike
-  ```
+**`/ccmagic:push`**
+- **Purpose:** Smart commit and push with logical grouping. The commit-format hook validates each commit's subject post-commit (non-blocking).
+- **When to use:** Committing finished work.
 
-**`/ccmagic:current-task`**
-- **Purpose**: Show current task details
-- **When to use**: Quick reference for active task
-- **Example**:
-  ```
-  /ccmagic:current-task
-  ```
+**`/ccmagic:pr [--draft]`**
+- **Purpose:** Create a PR with platform detection (gh/glab) and a smart description.
+- **When to use:** After commits are pushed and you're ready for review.
 
-**`/ccmagic:current-feature`**
-- **Purpose**: Display active feature info
-- **When to use**: Understanding feature context
-- **Example**:
-  ```
-  /ccmagic:current-feature
-  ```
+**`/ccmagic:merge [PR#]`**
+- **Purpose:** Safely merge an approved PR with strategy-aware branch handling.
+- **When to use:** After approval; use `/ccmagic:finish-ticket` instead if a tracker ticket is involved (it merges + updates the ticket).
 
-**`/ccmagic:checkpoint`**
-- **Purpose**: Save current progress with context
-- **When to use**: End of work session, before switching tasks
-- **Creates**: Session snapshot with progress notes
-- **Example**:
-  ```
-  /ccmagic:checkpoint
-  ```
+### Debugging & investigation
 
-**`/ccmagic:complete-task [task-id]`**
-- **Purpose**: Mark task as completed
-- **When to use**: After task is done and tested
-- **Does**: Moves task to completed, updates tracking files
-- **Example**:
-  ```
-  /ccmagic:complete-task 001-01-001-initial-setup
-  ```
+**`/ccmagic:debug [bug description] | resume <slug>`**
+- **Purpose:** Systematic debugging via scientific method with persistent sessions.
+- **When to use:** Any bug investigation — the skill enforces root-cause discipline.
+- **Example:** `/ccmagic:debug "checkout fails for users with cart > $1000"`.
 
-**`/ccmagic:daily-standup`**
-- **Purpose**: Generate daily progress summary
-- **When to use**: Start or end of day, team standups
-- **Output**: Yesterday's work, today's plan, blockers
-- **Example**:
-  ```
-  /ccmagic:daily-standup
-  ```
+**`/ccmagic:analyze-impact [file-path or name]`**
+- **Purpose:** Blast-radius and dependency analysis for a file, directory, or uncommitted changes.
+- **When to use:** Before risky refactors, or when planning the scope of a PR.
 
-### Status & Monitoring
-Commands for checking project state:
+### Codebase knowledge
 
-**`/ccmagic:status`**
-- **Purpose**: Show comprehensive project status
-- **When to use**: Checking overall progress and health
-- **Shows**: Git status, tasks, tests, PRs, blockers
-- **Example**:
-  ```
-  /ccmagic:status
-  ```
+**`/ccmagic:map-codebase`**
+- **Purpose:** Analyze a brownfield codebase and write durable knowledge files (`context/knowledge/STACK.md`, `ARCHITECTURE.md`, `CONVENTIONS.md`).
+- **When to use:** First-time ccmagic onboarding, or after major structural changes.
+- **What it does:** Three parallel Explore agents extract the tech stack, architecture, and conventions into reference files that `/ccmagic:review` and `/ccmagic:analyze-impact` later consume.
 
-**`/ccmagic:handoff`**
-- **Purpose**: Create detailed handoff documentation
-- **When to use**: Ending work session, team transitions
-- **Creates**: Complete context for next developer
-- **Example**:
-  ```
-  /ccmagic:handoff
-  ```
+**`/ccmagic:research <topic>`**
+- **Purpose:** Deep iterative research with parallel exploration, source evaluation, and confidence scoring.
+- **When to use:** Before designing a non-trivial feature, or to investigate a library/pattern.
 
-### Testing & Quality
-Commands for validation and testing:
+### Testing & validation
 
-**`/ccmagic:test`**
-- **Purpose**: Run project tests
-- **When to use**: Before commits, during development
-- **Runs**: All configured test suites
-- **Example**:
-  ```
-  /ccmagic:test
-  ```
+**`/ccmagic:test [pattern] [--coverage] [--watch] [--affected]`**
+- **Purpose:** Run tests with framework auto-detection, smart selection, coverage analysis, and failure diagnosis.
+- **When to use:** Anytime, but typically before committing or as part of `/ccmagic:validate`.
 
 **`/ccmagic:validate`**
-- **Purpose**: Validate code changes
-- **When to use**: Before creating PR
-- **Checks**: Tests, linting, type checking, build
-- **Example**:
-  ```
-  /ccmagic:validate
-  ```
+- **Purpose:** Pre-commit/pre-PR validation with parallel checks (lint, types, tests, build).
+- **When to use:** Before opening a PR.
 
-**`/ccmagic:review`**
-- **Purpose**: Code review workflow
-- **When to use**: Reviewing code changes
-- **Does**: Analyzes changes for quality and issues
-- **Example**:
-  ```
-  /ccmagic:review
-  ```
+### Design & visual QA
 
-### Git & Collaboration
-Commands for version control:
+**`/ccmagic:design-explore [description] [--count N] [--evolve URL]`**
+- **Purpose:** Generate multiple distinct design directions, compare them in the browser, pick a winner before building.
+- **Requires:** Chrome DevTools MCP.
 
-**`/ccmagic:pr`**
-- **Purpose**: Create pull request
-- **When to use**: Ready to merge work
-- **Does**: Generates PR with context from tasks
-- **Example**:
-  ```
-  /ccmagic:pr
-  ```
+**`/ccmagic:design-qa [URL] [--quick|--deep|--diff]`**
+- **Purpose:** Design quality audit — catches AI slop, scores visual polish, fixes issues with atomic commits.
+- **Requires:** Chrome DevTools MCP.
 
-**`/ccmagic:merge`**
-- **Purpose**: Merge changes
-- **When to use**: After PR approval
-- **Does**: Safely merges and cleans up branches
-- **Example**:
-  ```
-  /ccmagic:merge
-  ```
+**`/ccmagic:browser-qa [URL] [--quick|--exhaustive] [--scope PAGE]`**
+- **Purpose:** Systematically QA a web app in a real browser — find bugs, fix them, verify with screenshots.
+- **Requires:** Chrome DevTools MCP.
 
-**`/ccmagic:sync`**
-- **Purpose**: Sync with remote repository
-- **When to use**: Start of day, before new work
-- **Does**: Pulls latest changes, updates branches
-- **Example**:
-  ```
-  /ccmagic:sync
-  ```
+### Quick utilities
 
-### Context Management
-Commands for managing project context:
+**`/ccmagic:quick "[task description]"`**
+- **Purpose:** Execute an ad-hoc task without ticket overhead.
+- **When to use:** One-off changes that don't warrant a tracker ticket.
 
-**`/ccmagic:context-save`**
-- **Purpose**: Save current context state
-- **When to use**: Before major changes
-- **Creates**: Context snapshot
-- **Example**:
-  ```
-  /ccmagic:context-save
-  ```
+### Meta
 
-**`/ccmagic:context-load`**
-- **Purpose**: Load saved context state
-- **When to use**: Restoring previous state
-- **Restores**: Context from snapshot
-- **Example**:
-  ```
-  /ccmagic:context-load
-  ```
+**`/ccmagic:init`**
+- **Purpose:** Bootstrap the small set of non-planning project files: `context/conventions.md`, `context/branching.md`, `context/knowledge/`, `.claude/ccmagic.local.md`.
+- **When to use:** First-time setup of ccmagic in a project.
 
-## Common Workflows
+**`/ccmagic:doctor`**
+- **Purpose:** Diagnose ccmagic setup — config files, tracker integration, commit hook, branch convention.
+- **When to use:** When something feels off, or after install.
 
-### Starting a New Project
-```
-1. /ccmagic:init
-2. Edit context/project.md with project details
-3. /ccmagic:plan
-4. /ccmagic:start-task [first-task-id]
-```
+**`/ccmagic:settings`**
+- **Purpose:** Configure ccmagic — default tracker, QA workflow, ticket-ID regex override, model knobs.
 
-### Daily Development Flow
-```
-Morning:
-1. /ccmagic:daily-standup
-2. /ccmagic:sync
-3. /ccmagic:start-task [task-id]
+**`/ccmagic:help [skill-name]`**
+- **Purpose:** This help.
 
-During Work:
-4. Regular commits as you work
-5. /ccmagic:checkpoint (periodically)
+## Typical workflows
 
-End of Day:
-6. /ccmagic:test
-7. /ccmagic:checkpoint
-8. /ccmagic:handoff (if needed)
-```
-
-### Completing a Feature
-```
-1. /ccmagic:complete-task [task-id]
-2. /ccmagic:validate
-3. /ccmagic:pr
-4. Wait for review
-5. /ccmagic:merge
-```
-
-### Troubleshooting
-```
-1. /ccmagic:doctor
-2. /ccmagic:status
-3. Check context/working-state.md
-```
-
-## Tips & Best Practices
-
-### Task Management
-- Use descriptive task IDs: `001-01-001-add-user-login`
-- Keep tasks small and focused (< 4 hours)
-- Update working-state.md frequently
-- Move completed tasks promptly
-
-### Context Files
-- `project.md` - Project overview (update rarely)
-- `conventions.md` - Team standards (update rarely)
-- `working-state.md` - Current status (update constantly)
-- `backlog.md` - Future ideas (update often)
-
-### Git Workflow
-- Always work on feature/task branches
-- Never commit directly to main
-- Use checkpoint before switching tasks
-- Sync regularly to avoid conflicts
-
-### Quality Gates
-- Run tests before completing tasks
-- Validate before creating PRs
-- Use review command for self-review
-- Keep builds green
-
-## Context Structure Quick Reference
+### Working a ticket end-to-end
 
 ```
-context/
-├── project.md              # Project overview
-├── conventions.md          # Coding standards
-├── working-state.md        # Current status - READ THIS FIRST
-├── backlog.md             # Future work
-├── branching.md           # Git workflow config
-│
-├── epics/                 # Major initiatives
-│   └── 001-mvp.md        # Epic files
-│
-├── features/              # Feature implementations
-│   └── 001-01-core/      # Feature directory
-│       ├── overview.md
-│       ├── working-state.md
-│       └── tasks/
-│           ├── todo/     # Planned tasks
-│           ├── current/  # Active task
-│           └── completed/# Done tasks
-│
-├── spikes/               # Research tasks
-│   ├── todo/
-│   ├── current/
-│   └── completed/
-│
-├── knowledge/            # Technical documentation
-│   ├── architecture.md
-│   ├── data-model.md
-│   ├── business-rules.md
-│   └── tech-debt.md
-│
-└── sessions/             # Work history
-    └── handoffs/         # Handoff notes
+/ccmagic:work-ticket ENG-123     # Triage, branch, implement, review, PR
+/ccmagic:review-ticket           # Pre-merge: scope drift + code review
+/ccmagic:finish-ticket           # Merge + close ticket
 ```
 
-## Need More Help?
+### Quick task (no ticket)
 
-### Getting Support
-- Check `/ccmagic:doctor` for common issues
-- Read `docs/getting-started.markdown`
-- Review `docs/context-systems-reference.markdown`
+```
+/ccmagic:quick "rename the FooBar function to BarFoo across services"
+/ccmagic:push
+/ccmagic:pr
+```
 
-### Understanding CCMagic
-- **Epics**: Major feature groups (e.g., MVP, V2)
-- **Features**: Specific implementations within epics
-- **Tasks**: Concrete work items with acceptance criteria
-- **Spikes**: Time-boxed research or investigation
+### Onboarding ccmagic to an existing project
 
-### Command Arguments
-- `[task-id]`: Format `XXX-YY-ZZZ-description`
-  - XXX: Epic number
-  - YY: Feature number
-  - ZZZ: Task number
-- `[feature-name]`: Kebab-case name (e.g., `user-auth`)
+```
+/ccmagic:init                    # Bootstrap config files
+/ccmagic:map-codebase            # Produce knowledge files
+/ccmagic:doctor                  # Verify setup
+```
 
-## Quick Command Reference
+### Pre-PR check
 
-| Command | Purpose | When |
-|---------|---------|------|
-| `init` | Setup structure | Once per project |
-| `doctor` | Check health | When issues arise |
-| `quick-start` | Fast feature setup | New features |
-| `plan` | Create roadmap | Planning phase |
-| `start-task` | Begin work | Starting tasks |
-| `checkpoint` | Save progress | During/end of work |
-| `complete-task` | Finish task | Task done |
-| `daily-standup` | Daily summary | Daily |
-| `status` | Check progress | Anytime |
-| `handoff` | Transfer context | End of session |
-| `test` | Run tests | Before commits |
-| `validate` | Full validation | Before PR |
-| `pr` | Create PR | Feature complete |
-| `sync` | Update from remote | Daily |
+```
+/ccmagic:validate                # Lint, types, tests, build
+/ccmagic:review                  # Adaptive code review
+# or, if tied to a ticket:
+/ccmagic:review-ticket
+```
 
----
+## Configuration files
 
-**Pro Tip**: Start simple! Use `quick-start` for your first feature and let CCMagic guide you through the workflow.
+ccmagic reads (and creates with `/ccmagic:init`) these files:
+
+| File | Purpose |
+|---|---|
+| `.claude/ccmagic.local.md` | Per-project config (tracker, ticket URL, QA workflow) |
+| `context/conventions.md` | Project coding standards (read by review, codex-review, pr-feedback, push, quick) |
+| `context/branching.md` | Branch strategy (read by pr, merge) |
+| `context/knowledge/*.md` | Architecture/stack/conventions knowledge (produced by map-codebase; read by review, codex-review, analyze-impact) |
+| `CLAUDE.md` (plugin-root) | Canonical commit format and ticket-ID regex |
+
+See `docs/ccmagic.local.md.example` for the config template.

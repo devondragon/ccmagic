@@ -24,7 +24,22 @@
       "Bash(grep:*)",
       "WebSearch",
       "Bash(git reset:*)",
-      "Bash(git pull:*)"
+      "Bash(git pull:*)",
+      "WebFetch(domain:github.com)",
+      "Bash(find:*)",
+      "Bash(git fetch:*)",
+      "Bash(git rev-list:*)",
+      "Bash(gh pr merge:*)",
+      "Bash(gh pr list:*)",
+      "Bash(git rebase:*)",
+      "Bash(git stash:*)",
+      "Bash(gh pr diff:*)",
+      "Bash(/bin/cat -v current-task.md)",
+      "Bash(/bin/cat -v)",
+      "Bash(/bin/cat -v current-feature.md)",
+      "Bash(ls:*)",
+      "Bash(git tag:*)",
+      "Bash(gh release:*)"
     ],
     "deny": []
   }

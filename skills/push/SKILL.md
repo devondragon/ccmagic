@@ -300,9 +300,9 @@ Complete! 4 commits pushed successfully.
 
 ## Integration with CCMagic
 
-- Check for `context/` directory for preference storage
-- Respect `context/conventions.md` if it specifies commit message conventions
-- Update `context/working-state.md` after successful push if it exists
+- Respect `context/conventions.md` if it specifies commit message conventions.
+- Respect the canonical commit format documented in the plugin's `.claude/CLAUDE.md` (conventional commits with optional scope + optional ticket ID).
+- The **commit-format hook** (`hooks/post-tool-use-commit.sh`) validates every commit's subject line post-commit and prints a non-blocking warning if it doesn't match the conventional format. Pushing is not affected — the hook never aborts commits.
 
 ## Execution
 
