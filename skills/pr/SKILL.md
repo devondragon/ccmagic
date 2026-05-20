@@ -202,18 +202,17 @@ Create as draft if:
 ## Post-Creation Actions
 
 1. **Output PR URL** for user reference
-2. **Set PR status** in task tracking
-3. **Notify team** if configured
-4. **Update local tracking**:
+2. **Notify team** if configured
+3. **Update local tracking**:
    ```bash
    git branch --set-upstream-to=origin/$(git branch --show-current)
    ```
 
 ## Integration with Other Commands
 
-- Automatically run `/ccmagic:test` before creating PR
-- Use `/ccmagic:review` output to enhance PR description
-- Update `/ccmagic:status` after PR creation
+- Optionally run `/ccmagic:test` before creating the PR
+- Use `/ccmagic:review` output to enhance the PR description
+- If the branch maps to a tracker ticket, `/ccmagic:finish-ticket` will post the PR link back to the ticket on merge
 
 ## Execution
 

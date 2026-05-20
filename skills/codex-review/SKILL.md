@@ -308,16 +308,10 @@ For each:
 
 ## Step 9: Task Integration
 
-1. Create **TodoWrite** entries for all confirmed findings, grouped by severity then file:
-   - Critical/High: one todo per finding with fix instructions
-   - Medium: group related findings per file
-   - Low/Convention: one summary todo per category
-
-2. For Critical and High findings, ask via `AskUserQuestion`:
-   > "**{count}** Critical/High findings confirmed. Create ccmagic tasks for tracking?"
-   > - **Yes** — create tasks in `context/features/*/tasks/`
-   > - **No** — TodoWrite entries only
-   > - **Pick** — select specific findings
+Create **TodoWrite** entries for all confirmed findings, grouped by severity then file:
+- Critical/High: one todo per finding with fix instructions
+- Medium: group related findings per file
+- Low/Convention: one summary todo per category
 
 ## Step 10: Handle Disputed Findings
 

@@ -194,11 +194,9 @@ git checkout main
 git pull origin main
 ```
 
-### 3. Task Management Updates
-- Mark task as completed in tracking system
-- Update feature status in `/ccmagic:status`
-- Archive related documentation
-- Close related issues
+### 3. Tracker Updates
+- If a tracker ticket is associated with this branch, `/ccmagic:finish-ticket` is the recommended way to post the merge back and close the ticket — invoke it after the merge if you haven't already.
+- Close related issues if applicable.
 
 ### 4. Notify Team
 ```markdown
@@ -249,9 +247,7 @@ gh pr create --title "HOTFIX: Fix issue from PR #123"
 ## Integration with Other Commands
 
 - Run `/ccmagic:test` before merge
-- Update `/ccmagic:status` after merge
-- Trigger `/ccmagic:sync` for team members
-- Archive context with `/ccmagic:context-save`
+- Invoke `/ccmagic:finish-ticket` after merge to update the tracker ticket and post the merge comment
 
 ## Safety Features
 

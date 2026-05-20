@@ -295,7 +295,6 @@ Save validation preferences in `.validation.json`:
 
 - Automatically run before `/ccmagic:pr`
 - Include in `/ccmagic:merge` workflow
-- Update `/ccmagic:status` with validation results
 - Use with git pre-commit hooks
 
 ## Failure Handling

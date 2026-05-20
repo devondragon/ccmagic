@@ -185,16 +185,7 @@ For test files associated with changed code, check:
 
 Report findings only for changed files, not the entire codebase.
 
-## Step 7: Task Verification
-
-Check if a current task exists with `<verify>` blocks:
-
-1. Look for active task files: `context/features/*/tasks/*.md` or similar project structure
-2. If a task file contains `<verify>` blocks, extract the verification commands
-3. Run each verification command and report pass/fail
-4. If no task context exists, skip this step silently
-
-## Step 8: Generate Report
+## Step 7: Generate Report
 
 ```markdown
 # Test Results
@@ -232,15 +223,11 @@ For each under-covered changed file:
 - `path/to/test.ts:15` — assertion-free test (runs code but verifies nothing)
 - `path/to/test.ts:30` — only tests happy path, missing error case
 
-## Task Verification (if applicable)
-- [x] verify block 1: description — PASSED
-- [ ] verify block 2: description — FAILED (details)
-
 ## Recommendations
 [Actionable next steps: fix failures, add missing tests, improve assertions]
 ```
 
-## Step 9: Create Todos for Failures
+## Step 8: Create Todos for Failures
 
 If tests failed, create TodoWrite entries:
 - One todo per failing test with the diagnosed cause and suggested fix
@@ -251,7 +238,6 @@ If tests failed, create TodoWrite entries:
 
 - Run automatically as part of `/ccmagic:validate`
 - Gate `/ccmagic:pr` on test passage
-- Report results to `/ccmagic:status`
 
 ## Execution
 

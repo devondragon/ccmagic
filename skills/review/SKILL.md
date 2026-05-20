@@ -1,15 +1,18 @@
 ---
 user-invocable: true
 allowed-tools: Read(*), Edit(*), Bash(git:*, gh:*, codex:*, which:*), Glob(*), Grep(*), Agent(*), Task(*), TodoWrite(*), AskUserQuestion(*), mcp__pal__codereview(*)
-description: Comprehensive code review with validation, confidence scoring, and convention awareness
-argument-hint: "[branch|full|PR#] [--threshold N]"
+description: Adaptive code review — auto-routes between a fast inline checklist (QUICK) and the full multi-agent pipeline (DEEP) with confidence scoring and convention awareness. Biased toward depth.
+argument-hint: "[branch|full|PR#] [--quick|--deep] [--threshold N]"
 model: sonnet
 context: fork
 ---
 
 # Code Review Command
 
-Perform a comprehensive, validated code review with confidence scoring and false-positive filtering.
+Perform an adaptive code review that **auto-routes between QUICK and DEEP** based on the diff's size and risk profile, and **biases toward depth** — only clearly trivial changes get the QUICK pass.
+
+- **QUICK** — Inline checklist pass done by this agent. Categories: correctness, security, performance, maintainability, testing, architecture, conventions. Output is grouped CRITICAL / WARNING / INFO with a PASS / PASS-WITH-WARNINGS / FAIL verdict. Fast, lightweight.
+- **DEEP** — Full multi-agent pipeline: 4 core Explore agents + conditional specialists (testing, performance, migration) + optional Codex CLI cross-model pass + MCP fallback + Round-2 verification of Critical/High findings. Comprehensive, confidence-scored.
 
 > **Parallel execution:** Launch independent agents simultaneously. Claude Code determines when this is safe.
 
@@ -23,12 +26,102 @@ Parse `$ARGUMENTS` to determine review mode and options:
 | `branch` | `branch` | Explicit branch diff |
 | `full` | `full` | Full codebase review — partition into modules |
 | `<number>` | `pr` | Review PR by number (e.g., `42`) |
-| `--threshold N` | *(modifier)* | Confidence threshold, default 80. Findings below this are dropped. |
-| `--no-codex` | *(modifier)* | Skip Codex CLI review even if installed |
-| `--all-specialists` | *(modifier)* | Force all conditional specialists, bypass adaptive gating |
+| `--quick` | *(override)* | Force QUICK inline checklist pass. |
+| `--deep` | *(override)* | Force DEEP multi-agent pipeline. |
+| `--threshold N` | *(modifier)* | Confidence threshold for DEEP, default 80. Findings below this are dropped. |
+| `--no-codex` | *(modifier)* | Skip Codex CLI review in DEEP mode even if installed |
+| `--all-specialists` | *(modifier)* | Force all conditional specialists in DEEP, bypass adaptive gating |
 
 If on `main` with no changes and no argument:
 > "No branch changes detected. Use `/ccmagic:review full` for a full codebase review, or switch to a feature branch."
+
+## Step 0.5: Auto-route between QUICK and DEEP
+
+Apply these rules in order — first match wins:
+
+1. **User override** — `--quick` → QUICK. `--deep` → DEEP. `full` mode → always DEEP.
+2. **Auto-route** — Default to **DEEP**. Drop to QUICK only when **ALL** of the following are true:
+   - ≤ 2 files changed
+   - ≤ 50 lines changed (additions + deletions combined, per `git diff --shortstat`)
+   - No changed file path matches the risk patterns below
+   - The diff adds no new types (no new `class `, `interface `, `type `, `struct `, `enum `, `trait `)
+   - The diff changes no error-handling control flow (no new/modified `try`, `catch`, `except`, `rescue`, `finally`, `panic`, `recover`, `Result<`, `Either`)
+
+**Risk path patterns** (any match → DEEP, regardless of size):
+
+```
+auth, login, session, token, secret, credential, password, key, oauth,
+crypto, hash, sign, jwt, permission, role, acl, authz,
+migration, schema, sql, query, exec, eval,
+payment, billing, charge, refund, stripe,
+security, sanitiz, escap, csrf, xss, injection,
+deploy, infra, terraform, helm, dockerfile, ci/, .github/workflows
+```
+
+Match case-insensitively against the full path.
+
+### Announce the routing decision
+
+Print one line before any review work begins — this is non-negotiable, the user needs to know which review they got:
+
+```
+Routing → DEEP — reason: 4 files, 120 lines, touches auth/login.ts
+```
+
+or
+
+```
+Routing → QUICK — reason: 1 file, 12 lines, no risk patterns, no new types
+```
+
+**If QUICK was selected, skip ahead to the [QUICK execution](#quick-execution) section. If DEEP, continue with Step 1.**
+
+## QUICK execution
+
+If Step 0.5 selected QUICK, walk this checklist line by line against the diff. Don't skip categories. Load full file context when needed.
+
+### Correctness
+- Logic errors, edge cases (empty inputs, boundaries, unexpected types), null/undefined handling, off-by-one in loops/slices.
+
+### Security
+- Input validation, SQL injection (string concatenation in queries), XSS (unescaped output), CSRF on state-changing ops, authorization checks, sensitive data in logs/responses/source.
+
+### Performance
+- N+1 queries, unnecessary loops, missing indexes for new query patterns, memory leaks (unclosed resources, growing collections), caching opportunities.
+
+### Maintainability
+- Clear names, focused functions (~30 lines), reasonable cyclomatic complexity, DRY violations, dead code.
+
+### Testing
+- Coverage for new/changed code, edge-case and error-path coverage, appropriate mock use.
+
+### Architecture
+- SOLID, dependency direction, module boundaries, coupling.
+
+### Conventions
+- Read `CLAUDE.md`, `.claude/CLAUDE.md`, and `context/conventions.md` if present. Check the diff against any explicit documented rules. No conventions loaded → skip this category.
+
+### Output
+
+Group findings by severity:
+- **CRITICAL** — must fix before merge (security, data loss, incorrect behavior).
+- **WARNING** — should fix (perf issues, maintainability, missing tests for important paths).
+- **INFO** — consider improving (style, minor naming, optional refactors).
+
+For each finding include: severity, category, file/line(s), description, suggested fix.
+
+Final verdict line:
+- **PASS** — no critical or warning findings.
+- **PASS WITH WARNINGS** — warnings only, merge at reviewer's discretion.
+- **FAIL** — one or more critical findings; address before merge.
+
+After producing the report, **stop**. Do not continue into DEEP mode steps.
+
+---
+
+## DEEP execution
+
+If Step 0.5 selected DEEP, continue with the steps below. This is the comprehensive pipeline.
 
 ## Step 1: Load Project Conventions
 
@@ -359,20 +452,12 @@ Apply fixes for items where the user chose "Fix." Commit each individually.
 
 If 0 fixable findings exist, skip 7a. If 0 judgment-call findings exist, skip 7b.
 
-### 7c. Task integration
+### 7c. Track remaining findings
 
-1. Create **TodoWrite** entries for all remaining (unfixed) findings, grouped by severity then by file:
-   - Critical/High: one todo per finding
-   - Medium: group related findings per file into one todo
-   - Low/Convention: one summary todo per category
-
-2. For Critical and High findings that weren't fixed, ask:
-   > "**{count}** Critical/High findings remain unfixed. Create ccmagic tasks for tracking?"
-   > - **Yes** — create tasks in `context/features/*/tasks/` grouped by related findings
-   > - **No** — TodoWrite entries only
-   > - **Pick** — select specific findings to create tasks for
-
-Use `AskUserQuestion` for this decision.
+Create **TodoWrite** entries for all remaining (unfixed) findings, grouped by severity then by file:
+- Critical/High: one todo per finding
+- Medium: group related findings per file into one todo
+- Low/Convention: one summary todo per category
 
 ### 7d. Update review stats
 

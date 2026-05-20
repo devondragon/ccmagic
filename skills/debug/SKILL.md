@@ -226,8 +226,7 @@ Session log: context/debug/resolved/{filename}
 
 ### 9d. Follow-up items
 If the investigation revealed related issues:
-- Create `TodoWrite` entries for each
-- Offer to add to `context/backlog.md` via `AskUserQuestion`
+- Create `TodoWrite` entries for each so they're not lost.
 
 ## Execution
 

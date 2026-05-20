@@ -5,21 +5,21 @@
     "email": "devon@digitalsanctuary.com"
   },
   "metadata": {
-    "description": "Advanced project management skills for Claude Code"
+    "description": "Dev workflow skills for Claude Code"
   },
   "plugins": [
     {
       "name": "ccmagic",
       "source": "./",
-      "description": "40 project management skills for Claude Code - task tracking, context management, code review, and team collaboration",
-      "version": "2.3.0",
+      "description": "23 dev workflow skills: tracker-aware ticket lifecycle (Linear, GitHub, JIRA), adaptive code review, debugging, design/QA, and git workflow utilities",
+      "version": "3.0.0",
       "author": {
         "name": "Devon Hillard"
       },
       "homepage": "https://github.com/devondragon/ccmagic",
       "repository": "https://github.com/devondragon/ccmagic",
       "license": "Apache-2.0",
-      "keywords": ["project-management", "task-tracking", "code-review", "context-management", "collaboration", "workflow"],
+      "keywords": ["dev-workflow", "code-review", "ticket-workflow", "linear", "github", "jira", "debugging", "design-qa"],
       "category": "productivity"
     }
   ]

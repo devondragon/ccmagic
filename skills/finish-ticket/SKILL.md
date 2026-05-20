@@ -1,0 +1,376 @@
+---
+description: Closes out a development ticket end-to-end. Detects the tracker (Linear, GitHub Issues, or JIRA) and the ticket from the current branch, sanity-checks the PR, confirms disposition (Done by default, or QA when configured/requested), merges the PR, and updates the ticket with a comment, PR link, and final status.
+user-invocable: true
+allowed-tools: Read(*), Edit(*), Bash(git:*, gh:*), Glob(*), Grep(*), AskUserQuestion(*), Skill(*)
+argument-hint: "[--qa]"
+model: sonnet
+---
+
+# /finish-ticket — Close Out a Development Ticket
+
+Given the current branch, finishes a ticket end-to-end: sanity-checks the PR, confirms the right disposition, merges, and updates the ticket. Works with Linear, GitHub Issues, or JIRA.
+
+**On invocation, announce:** "I'll resolve the tracker, detect the ticket from this branch, sanity-check the PR, recommend a disposition (Done unless QA is configured), merge after your confirmation, and update the ticket."
+
+## Sacred Rule: Never Guess Ticket Content
+
+**If the ticket cannot be found, stop and tell the user. Do not infer, guess, or fabricate what the ticket might contain.** The ticket system is the source of truth.
+
+---
+
+## Step 0: Load project settings & resolve tracker
+
+### 0a. Load settings
+
+If `.claude/ccmagic.local.md` exists at the repo root (`git rev-parse --show-toplevel`), read its YAML frontmatter. Relevant keys:
+
+- `tracker:` — `linear` | `github` | `jira` | `auto` (default `auto`)
+- `ticket_url_base:` — for display links
+- `ticket_id_regex:` — defaults to `[A-Z][A-Z0-9]+-[0-9]+`
+- `github_repo:` — `owner/repo` (only used when tracker is GitHub)
+- `default_qa_workflow:` — if `true`, the QA path is on by default
+
+The `--qa` argument always forces the QA path regardless of config.
+
+### 0b. Resolve tracker (cascade — runs when `tracker: auto` or unset)
+
+1. **Branch hint:** parse the current branch for a ticket ID. Integer-only (e.g. `bugfix/42-...`) suggests GitHub; `[A-Z]+-[0-9]+` suggests Linear or JIRA.
+2. **MCP probe:** check available tools.
+   - Linear MCP: any tool matching `mcp__*Linear*__get_issue`.
+   - Atlassian/JIRA MCP: any tool matching `mcp__*atlassian*__*` or `mcp__*Atlassian*__*`.
+   - Prefer Linear unless `ticket_url_base` looks JIRA-shaped (`*.atlassian.net`).
+3. **CLI probe:** `command -v gh && gh repo view --json nameWithOwner 2>/dev/null` — GitHub candidate.
+4. **Ambiguous:** ask the user via `AskUserQuestion`. Offer to write the choice to `.claude/ccmagic.local.md`.
+5. **None available:** stop. Tell the user to install one or set `tracker:` in `.claude/ccmagic.local.md`.
+
+Record the resolved tracker for use in steps 2 and 7.
+
+---
+
+## Step 1: Detect the Ticket ID and PR
+
+### Branch
+
+Run:
+```bash
+git branch --show-current
+```
+
+Parse the branch name for a ticket ID using `ticket_id_regex` (or an integer segment if the resolved tracker is GitHub). The ticket ID typically sits between the prefix slash and the first slug separator:
+
+- `feature/ENG-123-add-search` → `ENG-123` (Linear/JIRA)
+- `bugfix/PROJ-456-fix-cart` → `PROJ-456` (Linear/JIRA)
+- `bugfix/42-fix-cart-total` → `42` (GitHub)
+
+If no ticket ID can be parsed, ask the user:
+
+> "I couldn't detect a ticket ID from the current branch (`{branch-name}`). What is the ticket ID?"
+
+### PR
+
+Run:
+```bash
+gh pr view --json number,title,body,state,url,reviews,statusCheckRollup,mergeable,baseRefName,headRefName
+```
+
+If no PR exists for this branch, stop and tell the user:
+
+> "No open pull request found for branch `{branch-name}`. Please create a PR first (`/ccmagic:pr`), then run `/ccmagic:finish-ticket` again."
+
+Do not proceed without an open PR.
+
+---
+
+## Step 2: Look Up the Ticket
+
+### Linear
+
+Use the available Linear MCP tool (e.g. `mcp__claude_ai_Linear__get_issue`). Extract `title`, `description`, `state.name`, `assignee`, `priority`, `labels`, `url`. Linear states are workflow-defined per team — fetch the full state list so you can match QA/Done targets in Step 7.
+
+### GitHub
+
+```bash
+gh issue view {N} --repo {github_repo or auto-detected} --json title,body,state,assignees,labels,url
+```
+
+Extract `title`, `body` (description), `state`, `assignees`, `labels`, `url`. GitHub issues only have `OPEN` and `CLOSED` — there is no "QA" state. The Done path closes the issue; the QA path applies a label if configured (see Step 7).
+
+### JIRA
+
+Use the available Atlassian MCP tools to fetch the issue. Extract `summary`, `description`, `status.name`, `assignee`, `issuetype.name`, `project.key`, URL `{ticket_url_base}/{TICKET-ID}`. Also fetch available transitions so you can find the right "QA" or "Done" transition IDs in Step 7.
+
+### If not found
+
+Stop. Tell the user:
+
+> "I could not find ticket `{TICKET-ID}` in {tracker}. Please verify the ticket ID and confirm the tracker integration is connected."
+
+---
+
+## Step 3: Sanity Check
+
+Evaluate these criteria and produce a clear status report:
+
+### 3a. PR State
+- Is the PR open (not already merged or closed)?
+- Is it mergeable? (check `mergeable` field — `MERGEABLE`, `CONFLICTING`, or `UNKNOWN`)
+
+### 3b. CI Checks
+Examine `statusCheckRollup`:
+- Are all required checks passing?
+- Are any checks pending, failing, or erroring?
+- List any failing checks by name.
+
+### 3c. Reviews
+Examine `reviews`:
+- Are there any blocking review requests (CHANGES_REQUESTED) that have not been addressed?
+- Is there at least one approving review?
+- A PR can proceed without an approving review, but flag it as a warning.
+
+### 3d. Scope Alignment
+Run:
+```bash
+git log --oneline {baseRefName}...HEAD
+git diff {baseRefName}...HEAD --stat
+```
+
+Compare the commit history and file changes against the ticket title and description. Briefly assess whether the work looks complete relative to the ticket scope.
+
+Look for:
+- Obvious gaps (e.g., ticket mentions a UI change but only backend files changed).
+- Scope creep (many unrelated files changed).
+- Incomplete implementation signals (TODO comments, skipped tests, WIP commits).
+
+### 3e. Report
+
+Present the sanity check results in this format:
+
+```
+## Sanity Check: {TICKET-ID} — "{ticket title}"
+
+PR:        #{pr_number} — "{pr_title}"
+PR URL:    {pr_url}
+Base:      {baseRefName}
+Status:    {OPEN / MERGED / CLOSED}
+Mergeable: {YES / NO — conflicts detected / UNKNOWN}
+
+CI Checks:
+  PASS  {check name}
+  FAIL  {check name} — {failure reason}
+  WAIT  {check name} — pending
+
+Reviews:
+  Approved by {reviewer}
+  No approvals yet
+  Changes requested by {reviewer}
+
+Scope:
+  {2-3 sentences summarizing whether the changes appear to match the ticket}
+```
+
+**If there are critical blockers** (PR not mergeable, CI failing, changes requested), present them clearly and ask:
+
+> "The following issues need attention before merging: {list}. Do you want to address these now, or proceed anyway?"
+
+Wait for the user's decision. If they want to address issues, pause here and help them fix the blockers.
+
+---
+
+## Step 4: Determine Disposition
+
+**Default: Done.** The QA path is opt-in.
+
+The QA path is selected when **any** of these are true:
+- The user passed `--qa` as an argument.
+- `default_qa_workflow: true` is set in `.claude/ccmagic.local.md`.
+- The user explicitly asks for QA in this session.
+
+If none of these are true, **go directly to Done** — don't ask, don't recommend QA, don't try to find a QA assignee.
+
+### When the QA path is selected
+
+Form a brief recommendation, then ask:
+
+> "Should I move `{TICKET-ID}` to **{recommended QA status}** after merging? (yes / no — go straight to Done / custom status name)"
+
+Wait for the answer.
+
+#### Finding the QA assignee (QA path only)
+
+Try to identify who should do QA from the tracker:
+
+- **Linear:** use the user-list MCP tool to find anyone with a QA-related role or membership.
+- **GitHub:** check `CODEOWNERS` for a QA group, or fall back to asking.
+- **JIRA:** use the Atlassian user-listing tool to find QA-labeled users.
+
+If automated lookup fails, ask the user directly:
+
+> "Who should I assign for QA? Please provide a name or email/handle."
+
+Wait for the user's answer before proceeding.
+
+### When the Done path is selected
+
+Skip QA assignee lookup entirely. Move on to confirmation.
+
+---
+
+## Step 5: Confirm with the User
+
+First, **determine the merge strategy** so the confirmation reflects what will actually happen:
+- **Feature and bugfix branches** (`feature/...`, `bugfix/...`, `hotfix/...`, `chore/...`) → squash merge (`--squash`).
+- **Release branches** (`release/...`) → merge commit (`--merge`).
+
+Then present a complete summary of what you're about to do:
+
+```
+## Ready to close out {TICKET-ID}
+
+Ticket:    {TICKET-ID} — "{ticket title}"
+PR:        #{pr_number} — {pr_url}
+Merge:     {Squash merge | Merge commit} into {baseRefName}
+Action:    Move ticket to "{target_status}"
+{If QA path:}
+QA:        Assign to {qa_person_name}
+
+Proceed? (yes / no / change something)
+```
+
+Wait for explicit confirmation. If the user says "no" or wants to change something, address their concern and re-confirm before proceeding.
+
+---
+
+## Step 6: Merge the PR
+
+Use the merge strategy you determined in Step 5.
+
+### Attempt merge
+
+```bash
+gh pr merge {pr_number} {--squash | --merge} --delete-branch
+```
+
+Use the strategy flag chosen in Step 5 (`--squash` for feature/bugfix/hotfix/chore branches, `--merge` for `release/...`). If `--delete-branch` is not supported by the installed `gh` version, omit it.
+
+### Handle merge conflicts
+
+If the merge fails due to conflicts:
+
+1. Report the conflict clearly:
+   > "The PR cannot be merged automatically due to conflicts."
+2. Fetch and attempt local resolution:
+   ```bash
+   git fetch origin
+   git checkout {headRefName}
+   git merge origin/{baseRefName}
+   ```
+3. Show the conflicting files:
+   ```bash
+   git diff --name-only --diff-filter=U
+   ```
+4. Attempt to resolve straightforward conflicts (version bumps, import lists, config values). If the conflict requires business-logic judgment, show it to the user and ask.
+5. After resolving:
+   ```bash
+   git add {resolved files}
+   git commit -m "chore: resolve merge conflicts for {TICKET-ID}"
+   git push origin {headRefName}
+   ```
+6. Re-attempt the PR merge.
+7. If conflicts cannot be resolved, stop and tell the user what remains unresolved.
+
+### Verify merge success
+
+```bash
+gh pr view {pr_number} --json state,mergedAt,mergeCommit
+```
+
+Confirm `state` is `MERGED`.
+
+---
+
+## Step 7: Update the Ticket
+
+Compose the closing comment first (same body for all trackers):
+
+```markdown
+## Work Complete — PR Merged
+
+**PR:** [{pr_title}]({pr_url})
+**Merged into:** `{baseRefName}`
+**Branch:** `{headRefName}`
+
+### Summary of changes
+{2-4 bullet points derived from the PR body / commit log describing what was built}
+
+### Files changed
+{Top 5-8 changed files from git diff --stat}
+```
+
+### Linear
+
+1. Post the comment via `mcp__*Linear*__save_comment` (or equivalent).
+2. Transition the issue via `mcp__*Linear*__save_issue` to the target state. State-name matching:
+   - **QA path** — try "QA", "Ready for QA", "Testing", "In Review", "Review" in that order against the team's workflow states.
+   - **Done path** — try "Done", "Completed", "Closed".
+3. If QA path, update the assignee to the QA person.
+
+### GitHub
+
+```bash
+gh issue comment {N} --body "$(cat <<'EOF'
+{closing comment content}
+EOF
+)"
+```
+
+Then:
+- **Done path:** `gh issue close {N}` — PR merge with `Closes #N` may already have closed it; verify.
+- **QA path:** GitHub has no built-in QA state. Apply the label specified in `.claude/ccmagic.local.md` (`qa_label:` field) via `gh issue edit {N} --add-label "{label}"`, and re-assign with `--add-assignee {qa_person}`. If `qa_label` isn't configured, ask the user which label to use, then offer to save it.
+
+### JIRA
+
+1. Post the comment via the available Atlassian MCP tool.
+2. Find the right transition for the target state based on the transitions list retrieved in Step 2. State-name matching:
+   - **QA path** — "QA", "Ready for QA", "Ready for Testing", "Testing", "In Review", "Review".
+   - **Done path** — "Done", "Completed", "Closed".
+3. Use the available Atlassian MCP tools to:
+   - Transition the issue using the transition ID.
+   - If QA path, update the assignee field to the QA person.
+
+---
+
+## Step 8: Done
+
+Report the completed outcome:
+
+```
+## Ticket closed out
+
+Ticket:  {TICKET-ID} — "{ticket title}"
+PR:      #{pr_number} merged → {baseRefName}
+Status:  Moved to "{target_status}"
+{If QA path:}
+QA:      Assigned to {qa_person_name}
+
+{ticket_url}
+```
+
+---
+
+## Error Handling
+
+| Situation | Action |
+|-----------|--------|
+| No tracker available | Stop. Tell user to install one or set `tracker:` in `.claude/ccmagic.local.md`. |
+| No PR found | Stop. Tell user to create one first. |
+| Ticket not found | Stop. Tell user the ID that failed. |
+| Tracker MCP/CLI not connected | Stop. Tell user which integration is needed. |
+| CI checks failing | Surface them. Ask user to fix or override. |
+| Changes requested on PR | Surface them. Ask user to address or override. |
+| PR has conflicts | Attempt local resolution. Escalate unresolvable conflicts to user. |
+| Merge fails for other reason | Show the error. Do not retry blindly. |
+| Target transition not found (JIRA/Linear) | Show available transitions/states. Ask user to pick. |
+| QA label missing (GitHub QA path) | Ask user which label, offer to save to config. |
+| Ticket update fails | Warn user. Report what was and wasn't updated. Continue to Done. |
+| Cannot identify QA person (QA path only) | Ask the user directly. |
+| User says "no" at confirmation | Stop cleanly. Nothing has been merged yet. |
