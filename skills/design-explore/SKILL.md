@@ -1,4 +1,5 @@
 ---
+name: design-explore
 description: Generate multiple distinct design directions, compare in browser, pick a winner before building
 allowed-tools: Read(*), Write(*), Edit(*), Bash(git:*, curl:*), Glob(*), Grep(*), Agent(*), AskUserQuestion(*), mcp__chrome_devtools__navigate_page(*), mcp__chrome_devtools__take_screenshot(*), mcp__chrome_devtools__evaluate_script(*), mcp__chrome_devtools__resize_page(*)
 argument-hint: "[page/component description] [--count N] [--evolve URL]"

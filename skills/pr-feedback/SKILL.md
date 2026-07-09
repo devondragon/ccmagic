@@ -1,4 +1,5 @@
 ---
+name: pr-feedback
 user-invocable: true
 allowed-tools: Read(*), Bash(git:*, gh:*), Glob(*), Grep(*), Task(*), TodoWrite(*), AskUserQuestion(*), Edit(*)
 description: Review PR comments and plan fixes for valid concerns

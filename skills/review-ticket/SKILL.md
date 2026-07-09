@@ -1,4 +1,5 @@
 ---
+name: review-ticket
 description: Ticket-grounded code review. Fetches the ticket from Linear, GitHub Issues, or JIRA, then runs /ccmagic:review with the ticket scope as the primary intent source. Adds an explicit Ticket-scope drift section (in-scope / out-of-scope / missing-from-ticket).
 user-invocable: true
 allowed-tools: Read(*), Edit(*), Bash(git:*, gh:*), Glob(*), Grep(*), Agent(*), Task(*), TodoWrite(*), AskUserQuestion(*), Skill(*)

@@ -1,4 +1,5 @@
 ---
+name: codex-review
 user-invocable: true
 allowed-tools: Read(*), Bash(*), Glob(*), Grep(*), Task(*), TodoWrite(*), AskUserQuestion(*)
 description: Multi-model code review (Codex + Gemini + Claude triage) with dimension-focused passes

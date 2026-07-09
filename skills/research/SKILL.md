@@ -1,4 +1,5 @@
 ---
+name: research
 user-invocable: true
 description: Deep iterative research with parallel exploration, source evaluation, and confidence scoring
 argument-hint: <topic or question to research>

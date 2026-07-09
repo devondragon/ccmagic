@@ -1,4 +1,5 @@
 ---
+name: debug
 user-invocable: true
 allowed-tools: Read(*), Write(*), Edit(*), Bash(*), Glob(*), Grep(*), Task(*), TodoWrite(*), AskUserQuestion(*)
 description: Systematic debugging with scientific method, parallel investigation, and persistent sessions

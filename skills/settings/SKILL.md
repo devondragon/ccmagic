@@ -1,4 +1,5 @@
 ---
+name: settings
 user-invocable: true
 allowed-tools: Read(*), Write(*), AskUserQuestion(*)
 description: Configure CCMagic preferences (tracker, QA workflow, ticket regex)
