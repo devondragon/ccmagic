@@ -2,6 +2,12 @@
 
 All notable changes to ccmagic are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.0.1] — 2026-07
+
+### Fixed
+
+- Add the required `name` field to the YAML frontmatter of all 23 skills. The field matches each skill's kebab-case directory (e.g. `name: finish-ticket`). Claude Code's plugin loader infers the name from the directory, so the omission was silent locally, but the marketplace/sandbox validator requires an explicit `name` string — its absence caused `front matter must include a string name` errors and a cascading plugin-manifest rejection.
+
 ## [3.0.0] — 2026-05
 
 **Breaking change.** ccmagic refocuses from project management to dev workflow. 23 planning/state-management skills have been removed; 3 new tracker-aware skills have been added; a non-blocking commit-format hook now ships with the plugin.
