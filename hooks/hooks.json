@@ -6,7 +6,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/post-tool-use-commit.sh\""
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/post-tool-use-commit.sh\"",
+            "timeout": 10
           }
         ]
       }

@@ -2,6 +2,12 @@
 
 All notable changes to ccmagic are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.0.2] — 2026-07
+
+### Fixed
+
+- Add the required `timeout` field (10s) to the PostToolUse hook entry in `hooks/hooks.json`. Claude Code treats the field as optional, but the marketplace/sandbox validator requires `timeout` (or `timeoutMs`) on every hook, which caused a `hook timeout or timeoutMs is required` error and a cascading plugin-manifest rejection.
+
 ## [3.0.1] — 2026-07
 
 ### Fixed
