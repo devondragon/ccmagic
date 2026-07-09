@@ -12,7 +12,7 @@
       "name": "ccmagic",
       "source": "./",
       "description": "23 dev workflow skills: tracker-aware ticket lifecycle (Linear, GitHub, JIRA), adaptive code review, debugging, design/QA, and git workflow utilities",
-      "version": "3.0.0",
+      "version": "3.0.1",
       "author": {
         "name": "Devon Hillard"
       },
