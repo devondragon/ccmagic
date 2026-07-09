@@ -1,5 +1,6 @@
 ---
 name: browser-qa
+user-invocable: true
 description: Systematically QA test a web app in a real browser — find bugs, fix them, verify with screenshots
 allowed-tools: Read(*), Write(*), Edit(*), Bash(git:*, curl:*), Glob(*), Grep(*), Agent(*), AskUserQuestion(*), mcp__chrome_devtools__navigate_page(*), mcp__chrome_devtools__take_screenshot(*), mcp__chrome_devtools__take_snapshot(*), mcp__chrome_devtools__evaluate_script(*), mcp__chrome_devtools__resize_page(*), mcp__chrome_devtools__click(*), mcp__chrome_devtools__fill(*), mcp__chrome_devtools__fill_form(*), mcp__chrome_devtools__press_key(*), mcp__chrome_devtools__hover(*), mcp__chrome_devtools__list_console_messages(*), mcp__chrome_devtools__list_network_requests(*), mcp__chrome_devtools__lighthouse_audit(*), mcp__chrome_devtools__wait_for(*)
 argument-hint: "[URL] [--quick|--exhaustive] [--scope PAGE]"
