@@ -1,5 +1,6 @@
 ---
 name: design-qa
+user-invocable: true
 description: Design quality audit — catches AI slop, scores visual polish, fixes issues with atomic commits
 allowed-tools: Read(*), Edit(*), Write(*), Bash(git:*), Glob(*), Grep(*), Agent(*), AskUserQuestion(*), mcp__chrome_devtools__navigate_page(*), mcp__chrome_devtools__take_screenshot(*), mcp__chrome_devtools__evaluate_script(*), mcp__chrome_devtools__resize_page(*), mcp__chrome_devtools__take_snapshot(*), mcp__chrome_devtools__lighthouse_audit(*), mcp__chrome_devtools__list_console_messages(*)
 argument-hint: "[URL] [--quick|--deep|--diff]"

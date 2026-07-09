@@ -1,0 +1,6 @@
+# Local Claude Code settings (personal, not shipped with the plugin)
+.claude/settings.local.json
+
+# Editor swap/backup files
+*.swp
+*~

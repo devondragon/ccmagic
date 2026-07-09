@@ -2,6 +2,16 @@
 
 All notable changes to ccmagic are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.0.3] — 2026-07
+
+### Changed
+
+- Add `user-invocable: true` to the three skills that omitted it (`browser-qa`, `design-explore`, `design-qa`), so all 23 skills consistently match the documented "all skills are user-invocable" convention.
+
+### Housekeeping
+
+- Stop tracking `.claude/settings.local.json` (a personal, machine-local Claude Code settings file) and add a `.gitignore` covering it plus editor swap/backup files. It should never have shipped in the repo or the plugin bundle.
+
 ## [3.0.2] — 2026-07
 
 ### Fixed
