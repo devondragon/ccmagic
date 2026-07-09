@@ -1,4 +1,5 @@
 ---
+name: init
 user-invocable: true
 allowed-tools: Read(*), Write(*), Bash(git:*), Bash(mkdir:*), Bash(touch:*), AskUserQuestion(*)
 description: Bootstrap ccmagic project config — conventions, branching strategy, knowledge directory, and tracker settings

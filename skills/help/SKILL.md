@@ -1,4 +1,5 @@
 ---
+name: help
 user-invocable: true
 allowed-tools: Read(*), Glob(*), Bash(git:*)
 description: Interactive help and command reference with examples

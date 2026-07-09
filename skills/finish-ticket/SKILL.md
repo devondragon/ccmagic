@@ -1,4 +1,5 @@
 ---
+name: finish-ticket
 description: Closes out a development ticket end-to-end. Detects the tracker (Linear, GitHub Issues, or JIRA) and the ticket from the current branch, sanity-checks the PR, confirms disposition (Done by default, or QA when configured/requested), merges the PR, and updates the ticket with a comment, PR link, and final status.
 user-invocable: true
 allowed-tools: Read(*), Edit(*), Bash(git:*, gh:*), Glob(*), Grep(*), AskUserQuestion(*), Skill(*)

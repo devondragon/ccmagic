@@ -1,4 +1,5 @@
 ---
+name: test
 user-invocable: true
 allowed-tools: Read(*), Bash(*), Glob(*), Grep(*), Task(*), TodoWrite(*)
 description: Run tests with framework auto-detection, smart selection, coverage analysis, and failure diagnosis
