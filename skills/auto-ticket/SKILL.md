@@ -32,8 +32,8 @@ This skill and every sub-skill it calls share one contract — the autonomous si
 ## Step 0: Resolve tracker, ticket, and config
 
 1. **Resolve the tracker** using the exact same cascade as `/ccmagic:work-ticket` Step 0 (settings → arg/branch shape → MCP probe → CLI probe → branch hint). This runs unattended, so if the cascade is genuinely ambiguous (would otherwise prompt), pick the highest-confidence candidate and record the choice in the run summary; if **none** is available, stop and tell the user (this is a setup error, not a parkable ticket).
-2. **Resolve the ticket ID** from the argument, or parse it from the current branch (strip `feature/`, `bugfix/`, `hotfix/`, `chore/` prefixes) — same logic as `/ccmagic:finish-ticket` Step 1. If neither yields a ticket ID, stop and ask the user for one.
-3. **Load config** from `.claude/ccmagic.local.md`: `needs_human_state`, `needs_human_label` (default `needs-human`), `max_feedback_passes` (default `3`), plus the usual `tracker` / `ticket_url_base` / `github_repo`. See contract §5.
+2. **Resolve the ticket ID** from the argument, or parse it from the current branch (strip `feature/`, `bugfix/`, `hotfix/`, `chore/` prefixes) — same logic as `/ccmagic:finish-ticket` Step 1. If neither yields a ticket ID, **exit cleanly** with a one-line message asking the caller to pass one (`/ccmagic:auto-ticket {TICKET-ID}`) — this is a setup error, not a parkable ticket; do not wait for input.
+3. **Load config**, resolving each value by precedence — an explicit arg → the project file `.claude/ccmagic.local.md` → the user file `~/.claude/ccmagic.local.md` → the built-in default (see contract §5). Keys: `needs_human_state`, `needs_human_label` (default `needs-human`), `max_feedback_passes` (default `3`), `max_review_fix_passes` (default `2`), `max_validate_attempts` (default `2`), `ci_timeout_minutes` (default `30`), `ci_poll_interval_seconds` (default `60`), plus the usual `tracker` / `ticket_url_base` / `github_repo`.
 4. **Fetch the ticket** to confirm it exists (per the tracker's lookup in `work-ticket`/`review-ticket`). If not found, stop (Sacred Rule).
 5. **Build the grounding block** (contract §2) with the resolved values. Prepend it to every sub-skill invocation below. `/ccmagic:auto-ticket` always drives sub-skills with `autonomous: true`, regardless of the `autonomous:` config default.
 
@@ -70,7 +70,7 @@ Invoke `/ccmagic:review-ticket {TICKET-ID}` with the grounding block prepended. 
 
 - `clean` → continue to Step 4.
 - `needs-human` → **route-and-stop** (stage = `review-ticket`).
-- `fixable-findings` → run a **bounded fix loop** (max **2** passes):
+- `fixable-findings` → run a **bounded fix loop** (max `max_review_fix_passes` passes, default **2**):
   1. Apply the CRITICAL findings (and any listed fixable missing-AC items) from the report — edit the code directly.
   2. Commit and push via `/ccmagic:push` with the grounding block. If push returns `needs-human`, **route-and-stop**.
   3. Re-invoke `/ccmagic:review-ticket`.
@@ -82,20 +82,26 @@ Only CRITICAL findings and closable missing-AC items gate here. Out-of-scope cha
 
 ## Step 4: PR-feedback loop
 
-Loop up to `max_feedback_passes` (default 3). Each pass:
+Loop up to `max_feedback_passes` (default 3). **At the very start of each pass — before applying any fix and before anything is pushed — record the current highest PR review-comment id as this pass's high-water mark `H`:**
+
+```bash
+gh api repos/{owner}/{repo}/pulls/{PR_NUMBER}/comments --jq '[.[].id] | max // 0'
+```
+
+Everything this pass pushes is measured against `H`, so bot reviews triggered *by* this pass's push are counted as new (4c). Then:
 
 **4a. Apply feedback.** Invoke `/ccmagic:pr-feedback {PR_NUMBER}` with the grounding block. Autonomous `pr-feedback` applies address-now fixes, replies to declined/question threads, files a follow-up ticket per defer/out-of-scope item, and pushes. Collect its handshake counts and `follow_ups`.
   - `needs-human` (e.g. a genuine reviewer tie) → **route-and-stop** (stage = `pr-feedback`).
 
-**4b. Validate locally before trusting CI.** Run `/ccmagic:validate`. If it fails, fix the regressions (bounded: **2** attempts, editing + re-validating), then commit/push via `/ccmagic:push`. If it still fails after the attempts → **route-and-stop** (reason: "local validation fails: {summary}"). Doing this locally keeps CI + bot-review round-trips rare.
+**4b. Validate locally before trusting CI.** Run `/ccmagic:validate`. If it fails, fix the regressions (bounded: `max_validate_attempts` attempts, default **2**, editing + re-validating), then commit/push via `/ccmagic:push`. If it still fails after the attempts → **route-and-stop** (reason: "local validation fails: {summary}"). Doing this locally keeps CI + bot-review round-trips rare.
 
-**4c. Wait for CI and new reviews.** Before this pass's push, record the highest PR review-comment id as a high-water mark. After pushing:
+**4c. Wait for CI and new reviews.** This pass's push(es) already happened (in 4a via `pr-feedback`, and possibly again in 4b); `H` was captured before them at the top of the pass. Now that they've landed:
   - Poll CI until it settles — no check is `pending`/`in_progress`:
     ```bash
     gh pr checks {PR_NUMBER}
     ```
-    Poll on a modest interval (≈60s) up to a cap (≈30 min). If CI never settles within the cap → **route-and-stop** (reason: "CI did not complete within the timeout").
-  - Then re-fetch review comments (`gh api repos/{owner}/{repo}/pulls/{PR_NUMBER}/comments`) and PR reviews. New reviewer comments (id above the high-water mark, not authored by the PR author — e.g. Copilot/Claude bot reviews) are **new actionable threads** for the next pass.
+    Poll on `ci_poll_interval_seconds` (default ≈60s) up to `ci_timeout_minutes` (default ≈30 min). If CI never settles within the cap → **route-and-stop** (reason: "CI did not complete within the timeout").
+  - Then re-fetch review comments (`gh api repos/{owner}/{repo}/pulls/{PR_NUMBER}/comments`) and PR reviews. New reviewer comments — **id above `H`**, not authored by the PR author (e.g. Copilot/Claude bot reviews) — are **new actionable threads** for the next pass. Capturing `H` before the push is what lets a bot review posted in response to this push count as new rather than being mistaken for an already-handled thread.
 
 **4d. Recompute "clean".** The pass is **clean** when **both** hold:
   - zero unresolved actionable reviewer threads (nothing new and nothing still open from before), **and**
@@ -170,7 +176,7 @@ There is no third "stalled" outcome. Never hang waiting for input.
 | Situation | Action |
 |-----------|--------|
 | No tracker available / not connected | Stop and tell the user (setup error, not a parkable ticket). |
-| Ticket ID can't be resolved | Stop and ask the user for one. |
+| Ticket ID can't be resolved | Exit cleanly with a message requesting a ticket ID — don't wait for input (setup error, not a parkable ticket). |
 | Ticket not found | Stop (Sacred Rule). |
 | A sub-skill emits no handshake (crash/tool error) | Treat as `needs-human` → route-and-stop with reason "{skill} produced no handshake". |
 | `work-ticket` → `needs-human` | route-and-stop (stage `work-ticket`). |

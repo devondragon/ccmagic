@@ -42,7 +42,7 @@ End-to-end ticket lifecycle backed by Linear, GitHub Issues, or JIRA. Auto-detec
 - **Purpose:** Autonomous end-to-end ticket driver — runs the whole cycle unattended.
 - **When to use:** Solo-dev / headless (e.g. Cyrus) runs where you want the ticket taken from implementation to merge with no human in the loop.
 - **Example:** `/ccmagic:auto-ticket ENG-123` (or omit the ID to detect it from the current branch).
-- **What it does:** Invokes `work-ticket → review-ticket → pr-feedback (looped up to `max_feedback_passes`) → finish-ticket`, all in autonomous mode. Merges when the PR is clean and CI is green; otherwise **parks** the ticket (moves it to `needs_human_state`, comments what it's waiting on) instead of guessing or stalling. Every run ends **merged** or **parked-needs-human** — never hung. Configure via `autonomous`, `needs_human_state`, `needs_human_label`, `max_feedback_passes` in `.claude/ccmagic.local.md`.
+- **What it does:** Invokes `work-ticket → review-ticket → pr-feedback (looped up to max_feedback_passes) → finish-ticket`, all in autonomous mode. Merges when the PR is clean and CI is green; otherwise **parks** the ticket (moves it to `needs_human_state`, comments what it's waiting on) instead of guessing or stalling. Every run ends **merged** or **parked-needs-human** — never hung. Configure via `autonomous`, `needs_human_state`, `needs_human_label`, `max_feedback_passes` in `.claude/ccmagic.local.md`.
 
 ### Code review & quality
 

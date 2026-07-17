@@ -233,7 +233,7 @@ Absent all three, run the interactive plan-only path exactly as documented above
 
 ### What changes: triage → execute
 
-Run Steps 1–7 exactly as written (fetch, load conventions, reconstruct threads, classify, verify, detect conflicts, group). Then, instead of stopping at the plan:
+Run Steps 1–5 exactly as written (load conventions, fetch + reconstruct threads, classify, verify, detect conflicts, group). Then, instead of building a plan and stopping (Steps 6–7):
 
 - **address-now** → apply the fix with `Edit`, grouped by file per Steps 5–6.
 - **respond / decline / question** → post a reply on the thread (`gh api repos/{owner}/{repo}/pulls/{PR}/comments/{id}/replies -f body=...`, or an issue comment referencing the thread), using the response templates in `${CLAUDE_SKILL_DIR}/triage-guide.md`.
@@ -243,7 +243,7 @@ Run Steps 1–7 exactly as written (fetch, load conventions, reconstruct threads
 ### Behavior at each human-gate
 
 - **Step 4d (Conflicting reviewers):** do not ask. Conventions already win in this skill — if a project convention decides the conflict, take that side automatically and cite it in the reply. Only a **genuine tie** (no convention applies) → `needs-human` (the `reason` names the `file:line` and both positions).
-- **Step 6 (Deferrals):** do not ask. Default action is **create a follow-up ticket** for each deferred/out-of-scope item.
+- **Step 4c (`defer` / out-of-scope verdict):** do not ask. Default action is **create a follow-up ticket** for each deferred/out-of-scope item.
 
 ### Handshake (emit last, in autonomous mode)
 
@@ -253,7 +253,7 @@ reason: applied {A} / declined {D} / deferred {F}   (or the blocking tie on need
 follow_ups: [<follow-up ticket ids filed>]
 ```
 
-`done` = this pass's fixes are applied, replies posted, follow-ups filed, and the branch pushed. `needs-human` = a genuine reviewer tie (or a fix that can't be made safely) surfaced; if top-level, route-and-stop (park to `needs_human_state`, comment) before emitting — otherwise hand the handshake to the parent. The parent orchestrator recomputes overall "clean" (CI green + zero unresolved actionable threads) after CI and any new bot review land.
+`done` = this pass's fixes are applied, replies posted, follow-ups filed, and the branch pushed. `needs-human` = a genuine reviewer tie (or a fix that can't be made safely) surfaced; if top-level, route-and-stop (park to `needs_human_state`, or `needs_human_label` if that state doesn't exist — on GitHub create the label first if missing; comment) before emitting — otherwise hand the handshake to the parent. The parent orchestrator recomputes overall "clean" (CI green + zero unresolved actionable threads) after CI and any new bot review land.
 
 ## Execution
 

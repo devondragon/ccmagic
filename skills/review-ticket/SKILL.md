@@ -24,7 +24,7 @@ Runs a full code review with the **ticket as the ground truth for intent**. The 
 
 Same cascade as `/ccmagic:work-ticket`:
 
-1. Read `.claude/ccmagic.local.md` (if present) for `tracker:`, `ticket_url_base:`, `ticket_id_regex:`, `github_repo:`.
+1. Read `.claude/ccmagic.local.md` (if present) for `tracker:`, `ticket_url_base:`, `ticket_id_regex:`, `github_repo:` — and fall back to the user-level `~/.claude/ccmagic.local.md` for any key the project file omits (project overrides user).
 2. If `tracker:` is `auto` or unset, run the detection cascade:
    - **Arg shape:** integer-only ticket ID → GitHub; `[A-Z][A-Z0-9]+-[0-9]+` → Linear or JIRA.
    - **MCP probe:** Linear MCP (`mcp__*Linear*__get_issue`), Atlassian/JIRA MCP (`mcp__*atlassian*__*` or `mcp__*Atlassian*__*`).
@@ -227,7 +227,7 @@ follow_ups: [<any tickets or deferrals noted>]
 
 - **clean** — no CRITICAL findings and no missing AC (out-of-scope items, if any, are flagged only).
 - **fixable-findings** — one or more CRITICAL findings and/or missing-AC items that are mechanically fixable in-scope. **List them** in the report so the caller can address them.
-- **needs-human** — a finding or missing AC needs human judgment or can't be closed in-scope; `reason` names it. If top-level, route-and-stop (park to `needs_human_state`, comment on the PR + ticket) before emitting the handshake.
+- **needs-human** — a finding or missing AC needs human judgment or can't be closed in-scope; `reason` names it. If top-level, route-and-stop (park to `needs_human_state`, or `needs_human_label` if that state doesn't exist — on GitHub create the label first if missing; comment on the PR + ticket) before emitting the handshake.
 
 ---
 

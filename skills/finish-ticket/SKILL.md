@@ -23,7 +23,7 @@ Given the current branch, finishes a ticket end-to-end: sanity-checks the PR, co
 
 ### 0a. Load settings
 
-If `.claude/ccmagic.local.md` exists at the repo root (`git rev-parse --show-toplevel`), read its YAML frontmatter. Relevant keys:
+If `.claude/ccmagic.local.md` exists at the repo root (`git rev-parse --show-toplevel`), read its YAML frontmatter; also read the user-level `~/.claude/ccmagic.local.md` if present, with the project file taking precedence over the user file (both override built-in defaults). Relevant keys:
 
 - `tracker:` — `linear` | `github` | `jira` | `auto` (default `auto`)
 - `ticket_url_base:` — for display links
@@ -375,14 +375,14 @@ Absent all three, run the interactive path exactly as documented above. Also rea
 ### Behavior at each human-gate
 
 - **Step 3 (Sanity check) — this is the merge gate.** Merge **only if all** of: PR is `MERGEABLE`, every required CI check has passed (green), and there are no unaddressed `CHANGES_REQUESTED` reviews. If any is not satisfied → `needs-human` (do **not** merge; the `reason` lists the specific blockers). Do not take the interactive "proceed anyway" option.
-- **Step 4 (Disposition):** Done — the default. (The QA path still only activates via `--qa` or `default_qa_workflow: true`; that is unchanged.)
+- **Step 4 (Disposition):** always take the **Done** path. The QA path needs an interactive hand-off (QA-assignee lookup, status confirmation) that would hang an unattended run, so autonomous mode never enters it — **even if `default_qa_workflow: true`**. If the QA path was explicitly forced (`--qa` passed *together with* an autonomous signal), that's a conflict autonomous mode can't satisfy → `needs-human` (reason: "QA disposition requires a human — re-run without `--qa`, or complete QA manually"); do **not** merge. A project that requires QA on every ticket should not be driven by `/ccmagic:auto-ticket`.
 - **Step 5 (Merge confirmation):** proceed with the determined strategy — squash for `feature/`/`bugfix/`/`hotfix/`/`chore/`, merge commit for `release/` — no pause.
 - **Step 6 (Merge conflicts):** auto-resolve **trivial** conflicts (version bumps, import lists, config values) exactly as Step 6 already describes. A **business-logic** conflict → `needs-human` (do not merge; leave the branch unmerged, `reason` names the conflicting files).
 
 ### Route-and-stop (park the ticket) — top-level entry points only
 
 1. Do **not** merge.
-2. Move the ticket to `needs_human_state`. If that state/transition doesn't exist, apply `needs_human_label` if configured and/or leave the state unchanged.
+2. Move the ticket to `needs_human_state`. If that state/transition doesn't exist, apply `needs_human_label` if configured and/or leave the state unchanged. On **GitHub** (no custom states), always apply `needs_human_label` — create it first if missing (`gh label create "{needs_human_label}" 2>/dev/null || true`) so `gh issue edit {N} --add-label "{needs_human_label}"` can't fail on a first-time park.
 3. Post a comment on the PR **and** the ticket stating exactly what needs a human and why (the `reason`).
 4. Emit the handshake with `status: needs-human`. Exit cleanly — never wait for input.
 

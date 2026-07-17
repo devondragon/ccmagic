@@ -23,7 +23,7 @@ Given a ticket ID, handles the full development lifecycle from ticket lookup thr
 
 ### 0a. Load settings
 
-If `.claude/ccmagic.local.md` exists at the repo root (`git rev-parse --show-toplevel`), read its YAML frontmatter. Relevant keys:
+If `.claude/ccmagic.local.md` exists at the repo root (`git rev-parse --show-toplevel`), read its YAML frontmatter; also read the user-level `~/.claude/ccmagic.local.md` if present, with the project file taking precedence over the user file (both override built-in defaults). Relevant keys:
 
 - `tracker:` — `linear` | `github` | `jira` | `auto` (default `auto`)
 - `ticket_url_base:` — for display links
@@ -310,7 +310,7 @@ Also read these keys from `.claude/ccmagic.local.md`: `needs_human_state:`, `nee
 ### Route-and-stop (park the ticket) — top-level entry points only
 
 1. Do **not** create a throwaway/partial PR as if the work were done.
-2. Move the ticket to `needs_human_state`. If that state/transition doesn't exist in the tracker, apply `needs_human_label` if configured and/or leave the state unchanged.
+2. Move the ticket to `needs_human_state`. If that state/transition doesn't exist in the tracker, apply `needs_human_label` if configured and/or leave the state unchanged. On **GitHub** (no custom states), always apply `needs_human_label` — create it first if missing (`gh label create "{needs_human_label}" 2>/dev/null || true`) so `gh issue edit {N} --add-label "{needs_human_label}"` can't fail on a first-time park.
 3. Post a ticket comment (and a PR comment if a PR already exists) stating exactly what needs a human and why (the `reason`).
 4. Emit the handshake with `status: needs-human`. Exit cleanly — never wait for input.
 
