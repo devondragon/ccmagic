@@ -288,7 +288,7 @@ Autonomous mode is ON when the first present signal (in priority order) resolves
 
 1. `--autonomous` in the skill arguments.
 2. An `autonomous: true` line in the grounding/context block a parent skill (e.g. `/ccmagic:auto-ticket`) prepends when invoking this skill.
-3. `autonomous: true` in `.claude/ccmagic.local.md` frontmatter.
+3. `autonomous: true` in `ccmagic.local.md` frontmatter — the project file `.claude/ccmagic.local.md` first, then the user file `~/.claude/ccmagic.local.md`.
 
 Absent all three, run the interactive path exactly as documented above. In autonomous mode, announce instead: "Running `{TICKET-ID}` unattended — I'll classify, branch, implement, review, and open the PR without pausing, and park the ticket for a human if I hit a material decision."
 

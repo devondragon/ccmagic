@@ -202,7 +202,7 @@ Autonomous mode is ON when the first present signal (in priority order) resolves
 
 1. `--autonomous` in the skill arguments.
 2. An `autonomous: true` line in the grounding/context block a parent skill prepends when invoking this skill.
-3. `autonomous: true` in `.claude/ccmagic.local.md` frontmatter.
+3. `autonomous: true` in `ccmagic.local.md` frontmatter — the project file `.claude/ccmagic.local.md` first, then the user file `~/.claude/ccmagic.local.md`.
 
 Absent all three, run the interactive path exactly as documented above. Also read `needs_human_state:` / `needs_human_label:` from config. **Orchestrated vs. standalone** works exactly as in `/ccmagic:work-ticket` → *Autonomous mode*: a parent's grounding block (#2) means the parent parks on `needs-human`; `--autonomous`/config (#1/#3) means this skill parks (route-and-stop) itself.
 
