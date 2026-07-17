@@ -38,7 +38,7 @@ claude --plugin-dir .claude/plugins/ccmagic
 
 ## What ships in v3
 
-23 skills organized by purpose:
+24 skills organized by purpose:
 
 ### Tracker workflow
 
@@ -47,8 +47,9 @@ claude --plugin-dir .claude/plugins/ccmagic
 | `/ccmagic:work-ticket {ID}` | End-to-end: lookup → classify (Quick Fix / Complex / Debug) → branch → implement → review → PR |
 | `/ccmagic:review-ticket [ID]` | Code review grounded in the ticket's stated scope and acceptance criteria. Adds explicit in-scope / out-of-scope / missing-from-ticket section |
 | `/ccmagic:finish-ticket [--qa]` | Sanity-check PR → merge → close ticket with summary comment |
+| `/ccmagic:auto-ticket [ID]` | **Autonomous** end-to-end driver — runs work → review → pr-feedback (looped) → finish with no human in the loop, and either merges or parks the ticket for a human. See [Autonomous mode](#autonomous-mode) |
 
-All three auto-detect the tracker (Linear MCP → GitHub CLI → Atlassian/JIRA MCP) or honor `tracker:` in `.claude/ccmagic.local.md`.
+All four auto-detect the tracker (Linear MCP → GitHub CLI → Atlassian/JIRA MCP) or honor `tracker:` in `.claude/ccmagic.local.md`.
 
 ### Code review & quality
 
@@ -115,6 +116,17 @@ All three auto-detect the tracker (Linear MCP → GitHub CLI → Atlassian/JIRA 
 /ccmagic:finish-ticket           # Merge + close ticket
 ```
 
+### Working a ticket fully autonomously
+
+```
+/ccmagic:auto-ticket ENG-123     # Runs the whole cycle unattended:
+                                 # work → review → pr-feedback (looped) → finish.
+                                 # Merges if clean + CI green; otherwise parks the
+                                 # ticket for a human with a clear note. Never hangs.
+```
+
+See [Autonomous mode](#autonomous-mode) for how it decides between merge and park.
+
 ### Quick task (no ticket)
 
 ```
@@ -138,6 +150,47 @@ All three auto-detect the tracker (Linear MCP → GitHub CLI → Atlassian/JIRA 
 /ccmagic:doctor           # Verify setup
 ```
 
+## Autonomous mode
+
+ccmagic's ticket lifecycle can run **fully unattended** — from Claude Code on your laptop, or headless from a Linear-triggered worker (e.g. Cyrus in Docker). `/ccmagic:auto-ticket {ID}` is the orchestrator; the five lifecycle skills it calls (`work-ticket`, `review-ticket`, `pr-feedback`, `finish-ticket`, `push`) each gained an **opt-in, additive** autonomous path.
+
+### The flow
+
+```
+auto-ticket {ID}
+  → work-ticket      implement, self-review, open PR
+  → review-ticket    scope-drift + code review; fix CRITICAL findings, re-review
+  → pr-feedback loop  apply fixes · reply · file follow-ups · push · validate
+                      · wait for CI + bot reviews · recompute "clean"   (× up to max_feedback_passes)
+  → finish-ticket    merge gate: mergeable + CI green + no unaddressed change-requests
+  → summary          posted to the PR and the ticket
+```
+
+### Merge, or park — never guess, never stall
+
+For solo-dev projects, **auto-merge with no human in the loop is intended**. The safety property is *not* "avoid merging" — it's that when the work is genuinely uncertain or needs a human decision, the run **parks** the ticket instead of guessing or stalling:
+
+- it does **not** merge,
+- it moves the ticket to your configured `needs_human_state` (or applies `needs_human_label` if that state doesn't exist — always the case on GitHub Issues),
+- it posts a comment on the PR and the ticket saying exactly what it's waiting on, and
+- it exits cleanly.
+
+Every autonomous run ends in exactly one of two states: **merged**, or **parked-needs-human (with a reason)**. There is no silent hang.
+
+### Turning it on
+
+`/ccmagic:auto-ticket` always runs autonomously. To make the individual lifecycle skills default to autonomous when invoked directly, set config (or pass `--autonomous` per call):
+
+```yaml
+# .claude/ccmagic.local.md
+autonomous: true               # default the lifecycle skills to autonomous
+needs_human_state: Blocked     # where parked tickets go (falls back to the label below)
+needs_human_label: needs-human # applied when the state doesn't exist / on GitHub
+max_feedback_passes: 3         # cap on the pr-feedback loop before parking
+```
+
+The autonomous signal is checked in priority order: **`--autonomous` arg → `autonomous: true` in the orchestrator's grounding block → `autonomous:` in `.claude/ccmagic.local.md`**. Absent all three, every skill runs its unchanged interactive path. Each autonomous sub-skill ends with a machine-readable status handshake (`clean | fixable-findings | needs-human | done`) that the orchestrator parses to decide the next step; the shared contract lives in `skills/auto-ticket/autonomous-contract.md`.
+
 ## Configuration
 
 ccmagic reads (and `/ccmagic:init` creates) these files in the consuming project:
@@ -159,7 +212,7 @@ See `docs/ccmagic.local.md.example` for the full config template.
 | **GitHub Issues** | `gh` CLI | `command -v gh && gh repo view` |
 | **JIRA** | Atlassian MCP server | `mcp__*atlassian*__*` registered |
 
-The tracker-aware skills (`work-ticket`, `finish-ticket`, `review-ticket`) auto-detect, or honor a pinned `tracker:` in `.claude/ccmagic.local.md`. Multi-tracker projects are supported — set `tracker: auto` and let each invocation pick.
+The tracker-aware skills (`work-ticket`, `finish-ticket`, `review-ticket`, `auto-ticket`) auto-detect, or honor a pinned `tracker:` in `.claude/ccmagic.local.md`. Multi-tracker projects are supported — set `tracker: auto` and let each invocation pick.
 
 ## Commit-format hook
 

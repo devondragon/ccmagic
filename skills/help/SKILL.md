@@ -38,6 +38,12 @@ End-to-end ticket lifecycle backed by Linear, GitHub Issues, or JIRA. Auto-detec
 - **Example:** `/ccmagic:finish-ticket` (Done path) or `/ccmagic:finish-ticket --qa` (QA path).
 - **What it does:** Detects the ticket from the branch, sanity-checks the PR (CI, reviews, scope), confirms disposition, merges, updates the tracker with a comment and final status.
 
+**`/ccmagic:auto-ticket [TICKET-ID]`**
+- **Purpose:** Autonomous end-to-end ticket driver — runs the whole cycle unattended.
+- **When to use:** Solo-dev / headless (e.g. Cyrus) runs where you want the ticket taken from implementation to merge with no human in the loop.
+- **Example:** `/ccmagic:auto-ticket ENG-123` (or omit the ID to detect it from the current branch).
+- **What it does:** Invokes `work-ticket → review-ticket → pr-feedback (looped up to `max_feedback_passes`) → finish-ticket`, all in autonomous mode. Merges when the PR is clean and CI is green; otherwise **parks** the ticket (moves it to `needs_human_state`, comments what it's waiting on) instead of guessing or stalling. Every run ends **merged** or **parked-needs-human** — never hung. Configure via `autonomous`, `needs_human_state`, `needs_human_label`, `max_feedback_passes` in `.claude/ccmagic.local.md`.
+
 ### Code review & quality
 
 **`/ccmagic:review [branch|full|PR#] [--quick|--deep] [--threshold N]`**
@@ -145,6 +151,13 @@ End-to-end ticket lifecycle backed by Linear, GitHub Issues, or JIRA. Auto-detec
 /ccmagic:work-ticket ENG-123     # Triage, branch, implement, review, PR
 /ccmagic:review-ticket           # Pre-merge: scope drift + code review
 /ccmagic:finish-ticket           # Merge + close ticket
+```
+
+### Working a ticket autonomously (unattended)
+
+```
+/ccmagic:auto-ticket ENG-123     # Whole cycle, no human in the loop.
+                                 # Merges if clean + CI green, else parks it for a human.
 ```
 
 ### Quick task (no ticket)

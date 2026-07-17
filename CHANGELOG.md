@@ -2,6 +2,27 @@
 
 All notable changes to ccmagic are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.1.0] — 2026-07
+
+### Added
+
+- **`/ccmagic:auto-ticket [TICKET-ID]`** — an autonomous end-to-end ticket driver. Given a ticket ID (or the current branch), it runs the full lifecycle unattended — `work-ticket → review-ticket → pr-feedback (looped) → finish-ticket` — invoking each sub-skill in autonomous mode, parsing its status handshake, and owning the single merge-or-park decision. Built for solo-dev projects and headless runners (e.g. Cyrus, Linear-triggered, Dockerized): **auto-merge with no human in the loop is intended**. The safety property is *not* "avoid merging" — it's that genuinely uncertain work is **parked** (moved to a needs-human state, commented, not merged) instead of guessed or stalled. Every run ends **merged** or **parked-needs-human**; it never hangs waiting for input.
+- **`skills/auto-ticket/autonomous-contract.md`** — the shared contract the driver and sub-skills agree on: the autonomous signal, the grounding block, the status handshake vocabulary, and the single `route-and-stop` parking routine.
+- **Autonomous mode (opt-in, additive) on five lifecycle skills** — `work-ticket`, `review-ticket`, `pr-feedback`, `finish-ticket`, and `push` each gained an "Autonomous mode" section describing what happens at every existing human-gate when an autonomous signal is set. Highlights:
+  - **`work-ticket`** — proceeds with its own classification (recorded in the PR body), creates the PR without pausing, and treats a missing acceptance criterion as *not done* (keeps working, or parks — never commits a partial). Material implementation ambiguity → needs-human.
+  - **`review-ticket`** — uses the inferred acceptance criteria without asking, applies drift rules automatically (out-of-scope stays but is flagged; missing AC = not-done; CRITICAL findings must be fixed), and emits a `clean | fixable-findings | needs-human` verdict.
+  - **`pr-feedback`** — now *executes* its triage instead of only planning it: applies address-now fixes, replies to declined/question threads, files a follow-up ticket per deferred/out-of-scope item, and pushes. Conventions decide reviewer conflicts automatically; a genuine tie → needs-human.
+  - **`finish-ticket`** — the Step 3 sanity check becomes a hard merge gate (mergeable + CI green + no unaddressed change-requests); anything short of that parks the ticket instead of merging. Trivial merge conflicts auto-resolve; business-logic conflicts → needs-human.
+  - **`push`** — never commits a sensitive file unattended (skips it, or parks if it's genuinely required), and resolves the pre-push prompts (no upstream, behind remote) with safe defaults so an unattended run never hangs.
+- **New `.claude/ccmagic.local.md` keys** (documented in `docs/ccmagic.local.md.example`): `autonomous` (bool, default `false`), `needs_human_state` (parked-ticket state), `needs_human_label` (fallback label, default `needs-human`), and `max_feedback_passes` (int, default `3`).
+- **`README.md` → Autonomous mode** section and a `docs/ccmagic.local.md.example` explainer covering the flow, the merge-or-park safety property, and how to turn it on.
+
+### Changed
+
+- **`pr-feedback`** — added `Skill(*)` to `allowed-tools` so its autonomous path can invoke `/ccmagic:push`. The interactive plan-only path is unchanged.
+- **`/ccmagic:help`** and the README skill tables now list `auto-ticket` (24 skills total) and include an autonomous-workflow example.
+- Autonomous behavior is strictly **additive** — every interactive path across the five modified skills is untouched; the new defaults are gated behind an explicit autonomous signal (`--autonomous` arg → orchestrator grounding block → `autonomous:` config, in that priority order).
+
 ## [3.0.3] — 2026-07
 
 ### Changed
