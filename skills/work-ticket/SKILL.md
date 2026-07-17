@@ -278,6 +278,54 @@ Warn the user ("Could not move ticket to In Review — continuing"), then procee
 
 ---
 
+## Autonomous mode
+
+`/ccmagic:work-ticket` runs interactively by default. Autonomous mode is **opt-in and additive** — it changes behavior only at the human-gates listed below; every other step (tracker resolution, lookup, branching, execution, ticket updates) is unchanged.
+
+### When autonomous mode is active
+
+Autonomous mode is ON when the first present signal (in priority order) resolves truthy:
+
+1. `--autonomous` in the skill arguments.
+2. An `autonomous: true` line in the grounding/context block a parent skill (e.g. `/ccmagic:auto-ticket`) prepends when invoking this skill.
+3. `autonomous: true` in `.claude/ccmagic.local.md` frontmatter.
+
+Absent all three, run the interactive path exactly as documented above. In autonomous mode, announce instead: "Running `{TICKET-ID}` unattended — I'll classify, branch, implement, review, and open the PR without pausing, and park the ticket for a human if I hit a material decision."
+
+Also read these keys from `.claude/ccmagic.local.md`: `needs_human_state:`, `needs_human_label:`.
+
+**Orchestrated vs. standalone.** If the signal came from a parent's grounding block (#2), the parent owns routing — on a `needs-human` outcome, emit the handshake and stop, and let the parent park the ticket. If the signal came from `--autonomous` or config (#1/#3) with no parent, this skill is the top-level autonomous entry point — perform **route-and-stop** yourself before emitting the handshake.
+
+### Behavior at each human-gate
+
+- **Step 3 (Classification):** do not ask. Proceed with your own classification and reasoning; record both in the PR body ("Autonomous classification: {class} — {reasoning}"). No pause.
+- **Step 5 (Complex Feature — clarifying questions & architecture plan):** do not pause.
+  - If a **material** implementation choice would be a guess — the ticket is underspecified, or ambiguous acceptance criteria change the approach — stop with `needs-human` (the `reason` names the specific decision needed).
+  - If only minor/cosmetic unknowns remain, pick the reasonable option and note the choice in the PR body.
+  - Record the implementation/architecture plan as a **PR comment** after the PR is created (Step 7) instead of pausing for confirmation.
+- **Step 6 (Validate scope):** a missing acceptance criterion means **not done** — keep working to close it. Never take the interactive "commit with gaps noted" option and never treat a partial as shippable. If a gap genuinely cannot be closed within the ticket's scope, stop with `needs-human` (the `reason` lists the unmet AC).
+- **Step 7 (PR confirmation):** create the PR without pausing.
+- **Sub-skills:** when invoking `/ccmagic:review`, `/ccmagic:review-ticket`, `/ccmagic:debug`, or `/ccmagic:push`, prepend the same autonomous grounding block so they don't pause either. Address CRITICAL review findings before proceeding; if a CRITICAL finding can't be resolved in-scope → `needs-human`.
+
+### Route-and-stop (park the ticket) — top-level entry points only
+
+1. Do **not** create a throwaway/partial PR as if the work were done.
+2. Move the ticket to `needs_human_state`. If that state/transition doesn't exist in the tracker, apply `needs_human_label` if configured and/or leave the state unchanged.
+3. Post a ticket comment (and a PR comment if a PR already exists) stating exactly what needs a human and why (the `reason`).
+4. Emit the handshake with `status: needs-human`. Exit cleanly — never wait for input.
+
+### Handshake (emit last, in autonomous mode)
+
+`/ccmagic:work-ticket` emits `done` (PR created and ticket moved to In Review) or `needs-human`:
+
+```
+status: done | needs-human
+reason: <one line — the PR URL on done; the blocking decision on needs-human>
+follow_ups: [<any tickets or deferrals noted>]
+```
+
+---
+
 ## Error handling
 
 | Situation | Action |
@@ -287,9 +335,10 @@ Warn the user ("Could not move ticket to In Review — continuing"), then procee
 | MCP server not connected for the chosen tracker | Stop. Tell user which integration is needed. |
 | Ticket assign/status update fails | Warn user, continue with work |
 | Already on correct branch | Skip branch creation, continue |
-| Branch already exists locally | Ask user: switch to it, or create a new one? |
+| Branch already exists locally | Ask user: switch to it, or create a new one? (Autonomous: reuse it if it contains the ticket ID, else `needs-human`.) |
 | Sub-skill fails (`/ccmagic:debug`, `/ccmagic:review`, etc.) | Surface the error clearly. Do not silently skip or retry blindly. |
-| Scope validation finds gaps | Present gaps. Ask: continue working, or commit with gaps noted? |
+| Scope validation finds gaps | Present gaps. Ask: continue working, or commit with gaps noted? (Autonomous: close the gap or `needs-human` — never commit with gaps.) |
 | User cancels at triage | Stop cleanly. No branch was created yet, so no cleanup needed. |
 | In Review state not found | Warn user, list available states, leave status unchanged. |
 | PR comment fails | Warn user, provide PR URL for manual addition. |
+| Autonomous: material implementation decision or unclosable AC gap | `needs-human` — route-and-stop (park to `needs_human_state`, comment) if top-level; else emit handshake for the parent. |

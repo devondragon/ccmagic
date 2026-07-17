@@ -358,6 +358,46 @@ QA:      Assigned to {qa_person_name}
 
 ---
 
+## Autonomous mode
+
+`/ccmagic:finish-ticket` runs interactively by default. Autonomous mode is **opt-in and additive**: Step 3's sanity check becomes a hard **merge gate**, and the confirmation prompts are removed — but the merge only ever happens when the PR is genuinely ready. Anything short of ready **parks** the ticket; it never merges on a guess.
+
+### When autonomous mode is active
+
+Autonomous mode is ON when the first present signal (in priority order) resolves truthy:
+
+1. `--autonomous` in the skill arguments.
+2. An `autonomous: true` line in the grounding/context block a parent skill (e.g. `/ccmagic:auto-ticket`) prepends when invoking this skill.
+3. `autonomous: true` in `.claude/ccmagic.local.md` frontmatter.
+
+Absent all three, run the interactive path exactly as documented above. Also read `needs_human_state:` / `needs_human_label:` from config. **Orchestrated vs. standalone** works as in `/ccmagic:work-ticket` → *Autonomous mode*.
+
+### Behavior at each human-gate
+
+- **Step 3 (Sanity check) — this is the merge gate.** Merge **only if all** of: PR is `MERGEABLE`, every required CI check has passed (green), and there are no unaddressed `CHANGES_REQUESTED` reviews. If any is not satisfied → `needs-human` (do **not** merge; the `reason` lists the specific blockers). Do not take the interactive "proceed anyway" option.
+- **Step 4 (Disposition):** Done — the default. (The QA path still only activates via `--qa` or `default_qa_workflow: true`; that is unchanged.)
+- **Step 5 (Merge confirmation):** proceed with the determined strategy — squash for `feature/`/`bugfix/`/`hotfix/`/`chore/`, merge commit for `release/` — no pause.
+- **Step 6 (Merge conflicts):** auto-resolve **trivial** conflicts (version bumps, import lists, config values) exactly as Step 6 already describes. A **business-logic** conflict → `needs-human` (do not merge; leave the branch unmerged, `reason` names the conflicting files).
+
+### Route-and-stop (park the ticket) — top-level entry points only
+
+1. Do **not** merge.
+2. Move the ticket to `needs_human_state`. If that state/transition doesn't exist, apply `needs_human_label` if configured and/or leave the state unchanged.
+3. Post a comment on the PR **and** the ticket stating exactly what needs a human and why (the `reason`).
+4. Emit the handshake with `status: needs-human`. Exit cleanly — never wait for input.
+
+### Handshake (emit last, in autonomous mode)
+
+```
+status: done | needs-human
+reason: <one line — "merged into {base}" on done; the blockers on needs-human>
+follow_ups: []
+```
+
+`done` = PR merged, ticket moved to Done, closing comment posted.
+
+---
+
 ## Error Handling
 
 | Situation | Action |
@@ -366,12 +406,13 @@ QA:      Assigned to {qa_person_name}
 | No PR found | Stop. Tell user to create one first. |
 | Ticket not found | Stop. Tell user the ID that failed. |
 | Tracker MCP/CLI not connected | Stop. Tell user which integration is needed. |
-| CI checks failing | Surface them. Ask user to fix or override. |
-| Changes requested on PR | Surface them. Ask user to address or override. |
-| PR has conflicts | Attempt local resolution. Escalate unresolvable conflicts to user. |
+| CI checks failing | Surface them. Ask user to fix or override. (Autonomous: `needs-human` — do not merge.) |
+| Changes requested on PR | Surface them. Ask user to address or override. (Autonomous: `needs-human` — do not merge.) |
+| PR has conflicts | Attempt local resolution. Escalate unresolvable conflicts to user. (Autonomous: trivial → resolve; business-logic → `needs-human`.) |
 | Merge fails for other reason | Show the error. Do not retry blindly. |
-| Target transition not found (JIRA/Linear) | Show available transitions/states. Ask user to pick. |
+| Target transition not found (JIRA/Linear) | Show available transitions/states. Ask user to pick. (Autonomous: for the Done target, try the fallbacks; if none match, apply `needs_human_label` and note it.) |
 | QA label missing (GitHub QA path) | Ask user which label, offer to save to config. |
 | Ticket update fails | Warn user. Report what was and wasn't updated. Continue to Done. |
 | Cannot identify QA person (QA path only) | Ask the user directly. |
 | User says "no" at confirmation | Stop cleanly. Nothing has been merged yet. |
+| Autonomous: merge gate not satisfied | `needs-human` — route-and-stop (park to `needs_human_state`, comment on PR + ticket) if top-level; else emit the handshake for the parent. |

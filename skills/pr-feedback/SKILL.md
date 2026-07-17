@@ -1,7 +1,7 @@
 ---
 name: pr-feedback
 user-invocable: true
-allowed-tools: Read(*), Bash(git:*, gh:*), Glob(*), Grep(*), Task(*), TodoWrite(*), AskUserQuestion(*), Edit(*)
+allowed-tools: Read(*), Bash(git:*, gh:*), Glob(*), Grep(*), Task(*), TodoWrite(*), AskUserQuestion(*), Edit(*), Skill(*)
 description: Review PR comments and plan fixes for valid concerns
 model: sonnet
 argument-hint: "[PR#]"
@@ -214,6 +214,46 @@ After presenting the plan, suggest validation steps:
 > 1. `/ccmagic:validate` — Run pre-commit checks to catch regressions
 > 2. `/ccmagic:test` — Run tests to verify fixes don't break existing behavior
 > 3. `gh pr view {PR_NUMBER} --comments` — Review to confirm all threads addressed
+
+## Autonomous mode
+
+By default this skill **triages and plans** (Steps 1–8) and hands the fix plan back to you. Autonomous mode is **opt-in and additive**: it keeps the full triage, then **executes** it — apply fixes, reply to reviewers, file follow-ups, and push — so an unattended run leaves the PR actually addressed, not just analyzed.
+
+### When autonomous mode is active
+
+Autonomous mode is ON when the first present signal (in priority order) resolves truthy:
+
+1. `--autonomous` in the skill arguments.
+2. An `autonomous: true` line in the grounding/context block a parent skill (e.g. `/ccmagic:auto-ticket`) prepends when invoking this skill.
+3. `autonomous: true` in `.claude/ccmagic.local.md` frontmatter.
+
+Absent all three, run the interactive plan-only path exactly as documented above.
+
+**Tracker for follow-ups.** Resolve the tracker with the same cascade as `/ccmagic:work-ticket` (or reuse `tracker:` / `ticket:` if the grounding block carries them). **Orchestrated vs. standalone** works as in `/ccmagic:work-ticket` → *Autonomous mode*.
+
+### What changes: triage → execute
+
+Run Steps 1–7 exactly as written (fetch, load conventions, reconstruct threads, classify, verify, detect conflicts, group). Then, instead of stopping at the plan:
+
+- **address-now** → apply the fix with `Edit`, grouped by file per Steps 5–6.
+- **respond / decline / question** → post a reply on the thread (`gh api repos/{owner}/{repo}/pulls/{PR}/comments/{id}/replies -f body=...`, or an issue comment referencing the thread), using the response templates in `${CLAUDE_SKILL_DIR}/triage-guide.md`.
+- **defer / out-of-scope** → file **one follow-up ticket per item** in the active tracker (Linear via `mcp__*Linear*__save_issue`, GitHub via `gh issue create`, JIRA via the Atlassian MCP), link it back in a reply to the thread, and record its ID in `follow_ups`.
+- Then **push**: invoke `/ccmagic:push` with the autonomous grounding block prepended (it commits the grouped fixes and pushes; if push returns `needs-human`, propagate that).
+
+### Behavior at each human-gate
+
+- **Step 4d (Conflicting reviewers):** do not ask. Conventions already win in this skill — if a project convention decides the conflict, take that side automatically and cite it in the reply. Only a **genuine tie** (no convention applies) → `needs-human` (the `reason` names the `file:line` and both positions).
+- **Step 6 (Deferrals):** do not ask. Default action is **create a follow-up ticket** for each deferred/out-of-scope item.
+
+### Handshake (emit last, in autonomous mode)
+
+```
+status: done | needs-human
+reason: applied {A} / declined {D} / deferred {F}   (or the blocking tie on needs-human)
+follow_ups: [<follow-up ticket ids filed>]
+```
+
+`done` = this pass's fixes are applied, replies posted, follow-ups filed, and the branch pushed. `needs-human` = a genuine reviewer tie (or a fix that can't be made safely) surfaced; if top-level, route-and-stop (park to `needs_human_state`, comment) before emitting — otherwise hand the handshake to the parent. The parent orchestrator recomputes overall "clean" (CI green + zero unresolved actionable threads) after CI and any new bot review land.
 
 ## Execution
 
