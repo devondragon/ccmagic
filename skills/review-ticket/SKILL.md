@@ -24,7 +24,7 @@ Runs a full code review with the **ticket as the ground truth for intent**. The 
 
 Same cascade as `/ccmagic:work-ticket`:
 
-1. Read `.claude/ccmagic.local.md` (if present) for `tracker:`, `ticket_url_base:`, `ticket_id_regex:`, `github_repo:`.
+1. Read `.claude/ccmagic.local.md` (if present) for `tracker:`, `ticket_url_base:`, `ticket_id_regex:`, `github_repo:` — and fall back to the user-level `~/.claude/ccmagic.local.md` for any key the project file omits (project overrides user).
 2. If `tracker:` is `auto` or unset, run the detection cascade:
    - **Arg shape:** integer-only ticket ID → GitHub; `[A-Z][A-Z0-9]+-[0-9]+` → Linear or JIRA.
    - **MCP probe:** Linear MCP (`mcp__*Linear*__get_issue`), Atlassian/JIRA MCP (`mcp__*atlassian*__*` or `mcp__*Atlassian*__*`).
@@ -192,6 +192,45 @@ Use `AskUserQuestion`. Take the appropriate follow-up action based on the choice
 
 ---
 
+## Autonomous mode
+
+`/ccmagic:review-ticket` runs interactively by default. Autonomous mode is **opt-in and additive** — it changes behavior only at the human-gates below (AC confirmation and drift handling) and adds a machine-readable verdict; the review pipeline itself is unchanged. This skill still only **reports and verdicts** — it does not mutate code; the caller (or `/ccmagic:auto-ticket`) applies fixes.
+
+### When autonomous mode is active
+
+Autonomous mode is ON when the first present signal (in priority order) resolves truthy:
+
+1. `--autonomous` in the skill arguments.
+2. An `autonomous: true` line in the grounding/context block a parent skill prepends when invoking this skill.
+3. `autonomous: true` in `ccmagic.local.md` frontmatter — the project file `.claude/ccmagic.local.md` first, then the user file `~/.claude/ccmagic.local.md`.
+
+Absent all three, run the interactive path exactly as documented above. Also read `needs_human_state:` / `needs_human_label:` from config. **Orchestrated vs. standalone** works exactly as in `/ccmagic:work-ticket` → *Autonomous mode*: a parent's grounding block (#2) means the parent parks on `needs-human`; `--autonomous`/config (#1/#3) means this skill parks (route-and-stop) itself.
+
+### Behavior at each human-gate
+
+- **Step 3 (Confirm inferred AC):** do not pause. Use the inferred acceptance criteria and write them into the report verbatim, marked *(inferred)*.
+- **Step 5 (Invoke /ccmagic:review):** prepend the same autonomous grounding block so the review runs without pausing.
+- **Step 7 (Drift handling):** apply rules instead of asking:
+  - **Out-of-scope changes** stay, but flag each one — leave the out-of-scope table populated and post a PR comment listing them. Do not revert.
+  - **Missing AC** → treat as *not-done*: `fixable-findings` if the caller can close it in-scope; `needs-human` if it can't.
+  - **CRITICAL findings** from `/ccmagic:review` must be fixed before proceeding → return them under `fixable-findings` (the caller fixes and re-reviews). A CRITICAL finding that needs human judgment → `needs-human`.
+
+### Verdict → handshake mapping
+
+Emit the verdict as the last thing in the report:
+
+```
+status: clean | fixable-findings | needs-human
+reason: <one line, when not clean>
+follow_ups: [<any tickets or deferrals noted>]
+```
+
+- **clean** — no CRITICAL findings and no missing AC (out-of-scope items, if any, are flagged only).
+- **fixable-findings** — one or more CRITICAL findings and/or missing-AC items that are mechanically fixable in-scope. **List them** in the report so the caller can address them.
+- **needs-human** — a finding or missing AC needs human judgment or can't be closed in-scope; `reason` names it. If top-level, route-and-stop (park to `needs_human_state`, or `needs_human_label` if that state doesn't exist — on GitHub create the label first if missing; comment on the PR + ticket) before emitting the handshake.
+
+---
+
 ## Error handling
 
 | Situation | Action |
@@ -199,6 +238,8 @@ Use `AskUserQuestion`. Take the appropriate follow-up action based on the choice
 | No tracker available | Stop. Tell user to install one or set `tracker:` in `.claude/ccmagic.local.md`. |
 | Ticket not found | Stop. Tell user clearly which tracker was tried. |
 | No diff (on base branch with no changes) | Stop. Tell user there's nothing to review. |
-| No AC and user can't confirm inferred AC | Ask user to provide AC explicitly, or proceed without AC checking (drift section will skip AC matrix). |
+| No AC and user can't confirm inferred AC | Ask user to provide AC explicitly, or proceed without AC checking (drift section will skip AC matrix). (Autonomous: use the inferred AC, mark them *(inferred)*.) |
 | /ccmagic:review fails | Surface the error. Do not silently retry. |
 | User disputes drift classification | Mark the drift item as "user-acknowledged" in the report. Do not silently drop. |
+| Autonomous: CRITICAL findings or fixable missing AC | Emit `fixable-findings` with the list — the caller addresses and re-reviews. |
+| Autonomous: finding/AC needs human judgment or can't be closed in-scope | Emit `needs-human`; route-and-stop if top-level, else hand the verdict to the parent. |

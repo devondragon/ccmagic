@@ -305,6 +305,37 @@ Complete! 4 commits pushed successfully.
 - Respect the canonical commit format documented in the plugin's `.claude/CLAUDE.md` (conventional commits with optional scope + optional ticket ID).
 - The **commit-format hook** (`hooks/post-tool-use-commit.sh`) validates every commit's subject line post-commit and prints a non-blocking warning if it doesn't match the conventional format. Pushing is not affected — the hook never aborts commits.
 
+## Autonomous mode
+
+`/ccmagic:push` runs interactively by default. Autonomous mode is **opt-in and additive**: it removes the interactive prompts (which would otherwise hang an unattended run) by applying safe defaults, and it refuses to commit anything sensitive without a human.
+
+### When autonomous mode is active
+
+Autonomous mode is ON when the first present signal (in priority order) resolves truthy:
+
+1. `--autonomous` in the skill arguments.
+2. An `autonomous: true` line in the grounding/context block a parent skill (e.g. `/ccmagic:auto-ticket`, `/ccmagic:work-ticket`, `/ccmagic:pr-feedback`) prepends when invoking this skill.
+3. `autonomous: true` in `ccmagic.local.md` frontmatter — the project file `.claude/ccmagic.local.md` first, then the user file `~/.claude/ccmagic.local.md`.
+
+Absent all three, run the interactive path exactly as documented above.
+
+`/ccmagic:push` is a low-level verb almost always invoked **by** a parent skill, so it has no tracker access. On a `needs-human` outcome it does **not** move a ticket — it stops cleanly (leaving the working tree uncommitted for the flagged concern) and emits the handshake; the parent skill/orchestrator performs route-and-stop.
+
+### Behavior at each human-gate
+
+- **Step 2 (Sensitive files):** never commit a file that trips the sensitive-file check — **skip it** (exclude it from every commit group) and never prompt to remember the choice. If a flagged file is **genuinely required** for the change to be correct/complete, stop with `needs-human` (do not commit secrets unattended; the `reason` names the file). Commit everything that is *not* flagged as normal.
+- **Step 5 (No upstream):** create it with `git push -u origin {branch}` — no prompt.
+- **Step 5 (Behind remote):** run `git pull --rebase`. If it rebases cleanly, continue and push. If it hits conflicts, stop with `needs-human` — never force-push.
+- **Push rejected:** retry once with `git pull --rebase` then re-push; if still rejected → `needs-human`.
+
+### Handshake (emit last, in autonomous mode)
+
+```
+status: done | needs-human
+reason: <one line — commits pushed on done; the blocking file/conflict on needs-human>
+follow_ups: []
+```
+
 ## Execution
 
 Begin immediately by analyzing the current git status. Ask questions only for sensitive files and pre-push decisions. Proceed efficiently through the commit and push process. Provide clear progress feedback throughout.

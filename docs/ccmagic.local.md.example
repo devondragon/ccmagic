@@ -28,11 +28,43 @@ default_qa_workflow: false
 # Optional: label applied on GitHub Issues when the QA path is selected
 # (GitHub has no built-in QA state). Ignored for Linear/JIRA.
 # qa_label: needs-qa
+
+# --- Autonomous mode (used by /ccmagic:auto-ticket and the autonomous paths of
+#     work-ticket / review-ticket / pr-feedback / finish-ticket / push) ---
+
+# Default mode when a skill is invoked WITHOUT --autonomous and WITHOUT an
+# orchestrator grounding block. When true, those skills run their autonomous
+# (non-interactive) path by default. /ccmagic:auto-ticket always runs
+# autonomously regardless of this value.
+autonomous: false
+
+# Tracker state a "needs a human" ticket is parked in during an autonomous run
+# (e.g. "Blocked", "Needs Human"). If this state/transition doesn't exist in your
+# tracker, the run falls back to needs_human_label below and leaves state unchanged.
+# needs_human_state: Blocked
+
+# Fallback label applied when a ticket is parked and needs_human_state doesn't
+# exist — and always on GitHub Issues, which have no custom states.
+needs_human_label: needs-human
+
+# Cap on /ccmagic:pr-feedback loop iterations during an autonomous run before the
+# ticket is parked for a human.
+max_feedback_passes: 3
+
+# Bounds on the other autonomous loops (all have skill defaults — set these only
+# to override). max_review_fix_passes: ticket-review fix loop. max_validate_attempts:
+# local /ccmagic:validate fix attempts. ci_timeout_minutes: how long to wait for CI
+# to settle before parking on timeout (raise it if your CI is slow).
+# ci_poll_interval_seconds: how often to poll CI status.
+# max_review_fix_passes: 2
+# max_validate_attempts: 2
+# ci_timeout_minutes: 30
+# ci_poll_interval_seconds: 60
 ---
 
 # ccmagic project settings
 
-Copy this file to **`.claude/ccmagic.local.md`** in your project root and edit the frontmatter to match your team's setup. The three tracker-aware ccmagic skills (`work-ticket`, `finish-ticket`, `review-ticket`) read this file if present; otherwise they auto-detect.
+Copy this file to **`.claude/ccmagic.local.md`** in your project root and edit the frontmatter to match your team's setup. The tracker-aware ccmagic skills (`work-ticket`, `finish-ticket`, `review-ticket`, and the autonomous driver `auto-ticket`) read this file if present; otherwise they auto-detect.
 
 ## Recognized keys
 
@@ -44,6 +76,16 @@ Copy this file to **`.claude/ccmagic.local.md`** in your project root and edit t
 | `github_repo` | `owner/repo` for GitHub issues. | auto-detected via `gh repo view` |
 | `default_qa_workflow` | If `true`, `finish-ticket` defaults to the QA path. | `false` |
 | `qa_label` | Label applied to GitHub issues on the QA path. | none (skill asks first time) |
+| `autonomous` | Default mode when no `--autonomous` flag and no orchestrator grounding block is passed. | `false` |
+| `needs_human_state` | Tracker state a parked ("needs a human") ticket is moved to during an autonomous run. | none (falls back to `needs_human_label`) |
+| `needs_human_label` | Fallback label applied when `needs_human_state` doesn't exist (and always on GitHub). | `needs-human` |
+| `max_feedback_passes` | Cap on the `pr-feedback` loop in an autonomous run before parking. | `3` |
+| `max_review_fix_passes` | Cap on the ticket-review fix loop in an autonomous run before parking. | `2` |
+| `max_validate_attempts` | Cap on local `/ccmagic:validate` fix attempts in an autonomous run before parking. | `2` |
+| `ci_timeout_minutes` | Max minutes to wait for CI to settle before parking on timeout. | `30` |
+| `ci_poll_interval_seconds` | Interval between CI status polls in an autonomous run. | `60` |
+
+Every key above also has effect from a **user-level** `~/.claude/ccmagic.local.md` — the project file (this one) takes precedence over the user file, and both override the built-in defaults. Put personal defaults you want in every project (e.g. a longer `ci_timeout_minutes`) in the user file; override them per-repo here.
 
 ## How the detection cascade works
 
@@ -54,6 +96,20 @@ When `tracker: auto` (or unset), the tracker-aware skills run this cascade:
 3. **CLI probe** — `command -v gh && gh repo view` (GitHub).
 4. **Branch hint** — match the current branch against `ticket_url_base` if ambiguous.
 5. **Ask once** — if multiple match or none match, prompt the user and offer to save the choice here.
+
+## Autonomous mode
+
+The tracker-lifecycle skills (`work-ticket`, `review-ticket`, `pr-feedback`, `finish-ticket`, `push`) have an **opt-in, additive** autonomous path, and `/ccmagic:auto-ticket` drives the whole cycle unattended. Interactive behavior is never changed — autonomous only kicks in when a signal is present.
+
+A skill enters autonomous mode when the first present signal (in priority order) is truthy:
+
+1. `--autonomous` in the skill's arguments.
+2. An `autonomous: true` line in the grounding block that `/ccmagic:auto-ticket` prepends when it invokes a sub-skill.
+3. `autonomous: true` in `ccmagic.local.md` — this project file, or the user-level `~/.claude/ccmagic.local.md` (project wins; see *Recognized keys* for the full precedence).
+
+The core safety property is **not** "avoid merging" — for solo-dev projects, auto-merge with no human in the loop is fine. It's that when work is genuinely uncertain or needs a human decision, the run **parks** the ticket instead of guessing or stalling: it does not merge, moves the ticket to `needs_human_state` (or applies `needs_human_label` if that state doesn't exist), posts a comment explaining exactly what it's waiting on, and exits cleanly. Every autonomous run ends either **merged** or **parked-needs-human** — never hung.
+
+See the plugin's `README.md` (*Autonomous mode*) for the full flow and the `/ccmagic:auto-ticket` skill for the orchestration contract.
 
 ## Optional markdown body
 
