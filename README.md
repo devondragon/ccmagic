@@ -187,9 +187,16 @@ autonomous: true               # default the lifecycle skills to autonomous
 needs_human_state: Blocked     # where parked tickets go (falls back to the label below)
 needs_human_label: needs-human # applied when the state doesn't exist / on GitHub
 max_feedback_passes: 3         # cap on the pr-feedback loop before parking
+# Other autonomous loop bounds (skill defaults shown — set only to override):
+# max_review_fix_passes: 2     # ticket-review fix loop
+# max_validate_attempts: 2     # local /ccmagic:validate fix attempts
+# ci_timeout_minutes: 30       # how long to wait for CI before parking on timeout
+# ci_poll_interval_seconds: 60 # how often to poll CI status
 ```
 
-The autonomous signal is checked in priority order: **`--autonomous` arg → `autonomous: true` in the orchestrator's grounding block → `autonomous:` in `.claude/ccmagic.local.md`**. Absent all three, every skill runs its unchanged interactive path. Each autonomous sub-skill ends with a machine-readable status handshake (`clean | fixable-findings | needs-human | done`) that the orchestrator parses to decide the next step; the shared contract lives in `skills/auto-ticket/autonomous-contract.md`.
+**Config precedence:** each key resolves highest-first — an explicit arg / grounding-block value → the project file `.claude/ccmagic.local.md` → the user file `~/.claude/ccmagic.local.md` → the built-in skill default. Put personal defaults (e.g. a longer `ci_timeout_minutes`) in the user file once and override them per-repo in the project file.
+
+The autonomous signal is checked in priority order: **`--autonomous` arg → `autonomous: true` in the orchestrator's grounding block → `autonomous:` in `ccmagic.local.md` (project, then user)**. Absent all three, every skill runs its unchanged interactive path. Each autonomous sub-skill ends with a machine-readable status handshake (`clean | fixable-findings | needs-human | done`) that the orchestrator parses to decide the next step; the shared contract lives in `skills/auto-ticket/autonomous-contract.md`.
 
 ## Configuration
 

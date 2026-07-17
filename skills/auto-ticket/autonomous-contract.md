@@ -10,7 +10,7 @@ A sub-skill enters autonomous mode when the first present signal (in priority or
 
 1. `--autonomous` in the skill arguments.
 2. An `autonomous: true` line in the **grounding/context block** the orchestrator prepends when invoking the skill.
-3. `autonomous: true` in `.claude/ccmagic.local.md` frontmatter.
+3. `autonomous: true` in `ccmagic.local.md` frontmatter — the project file `.claude/ccmagic.local.md` first, then the user file `~/.claude/ccmagic.local.md` (see §5 for the full config precedence).
 
 `/ccmagic:auto-ticket` always drives sub-skills via signal **#2** (the grounding block), which also marks the sub-skill as **orchestrated** — meaning the orchestrator, not the sub-skill, owns parking on a `needs-human` outcome.
 
@@ -90,14 +90,27 @@ The single routine the orchestrator (or a standalone top-level sub-skill) runs w
 Nothing was merged. Resolve the item above, then re-run `/ccmagic:auto-ticket {TICKET-ID}` (or continue manually).
 ```
 
-## 5. Config keys (`.claude/ccmagic.local.md`)
+## 5. Config keys
 
 | Key | Type | Default | Meaning |
 |-----|------|---------|---------|
 | `autonomous` | bool | `false` | Default mode when no `--autonomous` flag and no grounding block is passed. |
 | `needs_human_state` | string | *(none)* | Tracker state a parked ticket is moved to (e.g. `Blocked`, `Needs Human`). |
 | `needs_human_label` | string | `needs-human` | Fallback label applied when `needs_human_state` doesn't exist (and always on GitHub). |
-| `max_feedback_passes` | int | `3` | Cap on `pr-feedback` loop iterations before parking. |
+| `max_feedback_passes` | int | `3` | Cap on the `pr-feedback` loop (orchestrator Step 4) before parking. |
+| `max_review_fix_passes` | int | `2` | Cap on the ticket-review fix loop (orchestrator Step 3) before parking. |
+| `max_validate_attempts` | int | `2` | Cap on local `/ccmagic:validate` fix attempts (orchestrator Step 4b) before parking. |
+| `ci_timeout_minutes` | int | `30` | Max minutes to wait for CI to settle (orchestrator Step 4c) before parking on timeout. |
+| `ci_poll_interval_seconds` | int | `60` | Interval between CI status polls (orchestrator Step 4c). |
+
+**Where keys are read — precedence (highest first):**
+
+1. An explicit arg, or a value in the orchestrator's grounding block (§2).
+2. The **project** file: `.claude/ccmagic.local.md` at the repo root.
+3. The **user** file: `~/.claude/ccmagic.local.md` (personal defaults across every project).
+4. The built-in default listed above.
+
+A project file overrides the user file, which overrides the built-in default. This lets a solo dev set, say, a longer `ci_timeout_minutes` or `autonomous: true` once in `~/.claude/ccmagic.local.md` and still override it per-repo. The user file is optional — nothing changes until it exists.
 
 ## 6. Invariants
 
