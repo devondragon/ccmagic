@@ -79,7 +79,7 @@ finish-ticket:
 4. **Step 0b (:36–45):** same detection insertion; record transport.
 5. **Step 2 → ### Linear (:87–89):** under prompt-relay, ticket fields come from the grounding block; there is no team-state list to fetch — state targets are relay intents, so skip state-name matching (note this here, referenced by Step 7).
 6. **Step 7 → ### Linear (:310–314):** under prompt-relay: do not post the closing comment to the ticket (contract §7 `comment` — the orchestrator's single summary carries it) and do not transition state; instead report `requested_state: Done` via the handshake field (contract §3) and ensure the closing-summary content is in this skill's final output so the orchestrator's Step 6 message can include it. **Merging via `gh` is unchanged** — say so explicitly.
-7. **Handshake (:389):** one line: under prompt-relay, `done` = merged, with `requested_state: Done` reported in the handshake (the harness/tracker automation owns the actual move).
+7. **Handshake (:389):** one line: under prompt-relay, `done` = merged, with `requested_state: Done` reported in the handshake (the harness/tracker automation owns the actual move). Also add the field to finish-ticket's fenced handshake example itself (mirroring contract §3's template, e.g. `requested_state: <Done — prompt-relay only, omit otherwise>`) — the local fenced block is what an executing model copies, so prose alone is not enough.
 8. **Error table (:405):** same "unless prompt-relay matched" amendment.
 9. **Verification:** `grep -n "prompt-relay"` in both files hits every listed site; `grep -ri cyrus skills/` clean; both `wc -l` ≤ 500 (finish-ticket has ~80 lines of headroom — keep additions tight).
 
