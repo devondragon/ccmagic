@@ -24,5 +24,4 @@ reason: <one line, when not clean>
 follow_ups: [<any tickets or deferrals noted>]
 ```
 
-Grounding block (your task prompt):
-```
+The grounding block arrives as your task prompt — read the tracker / ticket / PR context and the needs-human config from it.

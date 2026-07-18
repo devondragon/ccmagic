@@ -23,5 +23,4 @@ reason: <one line — commits pushed on done; the blocking file/conflict on need
 follow_ups: []
 ```
 
-Grounding block (your task prompt):
-```
+The grounding block arrives as your task prompt — read the tracker / ticket / PR context and the needs-human config from it.

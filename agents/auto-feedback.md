@@ -24,5 +24,4 @@ reason: applied {A} / declined {D} / deferred {F}   (or the blocking tie on need
 follow_ups: [<follow-up ticket ids filed>]
 ```
 
-Grounding block (your task prompt):
-```
+The grounding block arrives as your task prompt — read the tracker / ticket / PR context and the needs-human config from it.

@@ -23,5 +23,4 @@ reason: <one line — "merged into {base}" on done; the blockers on needs-human>
 follow_ups: []
 ```
 
-Grounding block (your task prompt):
-```
+The grounding block arrives as your task prompt — read the tracker / ticket / PR context and the needs-human config from it.
