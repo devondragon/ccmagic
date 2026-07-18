@@ -307,6 +307,30 @@ When validation fails:
 4. Create todos for complex fixes
 5. Prevent commit/PR until fixed
 
+## Autonomous mode
+
+`/ccmagic:validate` runs interactively by default. Autonomous mode is **opt-in and additive**: it runs the same checks without prompting and ends with a machine-readable handshake the orchestrator (`/ccmagic:auto-ticket`) parses. It never fixes code on its own — fixing is the caller's job.
+
+### When autonomous mode is active
+
+Autonomous mode is ON when the first present signal (in priority order) resolves truthy:
+
+1. `--autonomous` in the skill arguments.
+2. An `autonomous: true` line in the grounding/context block a parent skill (e.g. `/ccmagic:auto-ticket`) prepends when invoking this skill.
+3. `autonomous: true` in `ccmagic.local.md` frontmatter — the project file `.claude/ccmagic.local.md` first, then the user file `~/.claude/ccmagic.local.md`.
+
+Absent all three, run the interactive path exactly as documented above.
+
+`/ccmagic:validate` has no tracker access; it never moves a ticket. It runs the checks, reports the result, and emits the handshake — the parent skill/orchestrator owns any route-and-stop. Emit `done` when every check passes; emit `needs-human` when one or more checks fail, summarizing the failing checks on the `reason` line (the orchestrator decides whether to fix-and-retry or park). Auto-fix is **off** in autonomous mode — report failures, don't silently rewrite code.
+
+### Handshake (emit last, in autonomous mode)
+
+```
+status: done | needs-human
+reason: <one line — "validation passed" on done; the failing checks on needs-human>
+follow_ups: []
+```
+
 ## Execution
 
 Begin validation immediately without confirmation. Run checks in optimal order (fail fast on critical issues). Provide real-time progress updates. Display clear, actionable results with specific file:line references for issues.

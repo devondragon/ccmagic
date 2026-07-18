@@ -4,7 +4,7 @@ description: Autonomous-run FINISH step. Enforces the merge gate and merges (or 
 model: sonnet
 skills:
   - ccmagic:finish-ticket
-tools: Read, Edit, Bash, Glob, Grep
+disallowedTools: Skill, Task
 ---
 
 You are running the **finish** step of an autonomous ticket run driven by `/ccmagic:auto-ticket`.

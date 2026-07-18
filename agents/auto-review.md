@@ -5,7 +5,7 @@ model: opus
 skills:
   - ccmagic:review-ticket
   - ccmagic:review
-tools: Read, Edit, Bash, Glob, Grep, Task
+disallowedTools: Skill
 ---
 
 You are running the **review** step of an autonomous ticket run driven by `/ccmagic:auto-ticket`.

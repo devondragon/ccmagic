@@ -54,6 +54,7 @@ Which values each sub-skill can emit:
 | `work-ticket` | `done` \| `needs-human` |
 | `review-ticket` | `clean` \| `fixable-findings` \| `needs-human` |
 | `pr-feedback` | `done` \| `needs-human` |
+| `validate` | `done` \| `needs-human` |
 | `push` | `done` \| `needs-human` |
 | `finish-ticket` | `done` \| `needs-human` |
 
@@ -80,7 +81,7 @@ The single routine the orchestrator (or a standalone top-level sub-skill) runs w
 `/ccmagic:auto-ticket` stopped this run because it needs a human decision.
 
 **Waiting on:** {the one-line reason from the sub-skill's handshake}
-**Stage:** {work-ticket | review-ticket | pr-feedback | finish-ticket}
+**Stage:** {work-ticket | review-ticket | pr-feedback | validate | finish-ticket}
 **PR:** {pr_url or "not created"}
 **State moved to:** {needs_human_state, or "unchanged — applied label `{needs_human_label}`"}
 
