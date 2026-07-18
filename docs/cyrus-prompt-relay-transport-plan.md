@@ -50,7 +50,7 @@ These bind every task. Copy verbatim into reviews.
 6. **Notes → the stale Cyrus/headless note (currently at :222):** replace with accurate text: headless harnesses that inject the ticket and relay output (no tracker MCP in the environment) are supported via the prompt-relay transport (contract §7); deployment prerequisites and the required prompt template live in `docs/cyrus-deployment.md`. Do not use the word "Cyrus" outside that path reference.
 7. **Verification:** `grep -n "prompt-relay" skills/auto-ticket/SKILL.md` hits Steps 0/6, error table, Notes; `grep -rin cyrus skills/` shows only the `docs/cyrus-deployment.md` path reference; `wc -l` ≤ 500.
 
-**Commit:** `feat(auto-ticket): resolve prompt-relay transport and relay final summary`
+**Commit:** `feat(auto-ticket): prompt-relay resolution and final-summary relay`
 
 ## Task 3: work-ticket — detection, fetch-from-grounding, skip assign, In-Review intent
 
@@ -93,9 +93,10 @@ pr-feedback:
 1. **Autonomous mode → "Tracker for follow-ups" (:232) and the defer/out-of-scope rule (:240):** under prompt-relay there is no ticket-creation API. Instead of filing, record each deferred/out-of-scope item as a short description in `follow_ups:` (the contract §3 handshake already allows "ticket ids **or short descriptions**"), and say in the thread reply that a follow-up was requested for a human to file. The orchestrator lists these under "Follow-ups to file" in its final summary.
 2. **Verification:** `grep -n "prompt-relay" skills/pr-feedback/SKILL.md` hits the follow-up rule.
 
-doctor:
-3. **Section 3 (tracker probes, :47–66):** add a short note after the Linear checklist: a missing Linear MCP is not always a defect — headless harness runs use the prompt-relay transport (ticket injected into the prompt, output relayed back; see `skills/auto-ticket/autonomous-contract.md` §7 and `docs/cyrus-deployment.md`). Doctor cannot detect that environment from a laptop; it should mention the transport instead of flatly reporting "Linear unavailable" as broken.
-4. **Verification:** `grep -n "prompt-relay" skills/doctor/SKILL.md` hits the note; `grep -ri cyrus skills/` shows only `docs/cyrus-deployment.md` path references; both files ≤ 500 lines.
+doctor + help:
+3. **`skills/help/SKILL.md` (:43):** a pre-existing `e.g. Cyrus` mention violates Global Constraint 1 — reword to a product-neutral phrase (e.g. "headless runners") with no product name; a `docs/cyrus-deployment.md` path pointer is allowed if a pointer fits naturally.
+4. **Section 3 (tracker probes, :47–66):** add a short note after the Linear checklist: a missing Linear MCP is not always a defect — headless harness runs use the prompt-relay transport (ticket injected into the prompt, output relayed back; see `skills/auto-ticket/autonomous-contract.md` §7 and `docs/cyrus-deployment.md`). Doctor cannot detect that environment from a laptop; it should mention the transport instead of flatly reporting "Linear unavailable" as broken.
+5. **Verification:** `grep -n "prompt-relay" skills/doctor/SKILL.md` hits the note; `grep -ri cyrus skills/` shows only `docs/cyrus-deployment.md` path references (in particular, no product-name hit remains in `skills/help/SKILL.md`); all touched files ≤ 500 lines.
 
 **Commit:** `feat(tracker): prompt-relay follow-up collection and doctor awareness`
 
