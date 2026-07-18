@@ -229,7 +229,7 @@ Autonomous mode is ON when the first present signal (in priority order) resolves
 
 Absent all three, run the interactive plan-only path exactly as documented above.
 
-**Tracker for follow-ups.** Resolve the tracker with the same cascade as `/ccmagic:work-ticket` (or reuse `tracker:` / `ticket:` if the grounding block carries them). **Orchestrated vs. standalone** works as in `/ccmagic:work-ticket` → *Autonomous mode*.
+**Tracker for follow-ups.** Resolve the tracker with the same cascade as `/ccmagic:work-ticket` (or reuse `tracker:` / `ticket:` if the grounding block carries them). **Under prompt-relay** (contract §7): skip tracker resolution for follow-ups — there is no ticket-creation API in this transport; see the defer/out-of-scope rule below for how deferred items are recorded instead. **Orchestrated vs. standalone** works as in `/ccmagic:work-ticket` → *Autonomous mode*.
 
 ### What changes: triage → execute
 
@@ -237,7 +237,7 @@ Run Steps 1–5 exactly as written (load conventions, fetch + reconstruct thread
 
 - **address-now** → apply the fix with `Edit`, grouped by file per Steps 5–6.
 - **respond / decline / question** → post a reply on the thread (`gh api repos/{owner}/{repo}/pulls/{PR}/comments/{id}/replies -f body=...`, or an issue comment referencing the thread), using the response templates in `${CLAUDE_SKILL_DIR}/triage-guide.md`.
-- **defer / out-of-scope** → file **one follow-up ticket per item** in the active tracker (Linear via `mcp__*Linear*__save_issue`, GitHub via `gh issue create`, JIRA via the Atlassian MCP), link it back in a reply to the thread, and record its ID in `follow_ups`.
+- **defer / out-of-scope** → file **one follow-up ticket per item** in the active tracker (Linear via `mcp__*Linear*__save_issue`, GitHub via `gh issue create`, JIRA via the Atlassian MCP), link it back in a reply to the thread, and record its ID in `follow_ups`. **Under prompt-relay** (contract §7 `file_followup`): there is no ticket-creation API — instead, record a short description of the item in `follow_ups` (contract §3's handshake accepts "ticket ids or short descriptions") and reply on the thread noting that a follow-up was requested for a human to file. The orchestrator lists these under "Follow-ups to file" in its final summary.
 - Then **push**: invoke `/ccmagic:push` with the autonomous grounding block prepended (it commits the grouped fixes and pushes; if push returns `needs-human`, propagate that).
 
 ### Behavior at each human-gate
