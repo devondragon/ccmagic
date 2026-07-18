@@ -42,9 +42,10 @@ The `--qa` argument always forces the QA path regardless of config.
    - Prefer Linear unless `ticket_url_base` looks JIRA-shaped (`*.atlassian.net`).
 3. **CLI probe:** `command -v gh && gh repo view --json nameWithOwner 2>/dev/null` — GitHub candidate.
 4. **Ambiguous:** ask the user via `AskUserQuestion`. Offer to write the choice to `.claude/ccmagic.local.md`.
-5. **None available:** stop. Tell the user to install one or set `tracker:` in `.claude/ccmagic.local.md`.
+5. **Prompt-relay fallback:** if the contract §7 detection rule matches (`skills/auto-ticket/autonomous-contract.md` §7), resolve `tracker: linear` with `transport: prompt-relay` instead of stopping — do not fall through to item 6.
+6. **None available:** stop. Tell the user to install one or set `tracker:` in `.claude/ccmagic.local.md`.
 
-Record the resolved tracker for use in steps 2 and 7.
+Record the resolved tracker and transport (`mcp` or `prompt-relay`) for use in steps 2 and 7.
 
 ---
 
@@ -87,6 +88,8 @@ Do not proceed without an open PR.
 ### Linear
 
 Use the available Linear MCP tool (e.g. `mcp__claude_ai_Linear__get_issue`). Extract `title`, `description`, `state.name`, `assignee`, `priority`, `labels`, `url`. Linear states are workflow-defined per team — fetch the full state list so you can match QA/Done targets in Step 7.
+
+**Under prompt-relay** (contract §7): skip the MCP call — take `title`, `description`, and `state.name` (if present) from the grounding block's `ticket_content:` section (contract §2). There is no team-state list to fetch; state targets are relay intents, not API transitions, so Step 7 skips state-name matching entirely under this transport. If the `ticket_content:` section is absent, stop with the setup-error message per contract §7 `fetch_ticket` — never guess. The "If not found" stop text below applies only to the MCP path.
 
 ### GitHub
 
@@ -315,6 +318,8 @@ Compose the closing comment first (same body for all trackers):
    - **Done path** — try "Done", "Completed", "Closed".
 3. If QA path, update the assignee to the QA person.
 
+**Under prompt-relay** (contract §7): do not post the closing comment to the ticket (contract §7 `comment` — the orchestrator's single summary carries it) and do not transition state — skip state-name matching entirely (per Step 2's prompt-relay note). Instead report `requested_state: Done` via the handshake field (contract §3), and make sure the closing-comment content composed above is present in this skill's final output so the orchestrator's Step 6 summary can include it. **Merging via `gh` is unchanged** — that already happened in Step 6.
+
 ### GitHub
 
 ```bash
@@ -392,9 +397,10 @@ Absent all three, run the interactive path exactly as documented above. Also rea
 status: done | needs-human
 reason: <one line — "merged into {base}" on done; the blockers on needs-human>
 follow_ups: []
+requested_state: <Done — prompt-relay only, omit otherwise>
 ```
 
-`done` = PR merged, ticket moved to Done, closing comment posted.
+`done` = PR merged, ticket moved to Done, closing comment posted. Under prompt-relay (contract §7), `done` = merged, with `requested_state: Done` reported in the handshake — the harness/tracker automation owns the actual move.
 
 ---
 
@@ -402,7 +408,7 @@ follow_ups: []
 
 | Situation | Action |
 |-----------|--------|
-| No tracker available | Stop. Tell user to install one or set `tracker:` in `.claude/ccmagic.local.md`. |
+| No tracker available — unless the prompt-relay detection rule matched (contract §7) | Stop. Tell user to install one or set `tracker:` in `.claude/ccmagic.local.md`. |
 | No PR found | Stop. Tell user to create one first. |
 | Ticket not found | Stop. Tell user the ID that failed. |
 | Tracker MCP/CLI not connected | Stop. Tell user which integration is needed. |

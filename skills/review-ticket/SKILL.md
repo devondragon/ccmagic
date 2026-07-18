@@ -30,6 +30,7 @@ Same cascade as `/ccmagic:work-ticket`:
    - **MCP probe:** Linear MCP (`mcp__*Linear*__get_issue`), Atlassian/JIRA MCP (`mcp__*atlassian*__*` or `mcp__*Atlassian*__*`).
    - **CLI probe:** `command -v gh && gh repo view --json nameWithOwner 2>/dev/null`.
    - **Branch hint:** match against `ticket_url_base` if ambiguous.
+   - **Prompt-relay fallback:** if the contract §7 detection rule matches (`skills/auto-ticket/autonomous-contract.md` §7), resolve `tracker: linear` with `transport: prompt-relay` instead of stopping.
 3. If none found, stop: tell the user to install a tracker integration or set `tracker:`.
 
 ---
@@ -48,6 +49,8 @@ Same cascade as `/ccmagic:work-ticket`:
 ### Linear
 
 Use `mcp__*Linear*__get_issue`. Extract `title`, `description`, `state.name`, `labels`, `priority`, comments. The description may contain acceptance criteria as bullet lists, checkboxes, or "Acceptance Criteria" headers — parse them out.
+
+**Under prompt-relay** (contract §7): skip the MCP call — take `title` and `description` from the grounding block's `ticket_content:` section (contract §2). Parse acceptance criteria out of that text exactly as for an MCP fetch (bullets, checkboxes, "Acceptance Criteria" headers). Ticket *comments* are not available under prompt-relay — the AC sources are title + description only. If the `ticket_content:` section is absent, stop with the setup-error message per contract §7 `fetch_ticket` — never guess. The "If not found" stop text below applies only to the MCP path.
 
 ### GitHub
 
@@ -235,7 +238,7 @@ follow_ups: [<any tickets or deferrals noted>]
 
 | Situation | Action |
 |-----------|--------|
-| No tracker available | Stop. Tell user to install one or set `tracker:` in `.claude/ccmagic.local.md`. |
+| No tracker available — unless the prompt-relay detection rule matched (contract §7) | Stop. Tell user to install one or set `tracker:` in `.claude/ccmagic.local.md`. |
 | Ticket not found | Stop. Tell user clearly which tracker was tried. |
 | No diff (on base branch with no changes) | Stop. Tell user there's nothing to review. |
 | No AC and user can't confirm inferred AC | Ask user to provide AC explicitly, or proceed without AC checking (drift section will skip AC matrix). (Autonomous: use the inferred AC, mark them *(inferred)*.) |
