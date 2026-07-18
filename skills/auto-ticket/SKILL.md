@@ -5,6 +5,7 @@ user-invocable: true
 allowed-tools: Read(*), Edit(*), Bash(git:*, gh:*), Glob(*), Grep(*), Task(*), TodoWrite(*), Skill(*)
 argument-hint: "[TICKET-ID] (detects from the current branch if omitted)"
 model: sonnet
+context: fork
 ---
 
 # /auto-ticket — Autonomous Ticket Driver
@@ -26,6 +27,30 @@ This skill and every sub-skill it calls share one contract — the autonomous si
 - Sub-skills are invoked in autonomous mode by prepending the **grounding block** (contract §2) to their arguments. Because the block carries `orchestrator: auto-ticket`, sub-skills return their handshake and let **this** skill park — they never park themselves.
 - Every sub-skill ends with a **handshake** (contract §3): `status: clean | fixable-findings | needs-human | done`. Parse the last one. A missing handshake = treat as `needs-human`.
 - **`route-and-stop`** (contract §4) is the one way this skill ends a run early. Every exit path is either **merged** or **parked-needs-human** — never stalled.
+
+---
+
+## Step execution mode
+
+`auto-ticket` runs **forked** (`context: fork`), so it executes as a subagent and can spawn a child subagent per step. How each step below runs is decided by `fork_steps` (config, default `true`):
+
+- **`fork_steps: true` (default)** — run the step by spawning its per-step agent via the `Task` tool, passing the grounding block as the task prompt, and parsing the **last** handshake block from the child's returned text. Each per-step agent runs on its own model (see the registry) and in an isolated context.
+- **`fork_steps: false`** — run the step inline via the `Skill` tool inside this orchestrator's own context (the 3.1.0 behavior, one level down).
+
+Call this `run_step(step, grounding)`. **Every "Invoke `/ccmagic:<skill>`" instruction in the steps below goes through `run_step`** — nothing else about the flow (route-and-stop, loops, bounds) changes.
+
+### Per-step agent registry
+
+| Step | Agent | Default model | Config override |
+|------|-------|---------------|-----------------|
+| work-ticket | `auto-work` | `opus` | `model_work_ticket` |
+| review-ticket | `auto-review` | `opus` | `model_review_ticket` |
+| pr-feedback | `auto-feedback` | `sonnet` | `model_pr_feedback` |
+| validate | `auto-validate` | `sonnet` | `model_validate` |
+| finish-ticket | `auto-finish` | `sonnet` | `model_finish_ticket` |
+| push | `auto-push` | `haiku` | `model_push` |
+
+Model resolution per step: the agent's frontmatter `model:` is the authoritative default; if a `model_<step>` config value is set, pass it as the `Task` per-invocation model override (best-effort). Only `push` is wired in this iteration; the rest are added in a later change.
 
 ---
 
