@@ -35,6 +35,8 @@ max_feedback_passes: {n}
 
 A sub-skill that sees `orchestrator:` in its grounding block must **not** park on `needs-human` — it emits the handshake and returns control so the orchestrator performs the single route-and-stop.
 
+`auto-ticket` always runs each step in a per-step subagent (`agents/auto-*.md`) on the step's model, passing this grounding block as the child's task prompt and reading back the child's handshake (§3). The child agents preload their lifecycle skill rather than invoking it, so the step runs on the agent's model. The grounding block and handshake are unchanged by this — they're identical to how a directly-invoked sub-skill reads and emits them.
+
 ## 3. The status handshake
 
 In autonomous mode, every sub-skill ends its output with a fenced block:
@@ -52,6 +54,7 @@ Which values each sub-skill can emit:
 | `work-ticket` | `done` \| `needs-human` |
 | `review-ticket` | `clean` \| `fixable-findings` \| `needs-human` |
 | `pr-feedback` | `done` \| `needs-human` |
+| `validate` | `done` \| `needs-human` |
 | `push` | `done` \| `needs-human` |
 | `finish-ticket` | `done` \| `needs-human` |
 
@@ -78,7 +81,7 @@ The single routine the orchestrator (or a standalone top-level sub-skill) runs w
 `/ccmagic:auto-ticket` stopped this run because it needs a human decision.
 
 **Waiting on:** {the one-line reason from the sub-skill's handshake}
-**Stage:** {work-ticket | review-ticket | pr-feedback | finish-ticket}
+**Stage:** {work-ticket | review-ticket | pr-feedback | validate | finish-ticket}
 **PR:** {pr_url or "not created"}
 **State moved to:** {needs_human_state, or "unchanged — applied label `{needs_human_label}`"}
 
@@ -102,6 +105,12 @@ Nothing was merged. Resolve the item above, then re-run `/ccmagic:auto-ticket {T
 | `max_validate_attempts` | int | `2` | Cap on local `/ccmagic:validate` fix attempts (orchestrator Step 4b) before parking. |
 | `ci_timeout_minutes` | int | `30` | Max minutes to wait for CI to settle (orchestrator Step 4c) before parking on timeout. |
 | `ci_poll_interval_seconds` | int | `60` | Interval between CI status polls (orchestrator Step 4c). |
+| `model_work_ticket` | string | `opus` | Model for the work step's agent (`auto-work`). |
+| `model_review_ticket` | string | `opus` | Model for the review step's agent (`auto-review`). |
+| `model_pr_feedback` | string | `sonnet` | Model for the pr-feedback step's agent (`auto-feedback`). |
+| `model_finish_ticket` | string | `sonnet` | Model for the finish step's agent (`auto-finish`). |
+| `model_validate` | string | `sonnet` | Model for the validate step's agent (`auto-validate`). |
+| `model_push` | string | `haiku` | Model for the push step's agent (`auto-push`). |
 
 **Where keys are read — precedence (highest first):**
 

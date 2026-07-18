@@ -2,6 +2,18 @@
 
 All notable changes to ccmagic are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.2.0] — 2026-07
+
+### Added
+
+- **Per-step subagents for `/ccmagic:auto-ticket`** — each lifecycle step (work / review / pr-feedback / validate / finish / push) now runs in its own forked subagent on a best-fit model, keeping the orchestrator's context lean on long unattended runs. New thin wrapper agents live in `agents/auto-*.md`; the lifecycle skills' *logic* is reused unchanged (only three of them have their `model:` line tuned (work/review → `inherit`, push → `haiku`) — see Changed). Each step always runs in its own forked subagent.
+- **Per-step model selection** — Balanced defaults (`opus` for work/review, `sonnet` for pr-feedback/finish/validate, `haiku` for push), overridable per repo with `model_<step>` keys. `auto-ticket` itself is now `context: fork`.
+
+### Changed
+
+- **`skills/auto-ticket/SKILL.md`** — now `context: fork`; every step routes through a `run_step` helper (forked-per-step or inline). The handshake contract is unchanged; it now returns across the subagent boundary.
+- **Lifecycle-skill default models tuned** (part of the per-step model strategy, which removes the model-clobber risk at the source so per-step models are correct by construction): `work-ticket` and `review-ticket` now use `model: inherit` (scale to the session model instead of a pinned `sonnet`), and `push` now uses `model: haiku`. This also changes **interactive** use of those three skills — e.g. a human running `/ccmagic:push` now gets `haiku`. `pr-feedback`, `finish-ticket`, and `validate` stay `sonnet`.
+
 ## [3.1.0] — 2026-07
 
 ### Added

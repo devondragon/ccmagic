@@ -60,6 +60,17 @@ max_feedback_passes: 3
 # max_validate_attempts: 2
 # ci_timeout_minutes: 30
 # ci_poll_interval_seconds: 60
+
+# --- Per-step execution (used by /ccmagic:auto-ticket) ---
+# Each lifecycle step always runs in its own forked subagent.
+# Per-step model (defaults shown = the Balanced mapping; set only to override):
+# model_work_ticket:   opus
+# model_review_ticket: opus
+# model_pr_feedback:   sonnet
+# model_finish_ticket: sonnet
+# model_validate:      sonnet
+# model_push:          haiku
+# The agent frontmatter (agents/auto-<step>.md) is the authoritative model; edit it to change a step's model with certainty.
 ---
 
 # ccmagic project settings
@@ -84,6 +95,7 @@ Copy this file to **`.claude/ccmagic.local.md`** in your project root and edit t
 | `max_validate_attempts` | Cap on local `/ccmagic:validate` fix attempts in an autonomous run before parking. | `2` |
 | `ci_timeout_minutes` | Max minutes to wait for CI to settle before parking on timeout. | `30` |
 | `ci_poll_interval_seconds` | Interval between CI status polls in an autonomous run. | `60` |
+| `model_<step>` | Per-step model override (`model_work_ticket` … `model_push`). | Balanced mapping |
 
 Every key above also has effect from a **user-level** `~/.claude/ccmagic.local.md` — the project file (this one) takes precedence over the user file, and both override the built-in defaults. Put personal defaults you want in every project (e.g. a longer `ci_timeout_minutes`) in the user file; override them per-repo here.
 

@@ -4,7 +4,7 @@ description: End-to-end ticket workflow. Detects your tracker (Linear, GitHub Is
 user-invocable: true
 allowed-tools: Read(*), Write(*), Edit(*), Bash(git:*, gh:*, mkdir:*), Glob(*), Grep(*), Task(*), TodoWrite(*), AskUserQuestion(*), Skill(*)
 argument-hint: Ticket ID (e.g. ENG-123, PROJ-456, or a GitHub issue number like 42)
-model: sonnet
+model: inherit
 ---
 
 # /work-ticket — End-to-End Ticket Workflow

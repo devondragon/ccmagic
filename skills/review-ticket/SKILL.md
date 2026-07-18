@@ -4,7 +4,7 @@ description: Ticket-grounded code review. Fetches the ticket from Linear, GitHub
 user-invocable: true
 allowed-tools: Read(*), Edit(*), Bash(git:*, gh:*), Glob(*), Grep(*), Agent(*), Task(*), TodoWrite(*), AskUserQuestion(*), Skill(*)
 argument-hint: "[TICKET-ID] [--threshold N]"
-model: sonnet
+model: inherit
 ---
 
 # /review-ticket — Ticket-Grounded Code Review

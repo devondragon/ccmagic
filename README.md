@@ -198,6 +198,18 @@ max_feedback_passes: 3         # cap on the pr-feedback loop before parking
 
 The autonomous signal is checked in priority order: **`--autonomous` arg → `autonomous: true` in the orchestrator's grounding block → `autonomous:` in `ccmagic.local.md` (project, then user)**. Absent all three, every skill runs its unchanged interactive path. Each autonomous sub-skill ends with a machine-readable status handshake (`clean | fixable-findings | needs-human | done`) that the orchestrator parses to decide the next step; the shared contract lives in `skills/auto-ticket/autonomous-contract.md`.
 
+### Per-step subagents and models
+
+By default `auto-ticket` runs each lifecycle step in its own **forked subagent** on a best-fit **model** — strong models where judgment matters, light ones for mechanical steps — which keeps the orchestrator's context lean on long unattended runs and puts the right model on each step:
+
+| Step | Default model |
+|---|---|
+| work-ticket / review-ticket | `opus` |
+| pr-feedback / finish-ticket / validate | `sonnet` |
+| push | `haiku` |
+
+Each step always runs in its own subagent — override any step's model with `model_<step>` (e.g. `model_pr_feedback: opus`) (the agent file `agents/auto-<step>.md` is the authoritative model source).
+
 ## Configuration
 
 ccmagic reads (and `/ccmagic:init` creates) these files in the consuming project:
@@ -259,6 +271,8 @@ ccmagic/
 │   └── marketplace.json
 ├── skills/
 │   └── <name>/SKILL.md
+├── agents/
+│   └── auto-*.md              # per-step wrapper agents for auto-ticket
 ├── hooks/
 │   ├── hooks.json
 │   └── post-tool-use-commit.sh
