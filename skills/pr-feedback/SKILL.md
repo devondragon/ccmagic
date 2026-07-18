@@ -243,14 +243,14 @@ Run Steps 1–5 exactly as written (load conventions, fetch + reconstruct thread
 ### Behavior at each human-gate
 
 - **Step 4d (Conflicting reviewers):** do not ask. Conventions already win in this skill — if a project convention decides the conflict, take that side automatically and cite it in the reply. Only a **genuine tie** (no convention applies) → `needs-human` (the `reason` names the `file:line` and both positions).
-- **Step 4c (`defer` / out-of-scope verdict):** do not ask. Default action is **create a follow-up ticket** for each deferred/out-of-scope item.
+- **Step 4c (`defer` / out-of-scope verdict):** do not ask. Default action is **create a follow-up ticket** for each deferred/out-of-scope item; **under prompt-relay**, record it as a short description in `follow_ups:` instead (contract §7 `file_followup`).
 
 ### Handshake (emit last, in autonomous mode)
 
 ```
 status: done | needs-human
 reason: applied {A} / declined {D} / deferred {F}   (or the blocking tie on needs-human)
-follow_ups: [<follow-up ticket ids filed>]
+follow_ups: [<follow-up ticket ids filed — or short descriptions under prompt-relay>]
 ```
 
 `done` = this pass's fixes are applied, replies posted, follow-ups filed, and the branch pushed. `needs-human` = a genuine reviewer tie (or a fix that can't be made safely) surfaced; if top-level, route-and-stop (park to `needs_human_state`, or `needs_human_label` if that state doesn't exist — on GitHub create the label first if missing; comment) before emitting — otherwise hand the handshake to the parent. The parent orchestrator recomputes overall "clean" (CI green + zero unresolved actionable threads) after CI and any new bot review land.
