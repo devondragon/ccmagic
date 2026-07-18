@@ -2,6 +2,18 @@
 
 All notable changes to ccmagic are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.3.0] — 2026-07
+
+### Added
+
+- **Prompt-relay transport** (`skills/auto-ticket/autonomous-contract.md` §7) — supports headless harnesses (e.g. [Cyrus](https://github.com/cyrusagents/cyrus)) that inject a Linear ticket directly into the prompt with no Linear MCP in the environment. Detection is content-presence — tracker resolves to `linear`, no `mcp__*Linear*__*` tool is present, and ticket content was passed in the invocation/grounding block — zero new config keys, and behavior is unchanged whenever an MCP is present. Under this transport, the contract's tracker-I/O ops branch: `fetch_ticket` reads title + description from the grounding block's `ticket_content:` section instead of calling the MCP; every `set_state` call becomes a no-op — the harness/tracker automation owns the transition, with the non-trivial moves (In Review/Done/needs-human) additionally reported as an intent via the handshake instead of performed directly; tracker writes collapse into a single consolidated final message (delimited by `=== FINAL MESSAGE TO RELAY ===`) rather than per-step comments; and follow-up tickets, which can't be created without an API, are listed under "Follow-ups to file" for a human to file manually. A park (`needs-human`) skips the state move entirely — that's never treated as a failure. The GitHub/PR half of the cycle (branch, push, PR, CI, merge via `gh`) is unaffected. See `docs/cyrus-deployment.md` for deployment prerequisites and the required prompt template.
+
+### Changed
+
+- **Grounding block** (contract §2) — now carries a `transport: {mcp | prompt-relay}` field on every sub-skill invocation, and under prompt-relay, a fenced `ticket_content:` section (title + description) since there's no MCP to fetch the ticket from.
+- **Status handshake** (contract §3) — gains an optional `requested_state:` field, prompt-relay only: a sub-skill that would have transitioned ticket state reports the intended state here instead of performing the transition; the orchestrator folds it into the final summary as a `Requested state: {X}` intent line.
+- **`skills/auto-ticket/SKILL.md` Notes** — corrected a stale note that claimed the autonomous cycle was already safe to run unmodified "from Cyrus's Dockerized worker" (which implicitly assumed a Linear MCP that doesn't exist in that container); it now documents the prompt-relay transport as the actual mechanism headless harnesses use, pointing to `docs/cyrus-deployment.md`.
+
 ## [3.2.0] — 2026-07
 
 ### Added
