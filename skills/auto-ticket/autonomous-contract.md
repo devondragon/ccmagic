@@ -16,7 +16,7 @@ A sub-skill enters autonomous mode when the first present signal (in priority or
 
 ## 2. The grounding block
 
-The orchestrator prepends this block to the arguments of **every** sub-skill invocation. Sub-skills read `autonomous: true` to switch modes, and may reuse `tracker` / `ticket` to skip re-resolution:
+The orchestrator prepends this block to the arguments of **every** sub-skill invocation. Sub-skills read `autonomous: true` to switch modes, and may reuse `tracker` / `transport` / `ticket` to skip re-resolution:
 
 ```
 AUTONOMOUS RUN CONTEXT

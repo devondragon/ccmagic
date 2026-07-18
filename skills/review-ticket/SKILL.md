@@ -33,6 +33,8 @@ Same cascade as `/ccmagic:work-ticket`:
    - **Prompt-relay fallback:** if the contract §7 detection rule matches (`skills/auto-ticket/autonomous-contract.md` §7), resolve `tracker: linear` with `transport: prompt-relay` instead of stopping.
 3. If none found, stop: tell the user to install a tracker integration or set `tracker:`.
 
+Transport is resolved regardless of how the tracker was determined: whenever the tracker is `linear` — pinned in config or detected via the cascade — apply the contract §7 detection rule (`skills/auto-ticket/autonomous-contract.md` §7) to set `transport: mcp | prompt-relay`. A pinned `tracker:` skips the cascade above, never transport resolution — so a standalone headless run against a pinned-Linear repo still resolves `prompt-relay` instead of reaching for a nonexistent MCP.
+
 ---
 
 ## Step 1: Detect the ticket

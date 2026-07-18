@@ -45,6 +45,8 @@ If `.claude/ccmagic.local.md` exists at the repo root (`git rev-parse --show-top
 
 Record the resolved tracker (`linear`, `github`, or `jira`) and transport (`mcp` or `prompt-relay`) for use in steps 1, 2, and 8.
 
+Transport is resolved regardless of how the tracker was determined: whenever the tracker is `linear` — pinned in config or detected via the cascade — apply the contract §7 detection rule (`skills/auto-ticket/autonomous-contract.md` §7) to set `transport: mcp | prompt-relay`. A pinned `tracker:` skips the cascade above, never transport resolution — so a standalone headless run against a pinned-Linear repo still resolves `prompt-relay` instead of reaching for a nonexistent MCP.
+
 ---
 
 ## Step 1: Look up the ticket
@@ -62,7 +64,7 @@ Use the available Linear MCP tool (e.g. `mcp__claude_ai_Linear__get_issue`) with
 - `labels` and `priority` (helpful for triage)
 - URL: from the response, or `{ticket_url_base}/{TICKET-ID}` if available
 
-**Under prompt-relay** (contract §7): skip the MCP call — read `title`, `description`, and `state.name` if present, from the grounding block's `ticket_content:` section (contract §2). If that section is absent, stop with the setup-error message per contract §7 `fetch_ticket` — never guess. The "If not found" stop text below applies only to the MCP path.
+**Under prompt-relay** (contract §7): skip the MCP call — read `title` and `description` from the grounding block's `ticket_content:` section (contract §2). If that section is absent, stop with the setup-error message per contract §7 `fetch_ticket` — never guess. The "If not found" stop text below applies only to the MCP path.
 
 ### GitHub
 

@@ -158,6 +158,7 @@ Whatever the outcome, record it on the PR and the ticket so the unattended run l
 
 **Outcome:** {✅ Merged into `{base}` | 🅿️ Parked — needs human}
 **PR:** {pr_url}
+**Requested state:** {Done | needs_human_state} *(prompt-relay only — omit under mcp)*
 
 ### What ran
 - Classified as **{class}**, branched, implemented, opened the PR.
@@ -170,7 +171,7 @@ Whatever the outcome, record it on the PR and the ticket so the unattended run l
 - {any minor implementation choices made instead of asking}
 - {out-of-scope changes flagged, if any}
 
-### Follow-ups filed
+### Follow-ups {filed | to file (prompt-relay)}
 - {ticket ids + one-liners, or "none"}
 
 ### If parked

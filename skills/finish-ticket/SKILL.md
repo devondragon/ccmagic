@@ -47,6 +47,8 @@ The `--qa` argument always forces the QA path regardless of config.
 
 Record the resolved tracker and transport (`mcp` or `prompt-relay`) for use in steps 2 and 7.
 
+Transport is resolved regardless of how the tracker was determined: whenever the tracker is `linear` — pinned in config or detected via the cascade — apply the contract §7 detection rule (`skills/auto-ticket/autonomous-contract.md` §7) to set `transport: mcp | prompt-relay`. A pinned `tracker:` skips the cascade above, never transport resolution — so a standalone headless run against a pinned-Linear repo still resolves `prompt-relay` instead of reaching for a nonexistent MCP.
+
 ---
 
 ## Step 1: Detect the Ticket ID and PR
@@ -89,7 +91,7 @@ Do not proceed without an open PR.
 
 Use the available Linear MCP tool (e.g. `mcp__claude_ai_Linear__get_issue`). Extract `title`, `description`, `state.name`, `assignee`, `priority`, `labels`, `url`. Linear states are workflow-defined per team — fetch the full state list so you can match QA/Done targets in Step 7.
 
-**Under prompt-relay** (contract §7): skip the MCP call — take `title`, `description`, and `state.name` (if present) from the grounding block's `ticket_content:` section (contract §2). There is no team-state list to fetch; state targets are relay intents, not API transitions, so Step 7 skips state-name matching entirely under this transport. If the `ticket_content:` section is absent, stop with the setup-error message per contract §7 `fetch_ticket` — never guess. The "If not found" stop text below applies only to the MCP path.
+**Under prompt-relay** (contract §7): skip the MCP call — take `title` and `description` from the grounding block's `ticket_content:` section (contract §2). There is no team-state list to fetch; state targets are relay intents, not API transitions, so Step 7 skips state-name matching entirely under this transport. If the `ticket_content:` section is absent, stop with the setup-error message per contract §7 `fetch_ticket` — never guess. The "If not found" stop text below applies only to the MCP path.
 
 ### GitHub
 
