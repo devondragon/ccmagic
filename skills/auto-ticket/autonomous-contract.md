@@ -73,7 +73,9 @@ Which values each sub-skill can emit:
 | `push` | `done` \| `needs-human` |
 | `finish-ticket` | `done` \| `needs-human` |
 
-Parse the **last** such block in the sub-skill's output. If a sub-skill fails to emit one (crash, tool error), treat it as `needs-human` with `reason: "{skill} produced no handshake"`. Under the prompt-relay transport, a sub-skill that would have transitioned ticket state reports the intended state here (per §7 `set_state`); the orchestrator folds it into its final relayed summary as an intent line `Requested state: {X}`.
+Parse the **last** such block in the sub-skill's output. If a sub-skill fails to emit one (crash, tool error), treat it as `needs-human` with `reason: "{skill} produced no handshake"`.
+
+Under the prompt-relay transport, a sub-skill that would have transitioned ticket state reports the intended state in `requested_state:` (per §7 `set_state`); the orchestrator folds it into its final relayed summary as an intent line `Requested state: {X}`.
 
 ## 4. Route-and-stop (park the ticket)
 

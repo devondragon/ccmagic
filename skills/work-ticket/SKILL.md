@@ -329,6 +329,7 @@ Also read these keys from `.claude/ccmagic.local.md`: `needs_human_state:`, `nee
 status: done | needs-human
 reason: <one line — the PR URL on done; the blocking decision on needs-human>
 follow_ups: [<any tickets or deferrals noted>]
+requested_state: <In Review — prompt-relay only, omit otherwise>
 ```
 
 ---
