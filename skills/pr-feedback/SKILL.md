@@ -229,7 +229,7 @@ Autonomous mode is ON when the first present signal (in priority order) resolves
 
 Absent all three, run the interactive plan-only path exactly as documented above.
 
-**Tracker for follow-ups.** Resolve the tracker with the same cascade as `/ccmagic:work-ticket` (or reuse `tracker:` / `ticket:` if the grounding block carries them). **Orchestrated vs. standalone** works as in `/ccmagic:work-ticket` → *Autonomous mode*.
+**Tracker for follow-ups.** Resolve the tracker with the same cascade as `/ccmagic:work-ticket` (or reuse `tracker:` / `ticket:` if the grounding block carries them). **Under prompt-relay** (contract §7): skip tracker resolution for follow-ups — there is no ticket-creation API in this transport; see the defer/out-of-scope rule below for how deferred items are recorded instead. **Orchestrated vs. standalone** works as in `/ccmagic:work-ticket` → *Autonomous mode*.
 
 ### What changes: triage → execute
 
@@ -237,23 +237,23 @@ Run Steps 1–5 exactly as written (load conventions, fetch + reconstruct thread
 
 - **address-now** → apply the fix with `Edit`, grouped by file per Steps 5–6.
 - **respond / decline / question** → post a reply on the thread (`gh api repos/{owner}/{repo}/pulls/{PR}/comments/{id}/replies -f body=...`, or an issue comment referencing the thread), using the response templates in `${CLAUDE_SKILL_DIR}/triage-guide.md`.
-- **defer / out-of-scope** → file **one follow-up ticket per item** in the active tracker (Linear via `mcp__*Linear*__save_issue`, GitHub via `gh issue create`, JIRA via the Atlassian MCP), link it back in a reply to the thread, and record its ID in `follow_ups`.
+- **defer / out-of-scope** → file **one follow-up ticket per item** in the active tracker (Linear via `mcp__*Linear*__save_issue`, GitHub via `gh issue create`, JIRA via the Atlassian MCP), link it back in a reply to the thread, and record its ID in `follow_ups`. **Under prompt-relay** (contract §7 `file_followup`): there is no ticket-creation API — instead, record a short description of the item in `follow_ups` (contract §3's handshake accepts "ticket ids or short descriptions") and reply on the thread noting that a follow-up was requested for a human to file. The orchestrator lists these under "Follow-ups to file" in its final summary.
 - Then **push**: invoke `/ccmagic:push` with the autonomous grounding block prepended (it commits the grouped fixes and pushes; if push returns `needs-human`, propagate that).
 
 ### Behavior at each human-gate
 
 - **Step 4d (Conflicting reviewers):** do not ask. Conventions already win in this skill — if a project convention decides the conflict, take that side automatically and cite it in the reply. Only a **genuine tie** (no convention applies) → `needs-human` (the `reason` names the `file:line` and both positions).
-- **Step 4c (`defer` / out-of-scope verdict):** do not ask. Default action is **create a follow-up ticket** for each deferred/out-of-scope item.
+- **Step 4c (`defer` / out-of-scope verdict):** do not ask. Default action is **create a follow-up ticket** for each deferred/out-of-scope item; **under prompt-relay**, record it as a short description in `follow_ups:` instead (contract §7 `file_followup`).
 
 ### Handshake (emit last, in autonomous mode)
 
 ```
 status: done | needs-human
 reason: applied {A} / declined {D} / deferred {F}   (or the blocking tie on needs-human)
-follow_ups: [<follow-up ticket ids filed>]
+follow_ups: [<follow-up ticket ids filed — or short descriptions under prompt-relay>]
 ```
 
-`done` = this pass's fixes are applied, replies posted, follow-ups filed, and the branch pushed. `needs-human` = a genuine reviewer tie (or a fix that can't be made safely) surfaced; if top-level, route-and-stop (park to `needs_human_state`, or `needs_human_label` if that state doesn't exist — on GitHub create the label first if missing; comment) before emitting — otherwise hand the handshake to the parent. The parent orchestrator recomputes overall "clean" (CI green + zero unresolved actionable threads) after CI and any new bot review land.
+`done` = this pass's fixes are applied, replies posted, follow-ups filed (or recorded as short descriptions under prompt-relay), and the branch pushed. `needs-human` = a genuine reviewer tie (or a fix that can't be made safely) surfaced; if top-level, route-and-stop (park to `needs_human_state`, or `needs_human_label` if that state doesn't exist — on GitHub create the label first if missing; comment) before emitting — otherwise hand the handshake to the parent. **Under prompt-relay** (contract §7), that top-level park applies contract §4's *Under the prompt-relay transport* adjustments — no state move or label, parked note to the PR only, emitted (with `Requested state: {needs_human_state}`) wrapped in the §7 final-message delimiters as your final output. The parent orchestrator recomputes overall "clean" (CI green + zero unresolved actionable threads) after CI and any new bot review land.
 
 ## Execution
 

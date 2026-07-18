@@ -1,6 +1,6 @@
 # Design: prompt-relay transport for the headless-Linear (Cyrus) path
 
-**Status:** scoped, reviewed, **decisions locked** — not yet scheduled, no branch, no code. Written 2026-07-18; revised same day after design review + in-container verification on the live Cyrus instance (`server.tr0n.io`, container `cyrus`).
+**Status:** implemented in v3.3.0. Scoped, reviewed, **decisions locked** — written 2026-07-18; revised same day after design review + in-container verification on the live Cyrus instance (`server.tr0n.io`, container `cyrus`).
 **Trigger:** running `/ccmagic:auto-ticket` (and the lifecycle skills) inside Cyrus, where there is **no Linear MCP** in the container — the ticket flows into the prompt, and the agent's output is relayed back to Linear as activity/comments.
 
 ---

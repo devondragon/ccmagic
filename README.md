@@ -210,6 +210,15 @@ By default `auto-ticket` runs each lifecycle step in its own **forked subagent**
 
 Each step always runs in its own subagent — override any step's model with `model_<step>` (e.g. `model_pr_feedback: opus`) (the agent file `agents/auto-<step>.md` is the authoritative model source).
 
+### Headless / prompt-relay (Cyrus)
+
+`auto-ticket` also runs inside headless harnesses that inject the ticket into the prompt and relay the session's output back to the tracker — with no tracker MCP in that environment at all.
+
+- **Detection is automatic** — content-presence, zero config keys.
+- **One consolidated summary** (or parked note) reaches the tracker per run; the GitHub/PR half of the cycle is unaffected — `gh` still drives the branch, PR, and merge.
+
+See `docs/cyrus-deployment.md` for the full deployment walkthrough, prerequisites, and the required prompt template.
+
 ## Configuration
 
 ccmagic reads (and `/ccmagic:init` creates) these files in the consuming project:
@@ -232,6 +241,8 @@ See `docs/ccmagic.local.md.example` for the full config template.
 | **JIRA** | Atlassian MCP server | `mcp__*atlassian*__*` registered |
 
 The tracker-aware skills (`work-ticket`, `finish-ticket`, `review-ticket`, `auto-ticket`) auto-detect, or honor a pinned `tracker:` in `.claude/ccmagic.local.md`. Multi-tracker projects are supported — set `tracker: auto` and let each invocation pick.
+
+Linear is reachable over two transports: its MCP server (default, above), or **prompt-relay** for headless harnesses with no Linear MCP in the environment — see [Headless / prompt-relay (Cyrus)](#headless--prompt-relay-cyrus).
 
 ## Commit-format hook
 

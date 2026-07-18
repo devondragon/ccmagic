@@ -16,7 +16,7 @@ A sub-skill enters autonomous mode when the first present signal (in priority or
 
 ## 2. The grounding block
 
-The orchestrator prepends this block to the arguments of **every** sub-skill invocation. Sub-skills read `autonomous: true` to switch modes, and may reuse `tracker` / `ticket` to skip re-resolution:
+The orchestrator prepends this block to the arguments of **every** sub-skill invocation. Sub-skills read `autonomous: true` to switch modes, and may reuse `tracker` / `transport` / `ticket` to skip re-resolution:
 
 ```
 AUTONOMOUS RUN CONTEXT
@@ -24,6 +24,7 @@ autonomous: true
 orchestrator: auto-ticket
 run_id: {short id}
 tracker: {linear | github | jira}
+transport: {mcp | prompt-relay}
 ticket: {TICKET-ID}
 ticket_url: {url}
 pr: {PR number/url, once known}
@@ -32,6 +33,19 @@ needs_human_state: {value}
 needs_human_label: {value}
 max_feedback_passes: {n}
 ```
+
+Under the **prompt-relay transport** (§7) the block also carries the ticket content, because no tracker MCP is available to fetch it. The orchestrator appends a `ticket_content:` section:
+
+```
+ticket_content:
+~~~
+{title}
+
+{description}
+~~~
+```
+
+The `~~~` fence is deliberate — issue bodies routinely contain backtick fences, so tildes keep the ticket body from prematurely closing the block. Under prompt-relay, sub-skills read the ticket's title and description from this section **instead of** calling the Linear MCP.
 
 A sub-skill that sees `orchestrator:` in its grounding block must **not** park on `needs-human` — it emits the handshake and returns control so the orchestrator performs the single route-and-stop.
 
@@ -45,6 +59,7 @@ In autonomous mode, every sub-skill ends its output with a fenced block:
 status: clean | fixable-findings | needs-human | done
 reason: <one line, when not clean/done>
 follow_ups: [<ticket ids or short descriptions of anything filed/deferred>]
+requested_state: <intended tracker state — prompt-relay transport only; omit otherwise>
 ```
 
 Which values each sub-skill can emit:
@@ -59,6 +74,8 @@ Which values each sub-skill can emit:
 | `finish-ticket` | `done` \| `needs-human` |
 
 Parse the **last** such block in the sub-skill's output. If a sub-skill fails to emit one (crash, tool error), treat it as `needs-human` with `reason: "{skill} produced no handshake"`.
+
+Under the prompt-relay transport, a sub-skill that would have transitioned ticket state reports the intended state in `requested_state:` (per §7 `set_state`); the orchestrator folds it into its final relayed summary as an intent line `Requested state: {X}`.
 
 ## 4. Route-and-stop (park the ticket)
 
@@ -83,15 +100,22 @@ The single routine the orchestrator (or a standalone top-level sub-skill) runs w
 **Waiting on:** {the one-line reason from the sub-skill's handshake}
 **Stage:** {work-ticket | review-ticket | pr-feedback | validate | finish-ticket}
 **PR:** {pr_url or "not created"}
-**State moved to:** {needs_human_state, or "unchanged — applied label `{needs_human_label}`"}
+**State moved to:** {needs_human_state, or "unchanged — applied label `{needs_human_label}`" | prompt-relay: "not moved — Requested state: {needs_human_state}"}
 
 **Autonomous decisions so far:**
 {bullet list — classification, minor choices made, drift flagged}
 
-**Follow-ups filed:** {ticket ids, or "none"}
+**Follow-ups {filed | to file (prompt-relay)}:** {ticket ids or short descriptions, or "none"}
 
 Nothing was merged. Resolve the item above, then re-run `/ccmagic:auto-ticket {TICKET-ID}` (or continue manually).
 ```
+
+### Under the prompt-relay transport
+
+When the run is on the **prompt-relay transport** (§7), the park routine changes at two points, and the parked-comment template above renders its **State moved to** and **Follow-ups** lines per their prompt-relay alternatives:
+
+- **Step 2 (state move) is skipped.** There is no Linear API in the environment, so the ticket state is not moved — the harness/human owns the transition. A park that can't move state is **never** a failure. Emit `Requested state: {needs_human_state}` as an intent line in the final output so the tracker (and the human reading the relay) knows where the ticket should go.
+- **Step 3 (comment)** still posts the parked-comment template to the **PR** via `gh pr comment` (the GitHub side is intact). It is *additionally* emitted as the orchestrator's final top-level output, wrapped in the §7 final-message delimiters, so the relay delivers the parked note to the tracker as the run's single Linear-facing message.
 
 ## 5. Config keys
 
@@ -126,3 +150,40 @@ A project file overrides the user file, which overrides the built-in default. Th
 - **Autonomous is additive.** Interactive behavior is never changed; every autonomous default is gated behind the signal above.
 - **Every decision is recorded** in the PR body/comments and/or a ticket comment, so an unattended run leaves an audit trail.
 - **Every exit is either `merged` or `parked-needs-human` (with a reason).** Never `stalled`, never a silent hang, never a merge on a guess.
+
+## 7. Prompt-relay transport
+
+A **transport** is *how* a tracker is reached, independent of *which* tracker it is. The default transport is `mcp` — Linear/JIRA via their MCP, GitHub via `gh` — and every skill behaves exactly as documented in §1–§6. The **prompt-relay** transport covers headless-harness runs where the tracker is Linear but **no Linear MCP exists in the environment**: the harness injects the ticket into the prompt, the agent works the cycle, and the harness relays the session's final output back to the tracker as a comment. Reads arrive with the invocation; writes leave as the single relayed message. The GitHub/PR half of the cycle (`gh` for PR, push, merge, CI) is untouched.
+
+### Detection
+
+transport = `prompt-relay` when ALL of: (a) the tracker resolves to `linear`; (b) no `mcp__*Linear*__*` tool is present in the session; (c) ticket content (title + description) was explicitly provided in the invocation arguments or grounding block. Otherwise transport = `mcp` and behavior is unchanged. The check runs *before* any "none available → stop" branch. Content-presence (c) is a *transport* signal, not a tracker tiebreaker — condition (a) still resolves the tracker via config or the detection cascade, so a headless deployment with no MCPs should pin `tracker: linear` (or a Linear-shaped `ticket_url_base:`) to keep (a) deterministic.
+
+### Operations
+
+Each tracker-I/O step in the lifecycle skills carries a one-line "in prompt-relay transport, see contract §7" pointer to this table instead of a duplicated branch:
+
+| Op | Prompt-relay behavior |
+|---|---|
+| `fetch_ticket(id)` | Read the title + description from the invocation arguments / grounding block's `ticket_content:` section (§2). Absent → **setup error, stop and say so** — never guess, never park (the caller should have injected it). |
+| `set_state(In Progress)` | No-op — the harness already moved the ticket to "started" on assignment. |
+| `set_state(In Review \| Done \| needs_human)` | No-op at the API level; report the intended state via the handshake's `requested_state:` field (§3), and the orchestrator emits `Requested state: {X}` as an intent line in the final message. The harness lifecycle / tracker automation owns the actual move. Never a failure or a park trigger. |
+| `comment(ticket, body)` | **Skip.** No accumulation machinery — the PR carries the detailed audit trail via `gh`, and the orchestrator's single Step 6 summary is the only Linear-facing message. |
+| `link_pr(url)` | Include the PR URL in the final summary. Linear's GitHub integration auto-links the PR via the issue-id branch name anyway; there is no attachment API. |
+| `file_followup(desc)` | No create API — record the item as a short description in `follow_ups:` (§3) and list it under "Follow-ups to file" in the final summary for a human. |
+
+### Final message
+
+Under prompt-relay the orchestrator's Step 6 summary (or parked note) is emitted as its own final top-level output, ending with a delimited block opened by the exact line `=== FINAL MESSAGE TO RELAY (reproduce verbatim) ===` and closed by `=== END FINAL MESSAGE ===`:
+
+```
+=== FINAL MESSAGE TO RELAY (reproduce verbatim) ===
+{the Step 6 run summary or parked note}
+=== END FINAL MESSAGE ===
+```
+
+Only the top-level session's output reaches the tracker — per-step subagent output stays internal — and the harness's main-loop model may **paraphrase** the forked skill's return before relaying it. The delimited block above, together with the deployment-side prompt instruction to *repeat the returned final message verbatim*, is the mitigation: the two together keep the relayed comment faithful to what the orchestrator produced.
+
+### Scope
+
+This transport adds no config keys and changes nothing when an MCP is present — it is a purely additive branch, gated on the detection rule above.

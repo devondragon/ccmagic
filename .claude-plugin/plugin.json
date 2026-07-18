@@ -1,7 +1,7 @@
 {
   "name": "ccmagic",
   "description": "Dev workflow skills for Claude Code: tracker-aware ticket lifecycle (Linear, GitHub, JIRA), adaptive code review, debugging, design/QA, and git workflow utilities",
-  "version": "3.2.0",
+  "version": "3.3.0",
   "author": { "name": "Devon Hillard", "url": "https://github.com/devondragon" },
   "repository": "https://github.com/devondragon/ccmagic",
   "license": "Apache-2.0"

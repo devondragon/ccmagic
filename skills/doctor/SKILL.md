@@ -65,6 +65,8 @@ For Linear and JIRA, surface this checklist in the report instead of trying to p
 
 > **Linear MCP:** Verify in Claude Code MCP settings that a Linear server is connected. Tool names look like `mcp__claude_ai_Linear__*` or `mcp__plugin_linear_linear__*`.
 >
+> A missing Linear MCP is not automatically a defect. Headless harness runs use the **prompt-relay transport**: the ticket is injected directly into the prompt and the run's output is relayed back to the tracker as a comment, with no Linear MCP present in that environment at all (see `skills/auto-ticket/autonomous-contract.md` §7 and `docs/cyrus-deployment.md`). Doctor runs on a laptop and can't detect that environment — report "Linear MCP not found; may be running under prompt-relay" rather than flatly calling it broken.
+>
 > **JIRA (Atlassian) MCP:** Verify in Claude Code MCP settings that an Atlassian server is connected. Tool names look like `mcp__claude_ai_Atlassian__*` or `mcp__plugin_atlassian_atlassian__*`.
 
 ### 4. Commit hook
