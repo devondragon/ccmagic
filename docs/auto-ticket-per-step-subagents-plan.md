@@ -10,7 +10,8 @@
 
 ## Global Constraints
 
-- **Additive & opt-in:** no interactive path and none of the five lifecycle skills' frontmatter/behavior may change. All new behavior gated behind `fork_steps` / `model_<step>` / the autonomous signal.
+- **Additive & opt-in:** no interactive *logic/behavior* of the five lifecycle skills changes. The ONLY frontmatter change permitted is the per-skill `model:` line (see the model strategy below): `work-ticket`/`review-ticket` → `inherit`, `push` → `haiku`; `pr-feedback`/`finish-ticket`/`validate` stay `sonnet`. All other new behavior is gated behind `fork_steps` / `model_<step>` / the autonomous signal.
+- **Model strategy (removes clobber at the source):** skills either `inherit` (no pinned model to fight the step-agent) or already match their step-agent's model, so per-step models are correct by construction. The step-agents remain the authoritative model source; the preload-not-invoke approach is belt-and-suspenders.
 - **Handshake contract unchanged:** steps still end with the `status: clean | fixable-findings | needs-human | done` fenced block (contract §3); it now returns across the subagent boundary. A missing handshake = `needs-human`.
 - **Config precedence:** new keys resolve project `.claude/ccmagic.local.md` → user `~/.claude/ccmagic.local.md` → built-in default (contract §5).
 - **Balanced model mapping (defaults):** work-ticket→`opus`, review-ticket→`opus`, pr-feedback→`sonnet`, finish-ticket→`sonnet`, validate→`sonnet`, push→`haiku`.
@@ -144,6 +145,37 @@ In a repo wired to a tracker (e.g. the MagicMenu repo with the Linear MCP), with
 cd /Users/devon/git/ccmagic
 git add agents/auto-push.md skills/auto-ticket/SKILL.md
 git commit -m "feat(auto-ticket): fork the push step via per-step agent (PoC)"
+```
+
+---
+
+### Task 1.5: Adjust lifecycle-skill model frontmatter
+
+Removes the model-clobber risk at the source (see design "Skill-frontmatter model strategy"). Frontmatter `model:` line only — no logic changes.
+
+**Files:**
+- Modify: `skills/work-ticket/SKILL.md`, `skills/review-ticket/SKILL.md`, `skills/push/SKILL.md`
+
+- [ ] **Step 1:** In `skills/work-ticket/SKILL.md` frontmatter, change `model: sonnet` → `model: inherit`.
+- [ ] **Step 2:** In `skills/review-ticket/SKILL.md` frontmatter, change `model: sonnet` → `model: inherit`.
+- [ ] **Step 3:** In `skills/push/SKILL.md` frontmatter, change `model: sonnet` → `model: haiku`.
+- [ ] **Step 4:** Leave `pr-feedback`, `finish-ticket`, `validate` at `sonnet` (they already match their step-agent — do not touch).
+- [ ] **Step 5: Verify**
+
+```bash
+cd /Users/devon/git/ccmagic
+for s in work-ticket review-ticket push pr-feedback finish-ticket validate; do
+  echo "$s: $(grep -m1 '^model:' skills/$s/SKILL.md)"
+done
+```
+Expected: `work-ticket`/`review-ticket` = `inherit`, `push` = `haiku`, the other three = `sonnet`.
+
+- [ ] **Step 6: Commit**
+
+```bash
+cd /Users/devon/git/ccmagic
+git add skills/work-ticket/SKILL.md skills/review-ticket/SKILL.md skills/push/SKILL.md
+git commit -m "feat(skills): tune lifecycle-skill models (work/review inherit, push haiku)"
 ```
 
 ---

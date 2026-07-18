@@ -29,6 +29,13 @@ Two upgrades address that:
 
   All overridable per repo. Strong models where a wrong call is expensive (implement, review); light models for mechanical steps (push).
 
+- **Skill-frontmatter model strategy (designs the clobber risk out at the source):** rather than rely solely on the preload-not-invoke trick, adjust the lifecycle skills' own `model:` so they never *disagree* with the step-agent's model:
+  - `work-ticket`, `review-ticket` → `model: inherit` (no pinned model to fight — inherits the step-agent's `opus` in autonomous, and the user's session model interactively).
+  - `push` → `model: haiku` (always trivial; cheap everywhere, interactive included).
+  - `pr-feedback`, `finish-ticket`, `validate` → keep `sonnet` (they already match their step-agent's `sonnet`).
+
+  After this, every step's skill model either *inherits* (nothing to clobber) or *matches* the step-agent — zero model conflicts — so per-step models are correct by construction and the preload trick becomes belt-and-suspenders. Tradeoff (accepted): this changes the interactive default for `work`/`review` (now scale to the session model) and `push` (now `haiku`); a `haiku` session would get a weaker interactive `work`/`review`, which is acceptable.
+
 ## Key mechanics (from Claude Code docs research)
 
 These three facts constrain the design:
@@ -110,7 +117,7 @@ Resolution for these keys follows the existing project → user → built-in pre
 
 ## Risks to validate during implementation
 
-1. **Skill-frontmatter model clobber (highest priority to smoke-test):** an invoked lifecycle skill declares its own `model:` (e.g. `work-ticket` → `sonnet`). The **preload-not-invoke** approach is specifically chosen to avoid the skill re-pinning the model, but this must be verified: spawn `auto-work` (opus), confirm the work actually runs on opus and isn't dropped to the skill's frontmatter model. If preload still clobbers, fall back to agent-frontmatter model as the source of truth and drop the invoke path.
+1. **Skill-frontmatter model clobber — now designed out (was highest priority):** originally the concern was that an invoked lifecycle skill's own `model: sonnet` would override the step-agent's chosen model. The skill-frontmatter model strategy above removes the disagreement at the source (skills `inherit` or already match the step-agent), so no step has a model to clobber. The preload-not-invoke approach remains as belt-and-suspenders. Nothing model-related needs a live smoke test now; the end-to-end test only confirms the fork + handshake plumbing.
 2. **Config-driven per-step override is best-effort** (the per-invocation `Task` model param is chosen by model reasoning, not a hard syntax). Treat **agent-frontmatter defaults as authoritative**; `model_<step>` overrides are a convenience layer. Document this expectation.
 3. **Nesting depth:** orchestrator (fork, depth 1) → step agent (Task, depth 2) → step's own Task fan-out (depth 3) stays within the depth-5 limit. Confirm no step pushes past it.
 
