@@ -59,6 +59,7 @@ In autonomous mode, every sub-skill ends its output with a fenced block:
 status: clean | fixable-findings | needs-human | done
 reason: <one line, when not clean/done>
 follow_ups: [<ticket ids or short descriptions of anything filed/deferred>]
+requested_state: <intended tracker state — prompt-relay transport only; omit otherwise>
 ```
 
 Which values each sub-skill can emit:
@@ -72,7 +73,7 @@ Which values each sub-skill can emit:
 | `push` | `done` \| `needs-human` |
 | `finish-ticket` | `done` \| `needs-human` |
 
-Parse the **last** such block in the sub-skill's output. If a sub-skill fails to emit one (crash, tool error), treat it as `needs-human` with `reason: "{skill} produced no handshake"`.
+Parse the **last** such block in the sub-skill's output. If a sub-skill fails to emit one (crash, tool error), treat it as `needs-human` with `reason: "{skill} produced no handshake"`. Under the prompt-relay transport, a sub-skill that would have transitioned ticket state reports the intended state here (per §7 `set_state`); the orchestrator folds it into its final relayed summary as an intent line `Requested state: {X}`.
 
 ## 4. Route-and-stop (park the ticket)
 
@@ -164,7 +165,7 @@ Each tracker-I/O step in the lifecycle skills carries a one-line "in prompt-rela
 |---|---|
 | `fetch_ticket(id)` | Read the title + description from the invocation arguments / grounding block's `ticket_content:` section (§2). Absent → **setup error, stop and say so** — never guess, never park (the caller should have injected it). |
 | `set_state(In Progress)` | No-op — the harness already moved the ticket to "started" on assignment. |
-| `set_state(In Review \| Done \| needs_human)` | No-op at the API level; emit an intent line `Requested state: {X}` into the final message. The harness lifecycle / tracker automation owns the actual move. Never a failure or a park trigger. |
+| `set_state(In Review \| Done \| needs_human)` | No-op at the API level; report the intended state via the handshake's `requested_state:` field (§3), and the orchestrator emits `Requested state: {X}` as an intent line in the final message. The harness lifecycle / tracker automation owns the actual move. Never a failure or a park trigger. |
 | `comment(ticket, body)` | **Skip.** No accumulation machinery — the PR carries the detailed audit trail via `gh`, and the orchestrator's single Step 6 summary is the only Linear-facing message. |
 | `link_pr(url)` | Include the PR URL in the final summary. Linear's GitHub integration auto-links the PR via the issue-id branch name anyway; there is no attachment API. |
 | `file_followup(desc)` | No create API — record the item as a short description in `follow_ups:` (§3) and list it under "Follow-ups to file" in the final summary for a human. |

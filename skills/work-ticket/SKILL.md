@@ -256,7 +256,7 @@ Once the PR exists, update the ticket to reflect that work is ready for review.
 
 Save the issue with state transitioned to "In Review" (or the closest equivalent — Linear teams often customize this). Add the PR link via the `mcp__*Linear*__create_attachment` tool, or as a comment using `save_comment` if attachments aren't available.
 
-**Under prompt-relay** (contract §7): no attachment/comment API — record the intent line `Requested state: In Review`, surfaced through the handshake/summary. The PR URL travels in the run summary; the tracker's GitHub integration auto-links the PR via the branch name. Never a failure — the "If transition fails" note below applies only to the MCP path.
+**Under prompt-relay** (contract §7): no attachment/comment API — report the intended state via the handshake's `requested_state: In Review` field (contract §3). The PR URL travels in the run summary; the tracker's GitHub integration auto-links the PR via the branch name. Never a failure — the "If transition fails" note below applies only to the MCP path.
 
 ### GitHub
 
@@ -323,7 +323,7 @@ Also read these keys from `.claude/ccmagic.local.md`: `needs_human_state:`, `nee
 
 ### Handshake (emit last, in autonomous mode)
 
-`/ccmagic:work-ticket` emits `done` (PR created and ticket moved to In Review) or `needs-human`. Under prompt-relay (contract §7), "moved to In Review" means the intent line was emitted — the harness owns the actual move:
+`/ccmagic:work-ticket` emits `done` (PR created and ticket moved to In Review) or `needs-human`. Under prompt-relay (contract §7), "moved to In Review" means `requested_state: In Review` was reported in the handshake — the harness owns the actual move:
 
 ```
 status: done | needs-human
