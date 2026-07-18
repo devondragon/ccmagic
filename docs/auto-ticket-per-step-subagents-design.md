@@ -15,7 +15,7 @@ Two upgrades address that:
 
 ## Decisions (locked)
 
-- **Fork config:** a single global toggle `fork_steps` (default `true`). `false` restores today's fully-inline behavior. No per-step fork granularity in v1 (YAGNI — can add later).
+- **Fork config:** dropped — `auto-ticket` always runs each step in its own forked subagent. (An earlier design had a `fork_steps` toggle with an inline mode, but a forked orchestrator can't invoke the `context: fork` skills `work`/`review`/`validate` reach, so the inline mode was unachievable.)
 - **Model mapping (Balanced, default):**
 
   | Step | Default model |
@@ -48,21 +48,18 @@ These three facts constrain the design:
 
 ```
 /ccmagic:auto-ticket   (context: fork  ← now runs as a subagent)
-    │  Step 0: resolve tracker/ticket/config, read fork_steps + model_<step>,
+    │  Step 0: resolve tracker/ticket/config, read model_<step>,
     │          build the grounding block (unchanged contract §2)
     │
-    ├─ fork_steps: true  (default) → spawn each step as a child subagent (Task):
-    │     auto-work      (model: opus)    preloads work-ticket + debug
-    │     auto-review    (model: opus)    preloads review-ticket + review
-    │     auto-feedback  (model: sonnet)  preloads pr-feedback + push
-    │     auto-validate  (model: sonnet)  preloads validate
-    │     auto-finish    (model: sonnet)  preloads finish-ticket
-    │     auto-push      (model: haiku)   preloads push
-    │        └ each child runs its step in autonomous mode and returns ONLY
-    │          its handshake block; the orchestrator parses the last block.
-    │
-    └─ fork_steps: false → run the steps inline via the Skill tool inside the
-          forked orchestrator's own context (today's flow, one level down).
+    └─ spawn each step as a child subagent (Task):
+          auto-work      (model: opus)    preloads work-ticket + debug
+          auto-review    (model: opus)    preloads review-ticket + review
+          auto-feedback  (model: sonnet)  preloads pr-feedback + push
+          auto-validate  (model: sonnet)  preloads validate
+          auto-finish    (model: sonnet)  preloads finish-ticket
+          auto-push      (model: haiku)   preloads push
+             └ each child runs its step in autonomous mode and returns ONLY
+               its handshake block; the orchestrator parses the last block.
 ```
 
 Each per-step agent is a **thin wrapper**: *"You are running the {step} step of an autonomous ticket run. Follow the preloaded {skill} procedure in autonomous mode with the grounding block below, then end with the handshake block."* The lifecycle skills and their autonomous sections are **reused unchanged in logic** (only three skills' `model:` line is tuned — see the model strategy) — the agents only add model selection + context isolation.
@@ -76,14 +73,12 @@ Each per-step agent is a **thin wrapper**: *"You are running the {step} step of 
 
 ### Orchestrator step-execution mode
 
-`auto-ticket` gains a "step execution" helper concept: `run_step(step, grounding)` = *if `fork_steps` → spawn the step's agent via `Task` and parse the returned handshake; else → invoke the step's skill inline via `Skill` and parse its handshake.* Every existing orchestration decision (route-and-stop, the pr-feedback loop bounds, review-fix loop, CI polling) is unchanged — only *how a step is executed* changes.
+`auto-ticket` gains a "step execution" helper concept: `run_step(step, grounding)` = *spawn the step's agent via `Task` and parse the returned handshake.* Every existing orchestration decision (route-and-stop, the pr-feedback loop bounds, review-fix loop, CI polling) is unchanged — only *how a step is executed* changes (from inline `Skill` invocation in 3.1.0 to a forked per-step subagent in 3.2.0).
 
 ## Config surface (additive, all optional)
 
 ```yaml
 # .claude/ccmagic.local.md
-fork_steps: true          # default — per-step subagents; false = inline (today)
-
 # Per-step model overrides (defaults live in the agent files):
 model_work_ticket:   opus
 model_review_ticket: opus
@@ -127,12 +122,14 @@ Resolution for these keys follows the existing project → user → built-in pre
 - No backlog triage/selector (separate future skill; this design just stays compatible with one).
 - No change to any interactive *logic*. The only frontmatter change is the `model:` line on three skills (`work-ticket`/`review-ticket` → `inherit`, `push` → `haiku`), which does affect their interactive default model. This upgrade is purely additive and lives in the orchestrator + new agent wrappers.
 
-## Known issue — `fork_steps: false` and fork-within-fork (PR review, pending live verification)
+## Resolved — fork_steps dropped
 
-`auto-ticket` is now unconditionally `context: fork`, so it runs as a subagent — and a subagent cannot invoke a `context: fork` skill via `Skill`. Several steps reach fork skills: `validate` *is* `context: fork`; `review-ticket` invokes `review` (fork); `work-ticket` invokes `review`/`analyze-impact` (fork). So on the `fork_steps: false` path those steps cannot run purely inline, and `fork_steps: false` does not reproduce the pre-3.2.0 flow regardless (the orchestrator is forked either way). Decision pending the live Linear smoke test (which reveals how fork→fork actually behaves): (a) redefine `fork_steps: false` as "inline where the skill has no fork dependency; `work`/`review`/`validate` keep their per-step agents", or (b) drop `fork_steps` and always fork per step. Until decided, shipped docs must not claim `fork_steps: false` restores the pre-3.2.0 flow.
+`auto-ticket` is unconditionally `context: fork`, so it runs as a subagent — and a subagent cannot invoke a `context: fork` skill via `Skill`. Several steps reach fork skills: `validate` *is* `context: fork`; `review-ticket` invokes `review` (fork); `work-ticket` invokes `review`/`analyze-impact` (fork). That meant the originally-designed `fork_steps: false` inline path could never purely inline those steps, and would not have reproduced the pre-3.2.0 flow regardless (the orchestrator is forked either way).
+
+This was resolved by dropping `fork_steps` entirely rather than picking between the two options considered at the time ("inline where the skill has no fork dependency" vs. "always fork per step") — `auto-ticket` now always forks each step to its per-step agent. This also matches the feature's actual purpose: per-step isolation and per-step models are the whole point, so an inline mode was never something worth preserving.
 
 ## Backward compatibility
 
-- `fork_steps: false` runs steps inline in the orchestrator's own context — see *Known issue* above; the orchestrator itself still runs forked, so this does not reproduce the pre-3.2.0 flow.
+- `fork_steps` was dropped — see *Resolved — fork_steps dropped* above. There is no inline mode; every step always runs forked to its per-step agent, and the orchestrator itself always runs forked.
 - All new config keys default to the shipped values; an untouched `.claude/ccmagic.local.md` gets the Balanced/forked defaults automatically.
 - The lifecycle skills' logic, their autonomous sections, and the handshake contract are unchanged; only three skills' `model:` line changed.

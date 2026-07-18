@@ -1,7 +1,7 @@
 # auto-ticket Per-Step Subagents + Per-Step Models — Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
-> **Status:** implemented in 3.2.0 — historical record. Tasks describe the incremental build (e.g. Task 1 wired only `push`; Task 3 wired the rest); the shipped skill routes all six steps.
+> **Status:** implemented in 3.2.0 — historical record. Tasks describe the incremental build (e.g. Task 1 wired only `push`; Task 3 wired the rest); the shipped skill routes all six steps. `fork_steps` was later dropped — the shipped skill always forks per step.
 
 **Goal:** Make `/ccmagic:auto-ticket` run each lifecycle step in its own forked subagent (configurable, default on) on a best-fit per-step model, reusing the five lifecycle skills unchanged.
 

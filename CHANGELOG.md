@@ -6,7 +6,7 @@ All notable changes to ccmagic are documented here. The format follows [Keep a C
 
 ### Added
 
-- **Per-step subagents for `/ccmagic:auto-ticket`** — each lifecycle step (work / review / pr-feedback / validate / finish / push) now runs in its own forked subagent on a best-fit model, keeping the orchestrator's context lean on long unattended runs. New thin wrapper agents live in `agents/auto-*.md`; the lifecycle skills' *logic* is reused unchanged (only three of them have their `model:` line tuned (work/review → `inherit`, push → `haiku`) — see Changed). Configurable via `fork_steps` (default `true`; `false` runs the steps inline in the orchestrator (which itself still runs forked)).
+- **Per-step subagents for `/ccmagic:auto-ticket`** — each lifecycle step (work / review / pr-feedback / validate / finish / push) now runs in its own forked subagent on a best-fit model, keeping the orchestrator's context lean on long unattended runs. New thin wrapper agents live in `agents/auto-*.md`; the lifecycle skills' *logic* is reused unchanged (only three of them have their `model:` line tuned (work/review → `inherit`, push → `haiku`) — see Changed). Each step always runs in its own forked subagent.
 - **Per-step model selection** — Balanced defaults (`opus` for work/review, `sonnet` for pr-feedback/finish/validate, `haiku` for push), overridable per repo with `model_<step>` keys. `auto-ticket` itself is now `context: fork`.
 
 ### Changed

@@ -35,7 +35,7 @@ max_feedback_passes: {n}
 
 A sub-skill that sees `orchestrator:` in its grounding block must **not** park on `needs-human` — it emits the handshake and returns control so the orchestrator performs the single route-and-stop.
 
-When `fork_steps` is true, `auto-ticket` runs each step in a per-step subagent (`agents/auto-*.md`) on the step's model, passing this grounding block as the child's task prompt and reading back the child's handshake (§3). The child agents preload their lifecycle skill rather than invoking it, so the step runs on the agent's model. With `fork_steps: false`, steps run inline via the `Skill` tool. Either way the grounding block and handshake are identical.
+`auto-ticket` always runs each step in a per-step subagent (`agents/auto-*.md`) on the step's model, passing this grounding block as the child's task prompt and reading back the child's handshake (§3). The child agents preload their lifecycle skill rather than invoking it, so the step runs on the agent's model. The grounding block and handshake are unchanged by this — they're identical to how a directly-invoked sub-skill reads and emits them.
 
 ## 3. The status handshake
 
@@ -105,7 +105,6 @@ Nothing was merged. Resolve the item above, then re-run `/ccmagic:auto-ticket {T
 | `max_validate_attempts` | int | `2` | Cap on local `/ccmagic:validate` fix attempts (orchestrator Step 4b) before parking. |
 | `ci_timeout_minutes` | int | `30` | Max minutes to wait for CI to settle (orchestrator Step 4c) before parking on timeout. |
 | `ci_poll_interval_seconds` | int | `60` | Interval between CI status polls (orchestrator Step 4c). |
-| `fork_steps` | bool | `true` | Run each lifecycle step in its own forked subagent; `false` runs steps inline in the orchestrator's own context (which itself still runs forked). |
 | `model_work_ticket` | string | `opus` | Model for the work step's agent (`auto-work`). |
 | `model_review_ticket` | string | `opus` | Model for the review step's agent (`auto-review`). |
 | `model_pr_feedback` | string | `sonnet` | Model for the pr-feedback step's agent (`auto-feedback`). |
