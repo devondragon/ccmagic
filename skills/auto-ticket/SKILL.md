@@ -37,7 +37,7 @@ This skill and every sub-skill it calls share one contract — the autonomous si
 - **`fork_steps: true` (default)** — run the step by spawning its per-step agent via the `Task` tool, passing the grounding block as the task prompt, and parsing the **last** handshake block from the child's returned text. Each per-step agent runs on its own model (see the registry) and in an isolated context.
 - **`fork_steps: false`** — run the step inline via the `Skill` tool inside this orchestrator's own context (the 3.1.0 behavior, one level down).
 
-Call this `run_step(step, grounding)`. In this iteration only the **push** step routes through `run_step`: run the `/ccmagic:push` commit-and-push call sites (in the Step 3 review-fix loop and Step 4b validate-fix) via `run_step` — forked to the `auto-push` agent when `fork_steps` is true, inline via `Skill` otherwise. All other steps continue to run inline as in 3.1.0; a later change routes them too. Nothing else about the flow (route-and-stop, loops, bounds) changes.
+Call this `run_step(step, grounding)`. **Every step below runs through `run_step`** — forked to its per-step agent (see the registry) when `fork_steps` is true, inline via `Skill` otherwise, including the `/ccmagic:push` commit-and-push call sites in the Step 3 review-fix loop and Step 4b validate-fix. Nothing else about the flow (route-and-stop, loops, bounds) changes.
 
 ### Per-step agent registry
 
@@ -50,7 +50,7 @@ Call this `run_step(step, grounding)`. In this iteration only the **push** step 
 | finish-ticket | `auto-finish` | `sonnet` | `model_finish_ticket` |
 | push | `auto-push` | `haiku` | `model_push` |
 
-Model resolution per step: the agent's frontmatter `model:` is the authoritative default; if a `model_<step>` config value is set, pass it as the `Task` per-invocation model override (best-effort). Only `push` is wired in this iteration; the rest are added in a later change.
+Model resolution per step: the agent's frontmatter `model:` is the authoritative default; if a `model_<step>` config value is set, pass it as the `Task` per-invocation model override (best-effort). All six steps route through `run_step`. When `fork_steps` is false, every step falls back to an inline `Skill` invocation in this orchestrator's context.
 
 ---
 
@@ -58,7 +58,7 @@ Model resolution per step: the agent's frontmatter `model:` is the authoritative
 
 1. **Resolve the tracker** using the exact same cascade as `/ccmagic:work-ticket` Step 0 (settings → arg/branch shape → MCP probe → CLI probe → branch hint). This runs unattended, so if the cascade is genuinely ambiguous (would otherwise prompt), pick the highest-confidence candidate and record the choice in the run summary; if **none** is available, stop and tell the user (this is a setup error, not a parkable ticket).
 2. **Resolve the ticket ID** from the argument, or parse it from the current branch (strip `feature/`, `bugfix/`, `hotfix/`, `chore/` prefixes) — same logic as `/ccmagic:finish-ticket` Step 1. If neither yields a ticket ID, **exit cleanly** with a one-line message asking the caller to pass one (`/ccmagic:auto-ticket {TICKET-ID}`) — this is a setup error, not a parkable ticket; do not wait for input.
-3. **Load config**, resolving each value by precedence — an explicit arg → the project file `.claude/ccmagic.local.md` → the user file `~/.claude/ccmagic.local.md` → the built-in default (see contract §5). Keys: `needs_human_state`, `needs_human_label` (default `needs-human`), `max_feedback_passes` (default `3`), `max_review_fix_passes` (default `2`), `max_validate_attempts` (default `2`), `ci_timeout_minutes` (default `30`), `ci_poll_interval_seconds` (default `60`), plus the usual `tracker` / `ticket_url_base` / `github_repo`.
+3. **Load config**, resolving each value by precedence — an explicit arg → the project file `.claude/ccmagic.local.md` → the user file `~/.claude/ccmagic.local.md` → the built-in default (see contract §5). Keys: `needs_human_state`, `needs_human_label` (default `needs-human`), `max_feedback_passes` (default `3`), `max_review_fix_passes` (default `2`), `max_validate_attempts` (default `2`), `ci_timeout_minutes` (default `30`), `ci_poll_interval_seconds` (default `60`), plus the usual `tracker` / `ticket_url_base` / `github_repo`, `fork_steps` (bool, default `true`), and the per-step model overrides `model_work_ticket`, `model_review_ticket`, `model_pr_feedback`, `model_finish_ticket`, `model_validate`, `model_push` (each defaulting to the registry value).
 4. **Fetch the ticket** to confirm it exists (per the tracker's lookup in `work-ticket`/`review-ticket`). If not found, stop (Sacred Rule).
 5. **Build the grounding block** (contract §2) with the resolved values. Prepend it to every sub-skill invocation below. `/ccmagic:auto-ticket` always drives sub-skills with `autonomous: true`, regardless of the `autonomous:` config default.
 
@@ -68,7 +68,9 @@ Create a TodoWrite entry per stage (work → review → feedback loop → finish
 
 ## Step 1: Work the ticket
 
-Invoke `/ccmagic:work-ticket {TICKET-ID}` with the grounding block prepended.
+> Each step below is executed via `run_step` (see *Step execution mode*): forked to its per-step agent when `fork_steps` is true, inline otherwise. The grounding block and handshake parsing are identical either way.
+
+Run the work-ticket step via `run_step` — `/ccmagic:work-ticket {TICKET-ID}` with the grounding block prepended.
 
 - It classifies, branches, implements, self-reviews, validates scope, and opens the PR — all without pausing (see its *Autonomous mode*).
 - **Parse the handshake:**
@@ -91,7 +93,7 @@ Store `{PR_NUMBER}`, `{PR_URL}`, `{BASE_BRANCH}`. Add `pr:` to the grounding blo
 
 ## Step 3: Ticket-grounded review
 
-Invoke `/ccmagic:review-ticket {TICKET-ID}` with the grounding block prepended. Then act on the verdict:
+Run the review-ticket step via `run_step` — `/ccmagic:review-ticket {TICKET-ID}` with the grounding block prepended. Then act on the verdict:
 
 - `clean` → continue to Step 4.
 - `needs-human` → **route-and-stop** (stage = `review-ticket`).
@@ -115,10 +117,10 @@ gh api repos/{owner}/{repo}/pulls/{PR_NUMBER}/comments --jq '[.[].id] | max // 0
 
 Everything this pass pushes is measured against `H`, so bot reviews triggered *by* this pass's push are counted as new (4c). Then:
 
-**4a. Apply feedback.** Invoke `/ccmagic:pr-feedback {PR_NUMBER}` with the grounding block. Autonomous `pr-feedback` applies address-now fixes, replies to declined/question threads, files a follow-up ticket per defer/out-of-scope item, and pushes. Collect its handshake counts and `follow_ups`.
+**4a. Apply feedback.** Run the pr-feedback step via `run_step` — `/ccmagic:pr-feedback {PR_NUMBER}` with the grounding block. Autonomous `pr-feedback` applies address-now fixes, replies to declined/question threads, files a follow-up ticket per defer/out-of-scope item, and pushes. Collect its handshake counts and `follow_ups`.
   - `needs-human` (e.g. a genuine reviewer tie) → **route-and-stop** (stage = `pr-feedback`).
 
-**4b. Validate locally before trusting CI.** Run `/ccmagic:validate`. If it fails, fix the regressions (bounded: `max_validate_attempts` attempts, default **2**, editing + re-validating), then commit/push via `/ccmagic:push` (run this via `run_step`). If it still fails after the attempts → **route-and-stop** (reason: "local validation fails: {summary}"). Doing this locally keeps CI + bot-review round-trips rare.
+**4b. Validate locally before trusting CI.** Run the validate step via `run_step` — `/ccmagic:validate`. If it fails, fix the regressions (bounded: `max_validate_attempts` attempts, default **2**, editing + re-validating), then commit/push via `/ccmagic:push` (run this via `run_step`). If it still fails after the attempts → **route-and-stop** (reason: "local validation fails: {summary}"). Doing this locally keeps CI + bot-review round-trips rare.
 
 **4c. Wait for CI and new reviews.** This pass's push(es) already happened (in 4a via `pr-feedback`, and possibly again in 4b); `H` was captured before them at the top of the pass. Now that they've landed:
   - Poll CI until it settles — no check is `pending`/`in_progress`:
@@ -141,7 +143,7 @@ Everything this pass pushes is measured against `H`, so bot reviews triggered *b
 
 ## Step 5: Finish the ticket
 
-Invoke `/ccmagic:finish-ticket` with the grounding block. Its Step 3 sanity check is the **merge gate**: it merges only if the PR is mergeable, CI is green, and there are no unaddressed change-requests.
+Run the finish-ticket step via `run_step` — `/ccmagic:finish-ticket` with the grounding block. Its Step 3 sanity check is the **merge gate**: it merges only if the PR is mergeable, CI is green, and there are no unaddressed change-requests.
 
 - `done` → the PR merged and the ticket moved to Done. Continue to Step 6 with outcome **merged**.
 - `needs-human` → the gate wasn't satisfied. It did **not** merge → **route-and-stop** (stage = `finish-ticket`, reason: its blockers).
