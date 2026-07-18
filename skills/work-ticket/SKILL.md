@@ -40,9 +40,10 @@ If `.claude/ccmagic.local.md` exists at the repo root (`git rev-parse --show-top
 3. **CLI probe:** `command -v gh && gh repo view --json nameWithOwner 2>/dev/null` — if available and inside a repo, GitHub is a candidate.
 4. **Branch hint:** if the current branch matches the `ticket_id_regex`, prefer whichever tracker the URL base points at.
 5. **Ambiguous:** ask the user via `AskUserQuestion`. Offer to write the choice to `.claude/ccmagic.local.md` so they're not asked again.
-6. **None available:** stop. Tell the user: "I couldn't find a Linear MCP, GitHub CLI, or Atlassian MCP. Install one or set `tracker:` in `.claude/ccmagic.local.md`."
+6. **Prompt-relay fallback:** if the contract §7 detection rule matches (`skills/auto-ticket/autonomous-contract.md` §7), resolve `tracker: linear` with `transport: prompt-relay` instead of stopping — do not fall through to item 7.
+7. **None available:** stop. Tell the user: "I couldn't find a Linear MCP, GitHub CLI, or Atlassian MCP. Install one or set `tracker:` in `.claude/ccmagic.local.md`."
 
-Record the resolved tracker (`linear`, `github`, or `jira`) for use in steps 1, 2, and 8.
+Record the resolved tracker (`linear`, `github`, or `jira`) and transport (`mcp` or `prompt-relay`) for use in steps 1, 2, and 8.
 
 ---
 
@@ -60,6 +61,8 @@ Use the available Linear MCP tool (e.g. `mcp__claude_ai_Linear__get_issue`) with
 - `assignee`
 - `labels` and `priority` (helpful for triage)
 - URL: from the response, or `{ticket_url_base}/{TICKET-ID}` if available
+
+**Under prompt-relay** (contract §7): skip the MCP call — read `title`, `description`, and `state.name` if present, from the grounding block's `ticket_content:` section (contract §2). If that section is absent, stop with the setup-error message per contract §7 `fetch_ticket` — never guess. The "If not found" stop text below applies only to the MCP path.
 
 ### GitHub
 
@@ -84,6 +87,8 @@ Do not proceed.
 ---
 
 ## Step 2: Assign the ticket and move to In Progress
+
+Under prompt-relay (contract §7), skip this step entirely — the harness already assigned the ticket and moved it to In Progress on assignment.
 
 ### Linear
 
@@ -251,6 +256,8 @@ Once the PR exists, update the ticket to reflect that work is ready for review.
 
 Save the issue with state transitioned to "In Review" (or the closest equivalent — Linear teams often customize this). Add the PR link via the `mcp__*Linear*__create_attachment` tool, or as a comment using `save_comment` if attachments aren't available.
 
+**Under prompt-relay** (contract §7): no attachment/comment API — record the intent line `Requested state: In Review`, surfaced through the handshake/summary. The PR URL travels in the run summary; the tracker's GitHub integration auto-links the PR via the branch name. Never a failure — the "If transition fails" note below applies only to the MCP path.
+
 ### GitHub
 
 ```bash
@@ -316,7 +323,7 @@ Also read these keys from `.claude/ccmagic.local.md`: `needs_human_state:`, `nee
 
 ### Handshake (emit last, in autonomous mode)
 
-`/ccmagic:work-ticket` emits `done` (PR created and ticket moved to In Review) or `needs-human`:
+`/ccmagic:work-ticket` emits `done` (PR created and ticket moved to In Review) or `needs-human`. Under prompt-relay (contract §7), "moved to In Review" means the intent line was emitted — the harness owns the actual move:
 
 ```
 status: done | needs-human
@@ -330,7 +337,7 @@ follow_ups: [<any tickets or deferrals noted>]
 
 | Situation | Action |
 |-----------|--------|
-| No tracker available (no MCP, no `gh`) | Stop. Tell user to install one or set `tracker:` in `.claude/ccmagic.local.md`. |
+| No tracker available (no MCP, no `gh`) — unless the prompt-relay detection rule matched (contract §7) | Stop. Tell user to install one or set `tracker:` in `.claude/ccmagic.local.md`. |
 | Ticket not found | Stop. Tell user clearly. Do not proceed. |
 | MCP server not connected for the chosen tracker | Stop. Tell user which integration is needed. |
 | Ticket assign/status update fails | Warn user, continue with work |
