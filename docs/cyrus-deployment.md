@@ -23,19 +23,19 @@ Cyrus builds the prompt for each container run from a template in the Cyrus repo
 
    Cyrus relays the session's top-level final output to Linear as a comment — and the main-loop model can paraphrase or truncate a forked skill's return before that. The delimited block plus an explicit verbatim-repeat instruction in the prompt are the two mitigations against that; the live test below is what confirms they work.
 
-Copy-pasteable template:
+Copy-pasteable template — fill in `{TICKET-ID}`, `{issue title}`, and `{issue description}` with the values Cyrus already has for the assigned issue. The ticket content sits in the same message as the invocation itself, not as separate framing text above it:
 
 ```
-You are working Linear issue {TICKET-ID}: "{issue title}"
+Run this command, with the ticket content included in the same message:
 
-{issue description}
-
-Run:
 /ccmagic:auto-ticket {TICKET-ID}
 
-The command above will not see this issue's title or description unless you
-include them directly in the arguments you pass to it — the description above
-is context for you, not for the tool call.
+Ticket content (title + description, verbatim):
+~~~
+{issue title}
+
+{issue description}
+~~~
 
 When the command finishes, its output will end with a block delimited by:
 === FINAL MESSAGE TO RELAY (reproduce verbatim) ===

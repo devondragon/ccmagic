@@ -212,7 +212,12 @@ Each step always runs in its own subagent — override any step's model with `mo
 
 ### Headless / prompt-relay (Cyrus)
 
-`auto-ticket` also runs inside headless harnesses that inject the ticket into the prompt and relay the session's output back to the tracker — with no tracker MCP in that environment at all. No tracker-MCP config is needed for this: detection is automatic (content-presence, zero config keys), and every Linear write collapses into one consolidated final summary (or parked note) relayed back as a comment. The GitHub/PR half of the cycle is unaffected — `gh` still drives the branch, PR, and merge. See `docs/cyrus-deployment.md` for a full deployment walkthrough, prerequisites, and the required prompt template.
+`auto-ticket` also runs inside headless harnesses that inject the ticket into the prompt and relay the session's output back to the tracker — with no tracker MCP in that environment at all.
+
+- **Detection is automatic** — content-presence, zero config keys.
+- **One consolidated summary** (or parked note) reaches the tracker per run; the GitHub/PR half of the cycle is unaffected — `gh` still drives the branch, PR, and merge.
+
+See `docs/cyrus-deployment.md` for the full deployment walkthrough, prerequisites, and the required prompt template.
 
 ## Configuration
 
