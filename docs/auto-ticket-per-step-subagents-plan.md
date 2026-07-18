@@ -1,6 +1,7 @@
 # auto-ticket Per-Step Subagents + Per-Step Models — Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **Status:** implemented in 3.2.0 — historical record. Tasks describe the incremental build (e.g. Task 1 wired only `push`; Task 3 wired the rest); the shipped skill routes all six steps.
 
 **Goal:** Make `/ccmagic:auto-ticket` run each lifecycle step in its own forked subagent (configurable, default on) on a best-fit per-step model, reusing the five lifecycle skills unchanged.
 
@@ -123,7 +124,7 @@ Run:
 ```bash
 cd /Users/devon/git/ccmagic
 python3 -c "import yaml,pathlib; print('fm ok:', yaml.safe_load(pathlib.Path('skills/auto-ticket/SKILL.md').read_text().split('---')[1])['context'])"
-c=$(grep -c '```' skills/auto-ticket/SKILL.md); echo "fences: $c $([ $((c%2)) -eq 0 ] && echo OK || echo ODD)"
+c=$(grep -cE '`{3}' skills/auto-ticket/SKILL.md); echo "fences: $c $([ $((c%2)) -eq 0 ] && echo OK || echo ODD)"
 ```
 Expected: `fm ok: fork` and `fences: <even> OK`.
 

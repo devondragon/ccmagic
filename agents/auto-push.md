@@ -1,6 +1,6 @@
 ---
 name: auto-push
-description: Autonomous-run PUSH step. Commits and pushes the working tree in autonomous mode, then returns the ccmagic status handshake. Spawned by /ccmagic:auto-ticket when fork_steps is true. Not for direct human use.
+description: Autonomous-run PUSH step. Commits and pushes the working tree in autonomous mode, then returns the ccmagic status handshake. Spawned by /ccmagic:auto-ticket. Not for direct human use.
 model: haiku
 skills:
   - ccmagic:push

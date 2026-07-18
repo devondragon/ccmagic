@@ -63,7 +63,7 @@ max_feedback_passes: 3
 
 # --- Per-step execution (used by /ccmagic:auto-ticket) ---
 # Run each lifecycle step in its own forked subagent (default true). Set false
-# to run every step inline in one context (the 3.1.0 behavior).
+# to run every step inline in one context (the orchestrator itself still runs forked).
 fork_steps: true
 # Per-step model (defaults shown = the Balanced mapping; set only to override):
 # model_work_ticket:   opus
@@ -72,6 +72,7 @@ fork_steps: true
 # model_finish_ticket: sonnet
 # model_validate:      sonnet
 # model_push:          haiku
+# The agent frontmatter (agents/auto-<step>.md) is the authoritative model; edit it to change a step's model with certainty.
 ---
 
 # ccmagic project settings

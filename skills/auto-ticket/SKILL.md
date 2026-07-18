@@ -35,7 +35,7 @@ This skill and every sub-skill it calls share one contract — the autonomous si
 `auto-ticket` runs **forked** (`context: fork`), so it executes as a subagent and can spawn a child subagent per step. How each step below runs is decided by `fork_steps` (config, default `true`):
 
 - **`fork_steps: true` (default)** — run the step by spawning its per-step agent via the `Task` tool, passing the grounding block as the task prompt, and parsing the **last** handshake block from the child's returned text. Each per-step agent runs on its own model (see the registry) and in an isolated context.
-- **`fork_steps: false`** — run the step inline via the `Skill` tool inside this orchestrator's own context (the 3.1.0 behavior, one level down).
+- **`fork_steps: false`** — run the step inline via the `Skill` tool inside this orchestrator's own context (run steps inline in the orchestrator's own context — `auto-ticket` itself still runs forked, so this is not identical to the pre-3.2.0 flow).
 
 Call this `run_step(step, grounding)`. **Every step below runs through `run_step`** — forked to its per-step agent (see the registry) when `fork_steps` is true, inline via `Skill` otherwise, including the `/ccmagic:push` commit-and-push call sites in the Step 3 review-fix loop and Step 4b validate-fix. Nothing else about the flow (route-and-stop, loops, bounds) changes.
 
@@ -100,7 +100,7 @@ Run the review-ticket step via `run_step` — `/ccmagic:review-ticket {TICKET-ID
 - `fixable-findings` → run a **bounded fix loop** (max `max_review_fix_passes` passes, default **2**):
   1. Apply the CRITICAL findings (and any listed fixable missing-AC items) from the report — edit the code directly.
   2. Commit and push via `/ccmagic:push` with the grounding block (run this via `run_step`). If push returns `needs-human`, **route-and-stop**.
-  3. Re-invoke `/ccmagic:review-ticket`.
+  3. Re-invoke the review-ticket step via `run_step`.
   4. `clean` → continue to Step 4. `fixable-findings` again and passes remain → repeat. Passes exhausted still not clean, or `needs-human` → **route-and-stop** (reason: the outstanding findings).
 
 Only CRITICAL findings and closable missing-AC items gate here. Out-of-scope changes are flagged in the PR (review-ticket already posts them) and do not block.

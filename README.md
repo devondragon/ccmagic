@@ -208,7 +208,7 @@ By default `auto-ticket` runs each lifecycle step in its own **forked subagent**
 | pr-feedback / finish-ticket / validate | `sonnet` |
 | push | `haiku` |
 
-Set `fork_steps: false` to run every step inline in one context instead, or override any step with `model_<step>` (e.g. `model_pr_feedback: opus`).
+Set `fork_steps: false` to run steps inline in the orchestrator instead (the orchestrator itself still runs forked), or override any step with `model_<step>` (e.g. `model_pr_feedback: opus`) (the agent file `agents/auto-<step>.md` is the authoritative model source).
 
 ## Configuration
 
@@ -271,6 +271,8 @@ ccmagic/
 │   └── marketplace.json
 ├── skills/
 │   └── <name>/SKILL.md
+├── agents/
+│   └── auto-*.md              # per-step wrapper agents for auto-ticket
 ├── hooks/
 │   ├── hooks.json
 │   └── post-tool-use-commit.sh

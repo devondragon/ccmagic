@@ -1,6 +1,6 @@
 # Design: per-step subagents + per-step models for `auto-ticket`
 
-**Status:** approved design, pre-implementation
+**Status:** implemented in 3.2.0 — historical design record
 **Target version:** 3.2.0 (additive feature)
 **Branch:** `feature/auto-ticket-per-step-subagents`
 
@@ -52,7 +52,7 @@ These three facts constrain the design:
     │          build the grounding block (unchanged contract §2)
     │
     ├─ fork_steps: true  (default) → spawn each step as a child subagent (Task):
-    │     auto-work      (model: opus)    preloads work-ticket
+    │     auto-work      (model: opus)    preloads work-ticket + debug
     │     auto-review    (model: opus)    preloads review-ticket + review
     │     auto-feedback  (model: sonnet)  preloads pr-feedback + push
     │     auto-validate  (model: sonnet)  preloads validate
@@ -65,7 +65,7 @@ These three facts constrain the design:
           forked orchestrator's own context (today's flow, one level down).
 ```
 
-Each per-step agent is a **thin wrapper**: *"You are running the {step} step of an autonomous ticket run. Follow the preloaded {skill} procedure in autonomous mode with the grounding block below, then end with the handshake block."* The five lifecycle skills and their autonomous sections are **reused unchanged** — the agents only add model selection + context isolation.
+Each per-step agent is a **thin wrapper**: *"You are running the {step} step of an autonomous ticket run. Follow the preloaded {skill} procedure in autonomous mode with the grounding block below, then end with the handshake block."* The lifecycle skills and their autonomous sections are **reused unchanged in logic** (only three skills' `model:` line is tuned — see the model strategy) — the agents only add model selection + context isolation.
 
 > `push` shows up twice on purpose: `auto-feedback` **preloads** it because `pr-feedback` commits/pushes its own fixes internally (that push runs inline within the feedback step's model), while `auto-push` is the dedicated agent the orchestrator spawns for its *own* pushes (the Step 3 review-fix loop and Step 4b validate-fix). The `push → haiku` mapping refers to the dedicated `auto-push` step.
 
@@ -125,10 +125,14 @@ Resolution for these keys follows the existing project → user → built-in pre
 
 - No per-step *fork* granularity (global `fork_steps` only).
 - No backlog triage/selector (separate future skill; this design just stays compatible with one).
-- No change to any interactive path or to the five lifecycle skills' own frontmatter/behavior. This upgrade is purely additive and lives in the orchestrator + new agent wrappers.
+- No change to any interactive *logic*. The only frontmatter change is the `model:` line on three skills (`work-ticket`/`review-ticket` → `inherit`, `push` → `haiku`), which does affect their interactive default model. This upgrade is purely additive and lives in the orchestrator + new agent wrappers.
+
+## Known issue — `fork_steps: false` and fork-within-fork (PR review, pending live verification)
+
+`auto-ticket` is now unconditionally `context: fork`, so it runs as a subagent — and a subagent cannot invoke a `context: fork` skill via `Skill`. Several steps reach fork skills: `validate` *is* `context: fork`; `review-ticket` invokes `review` (fork); `work-ticket` invokes `review`/`analyze-impact` (fork). So on the `fork_steps: false` path those steps cannot run purely inline, and `fork_steps: false` does not reproduce the pre-3.2.0 flow regardless (the orchestrator is forked either way). Decision pending the live Linear smoke test (which reveals how fork→fork actually behaves): (a) redefine `fork_steps: false` as "inline where the skill has no fork dependency; `work`/`review`/`validate` keep their per-step agents", or (b) drop `fork_steps` and always fork per step. Until decided, shipped docs must not claim `fork_steps: false` restores the pre-3.2.0 flow.
 
 ## Backward compatibility
 
-- `fork_steps: false` reproduces 3.1.0 behavior (inline steps), so anyone who prefers the current flow keeps it with one line.
+- `fork_steps: false` runs steps inline in the orchestrator's own context — see *Known issue* above; the orchestrator itself still runs forked, so this does not reproduce the pre-3.2.0 flow.
 - All new config keys default to the shipped values; an untouched `.claude/ccmagic.local.md` gets the Balanced/forked defaults automatically.
-- The five lifecycle skills, their autonomous sections, and the handshake contract are unchanged.
+- The lifecycle skills' logic, their autonomous sections, and the handshake contract are unchanged; only three skills' `model:` line changed.
