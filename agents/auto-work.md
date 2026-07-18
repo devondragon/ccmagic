@@ -22,6 +22,7 @@ Return **only** the work-ticket autonomous handshake as the last thing in your o
 status: done | needs-human
 reason: <one line — the PR URL on done; the blocking decision on needs-human>
 follow_ups: [<any tickets or deferrals noted>]
+requested_state: <In Review — prompt-relay only, omit otherwise>
 ```
 
 The grounding block arrives as your task prompt — read the tracker / ticket / PR context and the needs-human config from it.

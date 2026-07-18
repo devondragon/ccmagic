@@ -100,19 +100,19 @@ The single routine the orchestrator (or a standalone top-level sub-skill) runs w
 **Waiting on:** {the one-line reason from the sub-skill's handshake}
 **Stage:** {work-ticket | review-ticket | pr-feedback | validate | finish-ticket}
 **PR:** {pr_url or "not created"}
-**State moved to:** {needs_human_state, or "unchanged — applied label `{needs_human_label}`"}
+**State moved to:** {needs_human_state, or "unchanged — applied label `{needs_human_label}`" | prompt-relay: "not moved — Requested state: {needs_human_state}"}
 
 **Autonomous decisions so far:**
 {bullet list — classification, minor choices made, drift flagged}
 
-**Follow-ups filed:** {ticket ids, or "none"}
+**Follow-ups {filed | to file (prompt-relay)}:** {ticket ids or short descriptions, or "none"}
 
 Nothing was merged. Resolve the item above, then re-run `/ccmagic:auto-ticket {TICKET-ID}` (or continue manually).
 ```
 
 ### Under the prompt-relay transport
 
-When the run is on the **prompt-relay transport** (§7), the park routine changes at two points:
+When the run is on the **prompt-relay transport** (§7), the park routine changes at two points, and the parked-comment template above renders its **State moved to** and **Follow-ups** lines per their prompt-relay alternatives:
 
 - **Step 2 (state move) is skipped.** There is no Linear API in the environment, so the ticket state is not moved — the harness/human owns the transition. A park that can't move state is **never** a failure. Emit `Requested state: {needs_human_state}` as an intent line in the final output so the tracker (and the human reading the relay) knows where the ticket should go.
 - **Step 3 (comment)** still posts the parked-comment template to the **PR** via `gh pr comment` (the GitHub side is intact). It is *additionally* emitted as the orchestrator's final top-level output, wrapped in the §7 final-message delimiters, so the relay delivers the parked note to the tracker as the run's single Linear-facing message.
@@ -157,7 +157,7 @@ A **transport** is *how* a tracker is reached, independent of *which* tracker it
 
 ### Detection
 
-transport = `prompt-relay` when ALL of: (a) the tracker resolves to `linear`; (b) no `mcp__*Linear*__*` tool is present in the session; (c) ticket content (title + description) was explicitly provided in the invocation arguments or grounding block. Otherwise transport = `mcp` and behavior is unchanged. The check runs *before* any "none available → stop" branch.
+transport = `prompt-relay` when ALL of: (a) the tracker resolves to `linear`; (b) no `mcp__*Linear*__*` tool is present in the session; (c) ticket content (title + description) was explicitly provided in the invocation arguments or grounding block. Otherwise transport = `mcp` and behavior is unchanged. The check runs *before* any "none available → stop" branch. Content-presence (c) is a *transport* signal, not a tracker tiebreaker — condition (a) still resolves the tracker via config or the detection cascade, so a headless deployment with no MCPs should pin `tracker: linear` (or a Linear-shaped `ticket_url_base:`) to keep (a) deterministic.
 
 ### Operations
 

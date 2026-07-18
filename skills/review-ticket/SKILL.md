@@ -33,7 +33,7 @@ Same cascade as `/ccmagic:work-ticket`:
    - **Prompt-relay fallback:** if the contract §7 detection rule matches (`skills/auto-ticket/autonomous-contract.md` §7), resolve `tracker: linear` with `transport: prompt-relay` instead of stopping.
 3. If none found, stop: tell the user to install a tracker integration or set `tracker:`.
 
-Transport is resolved regardless of how the tracker was determined: whenever the tracker is `linear` — pinned in config or detected via the cascade — apply the contract §7 detection rule (`skills/auto-ticket/autonomous-contract.md` §7) to set `transport: mcp | prompt-relay`. A pinned `tracker:` skips the cascade above, never transport resolution — so a standalone headless run against a pinned-Linear repo still resolves `prompt-relay` instead of reaching for a nonexistent MCP.
+Transport is resolved regardless of how the tracker was determined: whenever the tracker is `linear` — pinned in config or detected via the cascade — apply the contract §7 detection rule (`skills/auto-ticket/autonomous-contract.md` §7) to set `transport: mcp | prompt-relay`. A pinned `tracker:` skips the cascade above, never transport resolution — so a standalone headless run against a pinned-Linear repo still resolves `prompt-relay` (provided the ticket content was injected — §7 condition (c)) instead of reaching for a nonexistent MCP.
 
 ---
 
@@ -232,7 +232,7 @@ follow_ups: [<any tickets or deferrals noted>]
 
 - **clean** — no CRITICAL findings and no missing AC (out-of-scope items, if any, are flagged only).
 - **fixable-findings** — one or more CRITICAL findings and/or missing-AC items that are mechanically fixable in-scope. **List them** in the report so the caller can address them.
-- **needs-human** — a finding or missing AC needs human judgment or can't be closed in-scope; `reason` names it. If top-level, route-and-stop (park to `needs_human_state`, or `needs_human_label` if that state doesn't exist — on GitHub create the label first if missing; comment on the PR + ticket) before emitting the handshake.
+- **needs-human** — a finding or missing AC needs human judgment or can't be closed in-scope; `reason` names it. If top-level, route-and-stop (park to `needs_human_state`, or `needs_human_label` if that state doesn't exist — on GitHub create the label first if missing; comment on the PR + ticket) before emitting the handshake. **Under prompt-relay** (contract §7), that top-level park applies contract §4's *Under the prompt-relay transport* adjustments — no state move or label, parked note to the PR only, emitted (with `Requested state: {needs_human_state}`) wrapped in the §7 final-message delimiters as your final output.
 
 ---
 

@@ -253,7 +253,7 @@ reason: applied {A} / declined {D} / deferred {F}   (or the blocking tie on need
 follow_ups: [<follow-up ticket ids filed — or short descriptions under prompt-relay>]
 ```
 
-`done` = this pass's fixes are applied, replies posted, follow-ups filed, and the branch pushed. `needs-human` = a genuine reviewer tie (or a fix that can't be made safely) surfaced; if top-level, route-and-stop (park to `needs_human_state`, or `needs_human_label` if that state doesn't exist — on GitHub create the label first if missing; comment) before emitting — otherwise hand the handshake to the parent. The parent orchestrator recomputes overall "clean" (CI green + zero unresolved actionable threads) after CI and any new bot review land.
+`done` = this pass's fixes are applied, replies posted, follow-ups filed (or recorded as short descriptions under prompt-relay), and the branch pushed. `needs-human` = a genuine reviewer tie (or a fix that can't be made safely) surfaced; if top-level, route-and-stop (park to `needs_human_state`, or `needs_human_label` if that state doesn't exist — on GitHub create the label first if missing; comment) before emitting — otherwise hand the handshake to the parent. **Under prompt-relay** (contract §7), that top-level park applies contract §4's *Under the prompt-relay transport* adjustments — no state move or label, parked note to the PR only, emitted (with `Requested state: {needs_human_state}`) wrapped in the §7 final-message delimiters as your final output. The parent orchestrator recomputes overall "clean" (CI green + zero unresolved actionable threads) after CI and any new bot review land.
 
 ## Execution
 

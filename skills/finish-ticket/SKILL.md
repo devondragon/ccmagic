@@ -47,7 +47,7 @@ The `--qa` argument always forces the QA path regardless of config.
 
 Record the resolved tracker and transport (`mcp` or `prompt-relay`) for use in steps 2 and 7.
 
-Transport is resolved regardless of how the tracker was determined: whenever the tracker is `linear` — pinned in config or detected via the cascade — apply the contract §7 detection rule (`skills/auto-ticket/autonomous-contract.md` §7) to set `transport: mcp | prompt-relay`. A pinned `tracker:` skips the cascade above, never transport resolution — so a standalone headless run against a pinned-Linear repo still resolves `prompt-relay` instead of reaching for a nonexistent MCP.
+Transport is resolved regardless of how the tracker was determined: whenever the tracker is `linear` — pinned in config or detected via the cascade — apply the contract §7 detection rule (`skills/auto-ticket/autonomous-contract.md` §7) to set `transport: mcp | prompt-relay`. A pinned `tracker:` skips the cascade above, never transport resolution — so a standalone headless run against a pinned-Linear repo still resolves `prompt-relay` (provided the ticket content was injected — §7 condition (c)) instead of reaching for a nonexistent MCP.
 
 ---
 
@@ -392,6 +392,8 @@ Absent all three, run the interactive path exactly as documented above. Also rea
 2. Move the ticket to `needs_human_state`. If that state/transition doesn't exist, apply `needs_human_label` if configured and/or leave the state unchanged. On **GitHub** (no custom states), always apply `needs_human_label` — create it first if missing (`gh label create "{needs_human_label}" 2>/dev/null || true`) so `gh issue edit {N} --add-label "{needs_human_label}"` can't fail on a first-time park.
 3. Post a comment on the PR **and** the ticket stating exactly what needs a human and why (the `reason`).
 4. Emit the handshake with `status: needs-human`. Exit cleanly — never wait for input.
+
+**Under prompt-relay** (contract §7): apply contract §4's *Under the prompt-relay transport* adjustments — no state move or label (step 2's Linear writes are skipped), post the parked note to the PR only, and emit it — with `Requested state: {needs_human_state}` — wrapped in the §7 final-message delimiters as your final output.
 
 ### Handshake (emit last, in autonomous mode)
 

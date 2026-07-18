@@ -218,7 +218,7 @@ There is no third "stalled" outcome. Never hang waiting for input.
 | CI never settles within the poll cap | route-and-stop (reason: CI timeout). |
 | Feedback-pass cap hit still not clean | route-and-stop (reason: remaining threads / red CI). |
 | `finish-ticket` merge gate not satisfied | It returns `needs-human` and does not merge → route-and-stop (stage `finish-ticket`). |
-| `route-and-stop` can't move state (no matching state) | Apply `needs_human_label`, leave state unchanged, still post the comment (contract §4). |
+| `route-and-stop` can't move state (no matching state) | **mcp:** apply `needs_human_label`, leave state unchanged, still post the comment (contract §4). **prompt-relay:** contract §4's prompt-relay branch applies — no state/label writes; PR comment + relayed parked note. |
 
 ---
 
