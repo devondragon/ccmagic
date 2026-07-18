@@ -100,7 +100,7 @@ Insert this section immediately after the `## The contract` section in `skills/a
 - **`fork_steps: true` (default)** — run the step by spawning its per-step agent via the `Task` tool, passing the grounding block as the task prompt, and parsing the **last** handshake block from the child's returned text. Each per-step agent runs on its own model (see the registry) and in an isolated context.
 - **`fork_steps: false`** — run the step inline via the `Skill` tool inside this orchestrator's own context (the 3.1.0 behavior, one level down).
 
-Call this `run_step(step, grounding)`. **Every "Invoke `/ccmagic:<skill>`" instruction in the steps below goes through `run_step`** — nothing else about the flow (route-and-stop, loops, bounds) changes.
+Call this `run_step(step, grounding)`. In this iteration only the **push** step routes through `run_step`: run the `/ccmagic:push` commit-and-push call sites (in the Step 3 review-fix loop and Step 4b validate-fix) via `run_step` — forked to the `auto-push` agent when `fork_steps` is true, inline via `Skill` otherwise. All other steps continue to run inline as in 3.1.0; a later change routes them too. Nothing else about the flow (route-and-stop, loops, bounds) changes.
 
 ### Per-step agent registry
 

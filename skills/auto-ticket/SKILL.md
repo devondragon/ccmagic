@@ -37,7 +37,7 @@ This skill and every sub-skill it calls share one contract — the autonomous si
 - **`fork_steps: true` (default)** — run the step by spawning its per-step agent via the `Task` tool, passing the grounding block as the task prompt, and parsing the **last** handshake block from the child's returned text. Each per-step agent runs on its own model (see the registry) and in an isolated context.
 - **`fork_steps: false`** — run the step inline via the `Skill` tool inside this orchestrator's own context (the 3.1.0 behavior, one level down).
 
-Call this `run_step(step, grounding)`. **Every "Invoke `/ccmagic:<skill>`" instruction in the steps below goes through `run_step`** — nothing else about the flow (route-and-stop, loops, bounds) changes.
+Call this `run_step(step, grounding)`. In this iteration only the **push** step routes through `run_step`: run the `/ccmagic:push` commit-and-push call sites (in the Step 3 review-fix loop and Step 4b validate-fix) via `run_step` — forked to the `auto-push` agent when `fork_steps` is true, inline via `Skill` otherwise. All other steps continue to run inline as in 3.1.0; a later change routes them too. Nothing else about the flow (route-and-stop, loops, bounds) changes.
 
 ### Per-step agent registry
 
@@ -97,7 +97,7 @@ Invoke `/ccmagic:review-ticket {TICKET-ID}` with the grounding block prepended. 
 - `needs-human` → **route-and-stop** (stage = `review-ticket`).
 - `fixable-findings` → run a **bounded fix loop** (max `max_review_fix_passes` passes, default **2**):
   1. Apply the CRITICAL findings (and any listed fixable missing-AC items) from the report — edit the code directly.
-  2. Commit and push via `/ccmagic:push` with the grounding block. If push returns `needs-human`, **route-and-stop**.
+  2. Commit and push via `/ccmagic:push` with the grounding block (run this via `run_step`). If push returns `needs-human`, **route-and-stop**.
   3. Re-invoke `/ccmagic:review-ticket`.
   4. `clean` → continue to Step 4. `fixable-findings` again and passes remain → repeat. Passes exhausted still not clean, or `needs-human` → **route-and-stop** (reason: the outstanding findings).
 
@@ -118,7 +118,7 @@ Everything this pass pushes is measured against `H`, so bot reviews triggered *b
 **4a. Apply feedback.** Invoke `/ccmagic:pr-feedback {PR_NUMBER}` with the grounding block. Autonomous `pr-feedback` applies address-now fixes, replies to declined/question threads, files a follow-up ticket per defer/out-of-scope item, and pushes. Collect its handshake counts and `follow_ups`.
   - `needs-human` (e.g. a genuine reviewer tie) → **route-and-stop** (stage = `pr-feedback`).
 
-**4b. Validate locally before trusting CI.** Run `/ccmagic:validate`. If it fails, fix the regressions (bounded: `max_validate_attempts` attempts, default **2**, editing + re-validating), then commit/push via `/ccmagic:push`. If it still fails after the attempts → **route-and-stop** (reason: "local validation fails: {summary}"). Doing this locally keeps CI + bot-review round-trips rare.
+**4b. Validate locally before trusting CI.** Run `/ccmagic:validate`. If it fails, fix the regressions (bounded: `max_validate_attempts` attempts, default **2**, editing + re-validating), then commit/push via `/ccmagic:push` (run this via `run_step`). If it still fails after the attempts → **route-and-stop** (reason: "local validation fails: {summary}"). Doing this locally keeps CI + bot-review round-trips rare.
 
 **4c. Wait for CI and new reviews.** This pass's push(es) already happened (in 4a via `pr-feedback`, and possibly again in 4b); `H` was captured before them at the top of the pass. Now that they've landed:
   - Poll CI until it settles — no check is `pending`/`in_progress`:
