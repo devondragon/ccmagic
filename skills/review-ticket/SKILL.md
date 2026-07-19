@@ -27,13 +27,13 @@ Same cascade as `/ccmagic:work-ticket`:
 1. Read `.claude/ccmagic.local.md` (if present) for `tracker:`, `ticket_url_base:`, `ticket_id_regex:`, `github_repo:` — and fall back to the user-level `~/.claude/ccmagic.local.md` for any key the project file omits (project overrides user).
 2. If `tracker:` is `auto` or unset, run the detection cascade:
    - **Arg shape:** integer-only ticket ID → GitHub; `[A-Z][A-Z0-9]+-[0-9]+` → Linear or JIRA.
-   - **MCP probe:** Linear MCP (`mcp__*Linear*__get_issue`), Atlassian/JIRA MCP (`mcp__*atlassian*__*` or `mcp__*Atlassian*__*`).
+   - **MCP probe:** Linear MCP — a server available to the session (case-insensitive `mcp__*[Ll]inear*__get_issue`, incl. Cyrus's `mcp__linear__` and a still-connecting server; see contract §7); Atlassian/JIRA MCP (`mcp__*atlassian*__*` or `mcp__*Atlassian*__*`).
    - **CLI probe:** `command -v gh && gh repo view --json nameWithOwner 2>/dev/null`.
    - **Branch hint:** match against `ticket_url_base` if ambiguous.
    - **Prompt-relay fallback:** if the contract §7 detection rule matches (`skills/auto-ticket/autonomous-contract.md` §7), resolve `tracker: linear` with `transport: prompt-relay` instead of stopping.
 3. If none found, stop: tell the user to install a tracker integration or set `tracker:`.
 
-Transport is resolved regardless of how the tracker was determined: whenever the tracker is `linear` — pinned in config or detected via the cascade — apply the contract §7 detection rule (`skills/auto-ticket/autonomous-contract.md` §7) to set `transport: mcp | prompt-relay`. A pinned `tracker:` skips the cascade above, never transport resolution — so a standalone headless run against a pinned-Linear repo still resolves `prompt-relay` (provided the ticket content was injected — §7 condition (c)) instead of reaching for a nonexistent MCP.
+Transport resolution depends on how this skill was invoked. **When invoked with a grounding block that carries a `transport:` value (orchestrated/autonomous runs — contract §2), trust that value and do not re-detect** — the orchestrator resolved transport once for the whole run, so every sub-step stays consistent. **Only when running standalone (no grounding block)** do you resolve transport yourself: whenever the tracker is `linear` — pinned in config or detected via the cascade — apply the contract §7 detection rule (`skills/auto-ticket/autonomous-contract.md` §7, including its server-availability rule and load-with-retry) to set `transport: mcp | prompt-relay`. A pinned `tracker:` skips the cascade above, never standalone transport resolution.
 
 ---
 

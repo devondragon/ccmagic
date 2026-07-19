@@ -63,7 +63,7 @@ command -v gh >/dev/null 2>&1 && {
 
 For Linear and JIRA, surface this checklist in the report instead of trying to probe MCP from bash:
 
-> **Linear MCP:** Verify in Claude Code MCP settings that a Linear server is connected. Tool names look like `mcp__claude_ai_Linear__*` or `mcp__plugin_linear_linear__*`.
+> **Linear MCP:** Verify in Claude Code MCP settings that a Linear server is connected. Tool names look like `mcp__claude_ai_Linear__*`, `mcp__plugin_linear_linear__*`, or (self-hosted Cyrus) `mcp__linear__*`. A server can be *registered but still connecting* at session start — that is a present MCP (auto-ticket loads its tools with a bounded retry), not a missing one.
 >
 > A missing Linear MCP is not automatically a defect. Headless harness runs use the **prompt-relay transport**: the ticket is injected directly into the prompt and the run's output is relayed back to the tracker as a comment, with no Linear MCP present in that environment at all (see `skills/auto-ticket/autonomous-contract.md` §7 and `docs/cyrus-deployment.md`). Doctor runs on a laptop and can't detect that environment — report "Linear MCP not found; may be running under prompt-relay" rather than flatly calling it broken.
 >
