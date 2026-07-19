@@ -108,6 +108,8 @@ Cross-reference the diff against the AC and out-of-scope notes:
 
 Hold this analysis — it will be merged into the final report after `/ccmagic:review` runs.
 
+**Systemic findings.** When any finding — drift or code-quality — is an instance of a repeatable pattern, enumerate all instances across every reference mechanism that could carry the pattern (template attributes, raw attributes, ES-module imports, CSS `@import`/`url()`, manifests, service workers, config), not just the syntax of the first hit, and tag the finding `systemic:` per the review finding schema. Any "no other instances" claim must state its search scope and the mechanisms covered, or be downgraded to "no other {mechanism} instances found".
+
 ---
 
 ## Step 5: Invoke /ccmagic:review with ticket context
@@ -216,9 +218,11 @@ Absent all three, run the interactive path exactly as documented above. Also rea
 - **Step 3 (Confirm inferred AC):** do not pause. Use the inferred acceptance criteria and write them into the report verbatim, marked *(inferred)*.
 - **Step 5 (Invoke /ccmagic:review):** prepend the same autonomous grounding block so the review runs without pausing.
 - **Step 7 (Drift handling):** apply rules instead of asking:
-  - **Out-of-scope changes** stay, but flag each one — leave the out-of-scope table populated and post a PR comment listing them. Do not revert.
+  - **Out-of-scope changes** stay, but flag each one — leave the out-of-scope table populated and post a PR comment listing them — unless this pass's report is being posted as a PR comment (the *Report posting* rule below): a full report carries the out-of-scope table itself, and a delta report carries net-new out-of-scope items plus the reference to the prior report's table; either way, don't post both. Do not revert.
   - **Missing AC** → treat as *not-done*: `fixable-findings` if the caller can close it in-scope; `needs-human` if it can't.
   - **CRITICAL findings** from `/ccmagic:review` must be fixed before proceeding → return them under `fixable-findings` (the caller fixes and re-reviews). A CRITICAL finding that needs human judgment → `needs-human`.
+- **Report posting:** if a PR exists for the branch, post the Step 6 combined report (or the delta report on re-review passes) as a PR comment (`gh pr comment`); with no PR (e.g. a standalone pre-PR review), skip — the report in your output is the artifact. If the `gh pr comment` post itself fails, say so in your output and continue — a later delta pass then leans on the grounding block's `previous_findings:` alone (the prior-comment reference is a convenience, not a dependency).
+- **Re-review passes (`review_pass:` ≥ 2 in the grounding block):** post a **delta report** instead of a full fresh one — each entry in the grounding block's `previous_findings:` list verified and reported fixed / not-fixed as one-liners, net-new findings in full (schema unchanged), and a reference to the previous pass's report comment on the PR (fetch via `gh pr view --json comments` if needed) instead of repeating unchanged sections. Verdict and handshake semantics are unchanged, and the systemic-enumeration and scoped-all-clear rules apply in full on every pass.
 
 ### Verdict → handshake mapping
 

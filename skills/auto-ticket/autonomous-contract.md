@@ -32,6 +32,7 @@ base_branch: {base}
 needs_human_state: {value}
 needs_human_label: {value}
 max_feedback_passes: {n}
+review_pass: {n — only on Step 3 re-reviews; absent on the first review pass}
 ```
 
 Under the **prompt-relay transport** (§7) the block also carries the ticket content, because no tracker MCP is available to fetch it. The orchestrator appends a `ticket_content:` section:
@@ -46,6 +47,16 @@ ticket_content:
 ```
 
 The `~~~` fence is deliberate — issue bodies routinely contain backtick fences, so tildes keep the ticket body from prematurely closing the block. Under prompt-relay, sub-skills read the ticket's title and description from this section **instead of** calling the Linear MCP.
+
+`review_pass:` appears only when the orchestrator re-invokes `review-ticket` inside its Step 3 fix loop (2 on the first re-review, incrementing). `review-ticket` uses it to switch to a delta report (see its *Autonomous mode*); all other sub-skills ignore it. On those re-invocations the orchestrator also appends a `previous_findings:` section to the grounding block — a short fenced list of the findings it just applied in the fix loop (id/title + file per finding) — so the fresh review subagent knows exactly what to verify as fixed:
+
+```
+previous_findings:
+~~~
+- {id/title} — {file}
+- {id/title} — {file}
+~~~
+```
 
 A sub-skill that sees `orchestrator:` in its grounding block must **not** park on `needs-human` — it emits the handshake and returns control so the orchestrator performs the single route-and-stop.
 
@@ -125,10 +136,10 @@ When the run is on the **prompt-relay transport** (§7), the park routine change
 | `needs_human_state` | string | *(none)* | Tracker state a parked ticket is moved to (e.g. `Blocked`, `Needs Human`). |
 | `needs_human_label` | string | `needs-human` | Fallback label applied when `needs_human_state` doesn't exist (and always on GitHub). |
 | `max_feedback_passes` | int | `3` | Cap on the `pr-feedback` loop (orchestrator Step 4) before parking. |
-| `max_review_fix_passes` | int | `2` | Cap on the ticket-review fix loop (orchestrator Step 3) before parking. |
+| `max_review_fix_passes` | int | `3` | Cap on the ticket-review fix loop (orchestrator Step 3) before parking. |
 | `max_validate_attempts` | int | `2` | Cap on local `/ccmagic:validate` fix attempts (orchestrator Step 4b) before parking. |
-| `ci_timeout_minutes` | int | `30` | Max minutes to wait for CI to settle (orchestrator Step 4c) before parking on timeout. |
-| `ci_poll_interval_seconds` | int | `60` | Interval between CI status polls (orchestrator Step 4c). |
+| `ci_timeout_minutes` | int | `30` | Max minutes to wait for CI to settle (orchestrator Step 4c) before parking on timeout; quantized up to whole 10-minute watch cycles (`CYCLES = ceil(minutes / 10)`). |
+| `ci_poll_interval_seconds` | int | `60` | Interval passed to `gh pr checks --watch` during the CI wait (orchestrator Step 4c). |
 | `model_work_ticket` | string | `opus` | Model for the work step's agent (`auto-work`). |
 | `model_review_ticket` | string | `opus` | Model for the review step's agent (`auto-review`). |
 | `model_pr_feedback` | string | `sonnet` | Model for the pr-feedback step's agent (`auto-feedback`). |
