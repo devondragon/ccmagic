@@ -350,6 +350,7 @@ In the Error Handling table, after the row `| Merge fails for other reason | …
 
 ```markdown
 | `--delete-branch` fails (branch checked out in a worktree, or any local-checkout reason) | Verify the merge succeeded (`gh pr view --json state`), delete the remote branch best-effort (`git push origin --delete {headRefName}`), leave the local checkout alone, and report the outcome gracefully — this is not an error. |
+| Conflict resolution: `git checkout {headRefName}` fails with "'{headRefName}' is already used by worktree at '{path}'" | The branch lives in a linked worktree — run the same conflict-resolution commands from that worktree path instead, then re-attempt the merge. Not an error. |
 ```
 
 - [ ] **Step 3: Add the worktree line to the Step 8 report template**

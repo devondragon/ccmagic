@@ -440,7 +440,7 @@ requested_state: <Done — prompt-relay only, omit otherwise>
 | PR has conflicts | Attempt local resolution. Escalate unresolvable conflicts to user. (Autonomous: trivial → resolve; business-logic → `needs-human`.) |
 | Merge fails for other reason | Show the error. Do not retry blindly. |
 | `--delete-branch` fails (branch checked out in a worktree, or any local-checkout reason) | Verify the merge succeeded (`gh pr view --json state`), delete the remote branch best-effort (`git push origin --delete {headRefName}`), leave the local checkout alone, and report the outcome gracefully — this is not an error. |
-| Conflict resolution: `git checkout {headRefName}` fails with "already checked out at {path}" | The branch lives in a linked worktree — run the same conflict-resolution commands from that worktree path instead, then re-attempt the merge. Not an error. |
+| Conflict resolution: `git checkout {headRefName}` fails with "'{headRefName}' is already used by worktree at '{path}'" | The branch lives in a linked worktree — run the same conflict-resolution commands from that worktree path instead, then re-attempt the merge. Not an error. |
 | Target transition not found (JIRA/Linear) | Show available transitions/states. Ask user to pick. (Autonomous: for the Done target, try the fallbacks; if none match, apply `needs_human_label` and note it.) |
 | QA label missing (GitHub QA path) | Ask user which label, offer to save to config. |
 | Ticket update fails | Warn user. Report what was and wasn't updated. Continue to Done. |

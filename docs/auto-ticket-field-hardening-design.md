@@ -57,8 +57,9 @@ Add to scope validation (applies in both interactive and autonomous modes): iden
 **Files:** `skills/finish-ticket/SKILL.md` (Step 6 + error-handling table).
 
 - Detect a linked-worktree checkout before merging: `git rev-parse --path-format=absolute --git-dir` ≠ `git rev-parse --path-format=absolute --git-common-dir` (unnormalized paths falsely report `worktree` from a primary checkout's subdirectory, since `--git-dir` prints absolute and `--git-common-dir` prints relative).
-- In a worktree: merge **without** `--delete-branch`; best-effort delete the remote branch (`git push origin --delete {headRefName}`, ignore failure); leave the local worktree and branch in place; mention it in the final report ("local worktree left in place: {path}"). No warnings, no errors — this is a normal solo-dev setup, not a failure.
+- In a worktree: merge **without** `--delete-branch`; best-effort delete the remote branch (`git push origin --delete {headRefName}`, ignore failure); leave the local worktree and branch in place; mention it in the final report ("Worktree: left in place at {path}"). No warnings, no errors — this is a normal solo-dev setup, not a failure.
 - New error-handling row: `--delete-branch` fails for any local-checkout reason → verify the merge succeeded, clean up the remote branch, report gracefully.
+- Second error-handling row: conflict resolution's git checkout failing with "is already used by worktree at" → run the same conflict-resolution commands from that worktree path instead, then re-attempt the merge — not an error.
 
 ### 6. Delta re-reviews
 
