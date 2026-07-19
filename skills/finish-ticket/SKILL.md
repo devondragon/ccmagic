@@ -264,12 +264,15 @@ First detect whether this checkout is a linked worktree (a worktree-per-ticket s
 gh pr merge {pr_number} {--squash | --merge} --delete-branch
 ```
 
-**Linked worktree** — merge **without** `--delete-branch` (it would fail against the worktree's checked-out branch), delete the remote branch best-effort, and leave the local worktree and branch in place — whoever created the worktree owns its lifecycle:
+**Linked worktree** — merge **without** `--delete-branch` (it would fail against the worktree's checked-out branch), then — only once the merge is confirmed — delete the remote branch best-effort, leaving the local worktree and branch in place; whoever created the worktree owns its lifecycle:
 
 ```bash
 gh pr merge {pr_number} {--squash | --merge}
-git push origin --delete {headRefName} 2>/dev/null || true
+[ "$(gh pr view {pr_number} --json state -q .state)" = "MERGED" ] && \
+  git push origin --delete {headRefName} 2>/dev/null || true
 ```
+
+If the merge itself failed, do **not** delete the remote branch — fall through to conflict handling / the error table with the PR still open.
 
 Note the worktree in the Step 8 report ("Worktree: left in place at {path}"). No warnings, no errors.
 
@@ -400,7 +403,7 @@ Absent all three, run the interactive path exactly as documented above. Also rea
 
 ### Behavior at each human-gate
 
-- **Step 3 (Sanity check) — this is the merge gate.** Merge **only if all** of: PR is `MERGEABLE`, every required CI check has passed (green), and there are no unaddressed `CHANGES_REQUESTED` reviews. If any is not satisfied → `needs-human` (do **not** merge; the `reason` lists the specific blockers). Do not take the interactive "proceed anyway" option.
+- **Step 3 (Sanity check) — this is the merge gate.** Merge **only if all** of: PR is `MERGEABLE`, every required CI check has passed (green) — an **empty** `statusCheckRollup` counts as green only when the repo genuinely has no CI (no workflow files under `.github/workflows/`, no required status checks on the base branch); CI configured but zero checks registered on the PR is **not** green — and there are no unaddressed `CHANGES_REQUESTED` reviews. If any is not satisfied → `needs-human` (do **not** merge; the `reason` lists the specific blockers). Do not take the interactive "proceed anyway" option.
 - **Step 4 (Disposition):** always take the **Done** path. The QA path needs an interactive hand-off (QA-assignee lookup, status confirmation) that would hang an unattended run, so autonomous mode never enters it — **even if `default_qa_workflow: true`**. If the QA path was explicitly forced (`--qa` passed *together with* an autonomous signal), that's a conflict autonomous mode can't satisfy → `needs-human` (reason: "QA disposition requires a human — re-run without `--qa`, or complete QA manually"); do **not** merge. A project that requires QA on every ticket should not be driven by `/ccmagic:auto-ticket`.
 - **Step 5 (Merge confirmation):** proceed with the determined strategy — squash for `feature/`/`bugfix/`/`hotfix/`/`chore/`, merge commit for `release/` — no pause.
 - **Step 6 (Merge conflicts):** auto-resolve **trivial** conflicts (version bumps, import lists, config values) exactly as Step 6 already describes. A **business-logic** conflict → `needs-human` (do not merge; leave the branch unmerged, `reason` names the conflicting files).

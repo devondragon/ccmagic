@@ -524,3 +524,9 @@ awk 'END{if (NR>=500) print FILENAME" too long: "NR}' skills/*/SKILL.md  # expec
 git add .claude-plugin/ README.md docs/ccmagic.local.md.example
 git commit -m "chore: bump to 3.4.0; align README and config docs with hardening changes"
 ```
+
+---
+
+## PR #23 feedback round (2026-07-19)
+
+External review surfaced three Important issues plus suggestions, fixed post-review: (1) the no-checks guard's timing-based re-checks were mechanically useless (back-to-back `gh` calls can't outlast the registration window) — replaced with evidence-based branching (workflow files + required-checks probe → "no CI configured"; CI-configured-but-unregistered → `gh run list --commit` + `gh run watch`, or park), and finish-ticket's merge gate now treats an empty `statusCheckRollup` as green only when the repo genuinely has no CI; (2) `run_id` was consumed but never minted, and the guard's prose was self-contradictory — Step 0 now mints it, and the guarantee is scoped to a single orchestrator context; (3) the linked-worktree remote-branch delete ran unconditionally after `gh pr merge` — now gated on `gh pr view` confirming `MERGED`. Suggestions applied: `ci_timeout_minutes` quantization caveat (SKILL.md + contract §5), fast `gh`-failure branch (retry once, then park — no budget consumed), per-check breakdown carried into 4d, delta-pass out-of-scope justification corrected, Universal reporting rules explicitly prepended in review/SKILL.md's agent-dispatch list, report-post failure fallback specified, CHANGELOG claims softened to match shipped conditions.

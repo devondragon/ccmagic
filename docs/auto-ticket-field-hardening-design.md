@@ -24,7 +24,7 @@ Replace the unexecutable "poll every `ci_poll_interval_seconds`" instruction wit
 - Compute the watch budget: `CYCLES = ceil(ci_timeout_minutes / 10)` (default 30 min → 3 invocations).
 - Loop: invoke `gh pr checks {PR_NUMBER} --watch --interval {ci_poll_interval_seconds}` as a **single Bash call with the maximum tool timeout (600000 ms)**. `--watch` blocks until no check is pending, so each call either returns "settled" or is cut off by the tool timeout. A non-zero exit with completed checks in the output is still "settled" — settled-with-failures — and proceeds to the next step rather than re-invoking the watch.
 - On tool timeout: it consumed a full 10 minutes by construction — count it. Fewer than `CYCLES` cut-off calls so far → re-invoke the watch; `CYCLES` reached → **route-and-stop** (reason: CI timeout) exactly as today. The count is tracked in working notes, not shell variables — shell state does not persist between Bash calls.
-- **No-checks guard:** if `gh pr checks` reports no checks at all (exit immediately / "no checks reported"), re-check up to 3 times — this covers the registration race just after a push — then treat as "no CI configured → settled" and record that in the run summary. The finish-ticket merge gate re-verifies `statusCheckRollup` before merging, so it remains the backstop.
+- **No-checks guard (evidence-based, revised after PR #23 feedback):** timing-based re-checks cannot outlast GitHub's post-push registration window, so an empty check set is decided on evidence instead. No workflow files and no required status checks on the base branch → genuinely "no CI configured → settled" (recorded in the run summary). Workflow files present but checks unregistered → wait on the head SHA's workflow run (`gh run list --commit` + `gh run watch`, cut-offs counting against `CYCLES`), and if no run ever appears, **park** — never a vacuous green. A fast `gh` failure (auth/network) consumes no budget: one retry, then route-and-stop ("cannot read CI status"). The finish-ticket merge gate applies the same empty-rollup rule and remains the backstop.
 
 Contract §5: update the `ci_poll_interval_seconds` description to "interval passed to `gh pr checks --watch`". SKILL.md Step 4c and the error-handling row are rewritten to match; no config keys are added or removed.
 
@@ -34,8 +34,9 @@ Design doc: add a short "CI wait mechanism" section to `docs/auto-ticket-per-ste
 
 **Files:** `skills/auto-ticket/SKILL.md` (Step 6).
 
-- Add a `**Run:** {run_id}` line to the run-summary template.
+- Add a `**Run:** {run_id}` line to the run-summary template; `run_id` is **minted in Step 0** (short random id, e.g. `openssl rand -hex 3`) when the grounding block is built.
 - Before posting, fetch existing PR comments and skip posting if a `🤖 Autonomous run summary` comment carrying this `run_id` already exists (same idempotency check for the ticket comment on the mcp transport).
+- The guarantee is scoped to a **single orchestrator context** — the same forked run reaching Step 6 twice never double-posts; any fresh invocation (including a post-crash restart) mints a new `run_id` and posts its own summary by design.
 - The orchestrator remains the single writer; fixing Change 1 is what guarantees Step 6 is reached.
 
 ### 3. Systemic-finding enumeration + scoped all-clears (fixes Run A whack-a-mole)
@@ -57,7 +58,7 @@ Add to scope validation (applies in both interactive and autonomous modes): iden
 **Files:** `skills/finish-ticket/SKILL.md` (Step 6 + error-handling table).
 
 - Detect a linked-worktree checkout before merging: `git rev-parse --path-format=absolute --git-dir` ≠ `git rev-parse --path-format=absolute --git-common-dir` (unnormalized paths falsely report `worktree` from a primary checkout's subdirectory, since `--git-dir` prints absolute and `--git-common-dir` prints relative).
-- In a worktree: merge **without** `--delete-branch`; best-effort delete the remote branch (`git push origin --delete {headRefName}`, ignore failure); leave the local worktree and branch in place; mention it in the final report ("Worktree: left in place at {path}"). No warnings, no errors — this is a normal solo-dev setup, not a failure.
+- In a worktree: merge **without** `--delete-branch`; delete the remote branch best-effort **only after `gh pr view --json state` confirms `MERGED`** (`git push origin --delete {headRefName}`, ignore failure) — a failed merge must never delete the branch of a still-open PR; leave the local worktree and branch in place; mention it in the final report ("Worktree: left in place at {path}"). No warnings, no errors — this is a normal solo-dev setup, not a failure.
 - New error-handling row: `--delete-branch` fails for any local-checkout reason → verify the merge succeeded, clean up the remote branch, report gracefully.
 - Second error-handling row: conflict resolution's git checkout failing with "is already used by worktree at" → run the same conflict-resolution commands from that worktree path instead, then re-attempt the merge — not an error.
 
@@ -68,7 +69,7 @@ Add to scope validation (applies in both interactive and autonomous modes): iden
 - Grounding block gains an optional `review_pass: {n}` line; auto-ticket sets it when re-invoking review-ticket in the Step 3 fix loop.
 - On those re-invocations, the grounding block also gains a `previous_findings:` section — the findings auto-ticket just applied in the fix loop (id/title + file) — so the fresh review subagent (a new context, with no memory of the prior pass) knows exactly what to verify as fixed.
 - When `review_pass` ≥ 2, review-ticket posts a **delta report**: each `previous_findings:` entry verified and reported fixed/not-fixed as one-liners, net-new findings in full, the previous report referenced rather than repeated (fetched via `gh pr view --json comments` if needed). The handshake/verdict semantics are unchanged.
-- review-ticket posts its report (full or delta) as a PR comment via `gh pr comment` on every pass, so each pass leaves a retrievable artifact for the next one to reference — conditional on a PR existing (a standalone pre-PR review has no PR to comment on and skips posting), and this report post subsumes the Step 7 out-of-scope comment rather than duplicating it.
+- review-ticket posts its report (full or delta) as a PR comment via `gh pr comment` on every pass, so each pass leaves a retrievable artifact for the next one to reference — conditional on a PR existing (a standalone pre-PR review has no PR to comment on and skips posting), and this report post subsumes the Step 7 out-of-scope comment rather than duplicating it (a delta subsumes it via net-new items plus the reference to the prior report's table). A failed `gh pr comment` post is reported and tolerated — later delta passes lean on `previous_findings:` alone.
 
 ### 7. Risk-ordering scoping note
 

@@ -240,6 +240,7 @@ Each agent receives:
 - The actual diff or file contents
 - The `{PROJECT_CONVENTIONS}` string
 - Instructions to use the finding schema exactly
+- The **Universal reporting rules (all agents)** section from agent-instructions.md, prepended verbatim
 
 ### Conditional Specialist Agents
 
