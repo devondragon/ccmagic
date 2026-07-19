@@ -14,7 +14,7 @@ How to run `/ccmagic:auto-ticket` unattended inside [Cyrus](https://github.com/c
 
 Cyrus builds the prompt for each container run from a template in the Cyrus repo. For that prompt to work with ccmagic's prompt-relay transport, it must do two things:
 
-1. **Invoke `/ccmagic:auto-ticket {TICKET-ID}` with the issue title and description included in the same message.** `auto-ticket` is `context: fork` — it only ever sees its own arguments, not anything else that was in the top-level prompt. Content that isn't passed into the invocation never reaches the skill, so "the issue is already in the prompt somewhere" is not sufficient — it must be in the invocation text itself.
+1. **Write the issue title + description to `.ccmagic-ticket.md` in the working directory, then invoke `/ccmagic:auto-ticket {TICKET-ID}`.** `auto-ticket` is `context: fork` — it only ever sees its own arguments, not anything else in the top-level prompt. Sibling text ("the issue is already in the prompt somewhere") never reaches the fork; the handoff file does — parent and fork share the worktree, so `auto-ticket` reads the content from `.ccmagic-ticket.md` (contract §7 `fetch_ticket`) and `rm`s it afterward. (This replaces the earlier "put the content in the same message" approach, which did not survive the fork boundary.)
 2. **Instruct the session to reproduce the skill's returned final-message block verbatim as its own final message.** `auto-ticket` ends its output with a delimited block:
 
    ```
@@ -25,19 +25,20 @@ Cyrus builds the prompt for each container run from a template in the Cyrus repo
 
    Cyrus relays the session's top-level final output to Linear as a comment — and the main-loop model can paraphrase or truncate a forked skill's return before that. The delimited block plus an explicit verbatim-repeat instruction in the prompt are the two mitigations against that; the live test below is what confirms they work.
 
-Copy-pasteable template — fill in `{TICKET-ID}`, `{issue title}`, and `{issue description}` with the values Cyrus already has for the assigned issue. The ticket content sits in the same message as the invocation itself, not as separate framing text above it:
+Copy-pasteable template — fill in `{TICKET-ID}`, `{issue title}`, and `{issue description}` with the values Cyrus already has for the assigned issue. The template first writes the content to the handoff file, then invokes the skill:
 
 ```
-Run this command, with the ticket content included in the same message:
-
-/ccmagic:auto-ticket {TICKET-ID}
-
-Ticket content (title + description, verbatim):
+First write the ticket content to a handoff file the forked skill can read.
+Create `.ccmagic-ticket.md` in the working directory with exactly this content:
 ~~~
 {issue title}
 
 {issue description}
 ~~~
+
+Then run:
+
+/ccmagic:auto-ticket {TICKET-ID}
 
 When the command finishes, its output will end with a block delimited by:
 === FINAL MESSAGE TO RELAY (reproduce verbatim) ===

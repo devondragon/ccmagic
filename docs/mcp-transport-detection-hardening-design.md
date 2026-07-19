@@ -94,30 +94,48 @@ ambiguity.
 ### 2. Bounded load-with-retry
 
 When the tracker is `linear` and a server is *available but its tools are not yet
-callable*, the skill must load the tools before use rather than concluding
-absence — and the retry must span real wall-clock time, because back-to-back
-`ToolSearch` calls return in well under a second combined and will not outlast
-the remote MCP's multi-second handshake. Skills *do* have a wait primitive:
-`Bash` (`sleep`). The mechanism is a **bounded, wall-clock-aware retry**:
+callable in this context*, the skill makes a **bounded, non-blocking** attempt to
+load them: `ToolSearch` for `mcp__*linear*__get_issue` (and the other needed
+tools) 2–3 times. If they resolve → `transport: mcp`. If they do not, **do not
+block or sleep** — the server itself connects in well under a second, but its
+tools populate the deferred-tool index on a **per-context lag**: a forked
+sub-skill frequently cannot see tools the top-level session already has, and a
+short wait does not reliably bridge that gap. Fall through to `prompt-relay`,
+which must always be viable (see §2b — content propagation). If neither the MCP
+tools nor injected content is available, stop with the §7 `fetch_ticket` setup
+error; never hang, never guess.
 
-- Loop up to **5 attempts**. Each attempt runs `ToolSearch` for
-  `mcp__*linear*__get_issue` (and the other needed tools); if it resolves →
-  `transport: mcp` (stop looping); otherwise wait ~3s via `Bash` (`sleep 3`)
-  before the next attempt (≈15s worst case).
-- If a server was registered but its tools never load after all attempts → fall
-  to `prompt-relay` **gracefully** when content was injected, else a §7
-  `fetch_ticket` setup error; bounded, never an infinite hang.
-- When the tools are immediately callable (e.g. a laptop's always-on connector)
-  the first attempt resolves and no wait occurs.
+> **Validation notes (2026-07-19):**
+> - A first attempt used 3 *rapid* ToolSearches ("the round-trips cover the
+>   connect"); a cold-start Cyrus run (BMC-205) degraded to prompt-relay with
+>   zero MCP calls.
+> - A second attempt added `sleep`-based waits (5×~3s). The raw MCP client log
+>   then showed the truth: the `mcp__linear` server connects in **457 ms** with
+>   the full toolset — neither slow nor limited. The real gap is **tool
+>   discovery**, and it is **per-context**: in BMC-206 the *top-level* session
+>   made the real `mcp__linear__*` calls (→ Done) while the *forked* orchestrator
+>   exhausted its retries and never saw the tools. A `sleep` cannot fix a
+>   per-context discovery lag, so it was reverted. The robust fix is content
+>   propagation (§2b): give the fork the ticket content so `prompt-relay` always
+>   works when the fork can't see the MCP.
 
-The 5-attempt / ~3-second bounds are tunable.
+### 2b. Content propagation across the fork boundary
 
-> **Validation note (2026-07-19):** an initial version used 3 *rapid* ToolSearch
-> attempts with no wait, assuming "the round-trips cover the connect." A
-> cold-start Cyrus run (BMC-205) disproved that — the three calls completed in
-> ~1–2s and missed a connect that finishes at ~5–10s, degrading the run to
-> prompt-relay with zero real MCP calls. The explicit `sleep`-based wait is the
-> correction.
+The transport fix alone is not enough on Cyrus, because `auto-ticket` runs as a
+`context: fork` skill: a forked skill sees only its own invocation args, not the
+parent prompt. Cyrus's FullAuto template injects the ticket title/description as
+sibling text in the *parent* prompt, so the fork receives **neither** the MCP
+tools (discovery lag) **nor** the content → it is stuck (observed in BMC-205).
+
+Fix: a **working-directory handoff file**. The harness (the FullAuto template)
+`Write`s the ticket content to `.ccmagic-ticket.md` in the working directory
+*before* invoking `/ccmagic:auto-ticket`; the orchestrator reads it (then `rm`s
+it so it is never committed) when content isn't inline and no MCP is reachable.
+Parent and fork share the worktree cwd, so the file crosses the boundary
+deterministically. Only `auto-ticket` needs to read it — once it has the content
+it builds the grounding block that carries `ticket_content:` to every sub-skill
+(§3), making `prompt-relay` an always-available fallback regardless of the
+per-context MCP-discovery race.
 
 ### 3. Grounding-block transport is authoritative
 
