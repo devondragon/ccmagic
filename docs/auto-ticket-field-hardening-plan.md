@@ -401,7 +401,13 @@ review_pass: {n — only on Step 3 re-reviews; absent on the first review pass}
 Then, after the paragraph that begins "Under the **prompt-relay transport** (§7) the block also carries…" (i.e., after the `ticket_content` explanation, before §3), add this sentence as its own paragraph:
 
 ```markdown
-`review_pass:` appears only when the orchestrator re-invokes `review-ticket` inside its Step 3 fix loop (2 on the first re-review, incrementing). `review-ticket` uses it to switch to a delta report (see its *Autonomous mode*); all other sub-skills ignore it.
+`review_pass:` appears only when the orchestrator re-invokes `review-ticket` inside its Step 3 fix loop (2 on the first re-review, incrementing). `review-ticket` uses it to switch to a delta report (see its *Autonomous mode*); all other sub-skills ignore it. On those re-invocations the orchestrator also appends a `previous_findings:` section to the grounding block — a short fenced list of the findings it just applied in the fix loop (id/title + file per finding) — so the fresh review subagent knows exactly what to verify as fixed:
+
+previous_findings:
+~~~
+- {id/title} — {file}
+- {id/title} — {file}
+~~~
 ```
 
 - [ ] **Step 2: Set `review_pass` in auto-ticket's fix loop**
@@ -415,7 +421,7 @@ In `skills/auto-ticket/SKILL.md` Step 3, replace:
 with:
 
 ```markdown
-  3. Re-invoke the review-ticket step via `run_step`, adding `review_pass: {n}` to the grounding block (2 on the first re-review, incrementing) so the reviewer produces a delta report (contract §2).
+  3. Re-invoke the review-ticket step via `run_step`, adding `review_pass: {n}` to the grounding block (2 on the first re-review, incrementing) so the reviewer produces a delta report (contract §2), and appending a `previous_findings:` section listing the findings just applied (contract §2) so the fresh review subagent knows what to verify.
 ```
 
 - [ ] **Step 3: Add the delta-report behavior to review-ticket**
@@ -423,7 +429,8 @@ with:
 In `skills/review-ticket/SKILL.md`, under *Autonomous mode → Behavior at each human-gate*, after the `- **Step 7 (Drift handling):**` bullet block, add:
 
 ```markdown
-- **Re-review passes (`review_pass:` ≥ 2 in the grounding block):** post a **delta report** instead of a full fresh one — findings from the previous pass confirmed fixed as one-liners, net-new findings in full (schema unchanged), and a reference/link to the previous report's comment instead of repeating unchanged sections. Verdict and handshake semantics are unchanged, and the systemic-enumeration and scoped-all-clear rules apply in full on every pass.
+- **Report posting:** post the Step 6 combined report (or the delta report on re-review passes) as a PR comment (`gh pr comment`) so every pass leaves a retrievable artifact on the PR.
+- **Re-review passes (`review_pass:` ≥ 2 in the grounding block):** post a **delta report** instead of a full fresh one — each entry in the grounding block's `previous_findings:` list verified and reported fixed / not-fixed as one-liners, net-new findings in full (schema unchanged), and a reference to the previous pass's report comment on the PR (fetch via `gh pr view --json comments` if needed) instead of repeating unchanged sections. Verdict and handshake semantics are unchanged, and the systemic-enumeration and scoped-all-clear rules apply in full on every pass.
 ```
 
 - [ ] **Step 4: Verify**
@@ -436,6 +443,8 @@ Run: `grep -rn "review_pass" skills/auto-ticket/autonomous-contract.md skills/au
 git add skills/auto-ticket/autonomous-contract.md skills/auto-ticket/SKILL.md skills/review-ticket/SKILL.md
 git commit -m "feat(review-ticket): delta reports on re-review passes via review_pass"
 ```
+
+*Amended during execution: added `previous_findings:` grounding-block section and explicit PR report-posting so a fresh re-review subagent can actually produce the delta — the original text referenced state no runtime component carried.*
 
 ---
 
