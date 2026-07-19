@@ -22,7 +22,7 @@ This design fixes both failure classes plus approved polish items. Everything is
 Replace the unexecutable "poll every `ci_poll_interval_seconds`" instruction with a bounded blocking watch:
 
 - Compute the watch budget: `CYCLES = ceil(ci_timeout_minutes / 10)` (default 30 min → 3 invocations).
-- Loop: invoke `gh pr checks {PR_NUMBER} --watch --interval {ci_poll_interval_seconds}` as a **single Bash call with the maximum tool timeout (600000 ms)**. `--watch` blocks until no check is pending, so each call either returns "settled" or is cut off by the tool timeout.
+- Loop: invoke `gh pr checks {PR_NUMBER} --watch --interval {ci_poll_interval_seconds}` as a **single Bash call with the maximum tool timeout (600000 ms)**. `--watch` blocks until no check is pending, so each call either returns "settled" or is cut off by the tool timeout. A non-zero exit with completed checks in the output is still "settled" — settled-with-failures — and proceeds to the next step rather than re-invoking the watch.
 - On tool timeout: it consumed a full 10 minutes by construction — count it. Fewer than `CYCLES` cut-off calls so far → re-invoke the watch; `CYCLES` reached → **route-and-stop** (reason: CI timeout) exactly as today. The count is tracked in working notes, not shell variables — shell state does not persist between Bash calls.
 - **No-checks guard:** if `gh pr checks` reports no checks at all (exit immediately / "no checks reported"), re-check up to 3 times — this covers the registration race just after a push — then treat as "no CI configured → settled" and record that in the run summary. The finish-ticket merge gate re-verifies `statusCheckRollup` before merging, so it remains the backstop.
 
@@ -68,7 +68,7 @@ Add to scope validation (applies in both interactive and autonomous modes): iden
 - Grounding block gains an optional `review_pass: {n}` line; auto-ticket sets it when re-invoking review-ticket in the Step 3 fix loop.
 - On those re-invocations, the grounding block also gains a `previous_findings:` section — the findings auto-ticket just applied in the fix loop (id/title + file) — so the fresh review subagent (a new context, with no memory of the prior pass) knows exactly what to verify as fixed.
 - When `review_pass` ≥ 2, review-ticket posts a **delta report**: each `previous_findings:` entry verified and reported fixed/not-fixed as one-liners, net-new findings in full, the previous report referenced rather than repeated (fetched via `gh pr view --json comments` if needed). The handshake/verdict semantics are unchanged.
-- review-ticket posts its report (full or delta) as a PR comment via `gh pr comment` on every pass, so each pass leaves a retrievable artifact for the next one to reference.
+- review-ticket posts its report (full or delta) as a PR comment via `gh pr comment` on every pass, so each pass leaves a retrievable artifact for the next one to reference — conditional on a PR existing (a standalone pre-PR review has no PR to comment on and skips posting), and this report post subsumes the Step 7 out-of-scope comment rather than duplicating it.
 
 ### 7. Risk-ordering scoping note
 
