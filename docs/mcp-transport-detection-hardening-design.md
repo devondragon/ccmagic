@@ -95,20 +95,29 @@ ambiguity.
 
 When the tracker is `linear` and a server is *available but its tools are not yet
 callable*, the skill must load the tools before use rather than concluding
-absence. Skills have no `sleep` primitive, so "wait" is expressed as a **bounded
-`ToolSearch` retry**:
+absence — and the retry must span real wall-clock time, because back-to-back
+`ToolSearch` calls return in well under a second combined and will not outlast
+the remote MCP's multi-second handshake. Skills *do* have a wait primitive:
+`Bash` (`sleep`). The mechanism is a **bounded, wall-clock-aware retry**:
 
-- Attempt `ToolSearch` for `mcp__*linear*__get_issue` (and the other needed
-  tools) up to **3 times**. The ToolSearch round-trips themselves provide the
-  brief delay the async connect needs.
-- If the tools resolve within the retries → `transport: mcp`.
-- If a server was registered but its tools never load after the retries → fall
-  to `prompt-relay` **gracefully** and note the anomaly in the run output
-  (bounded; never an infinite hang). If ticket content was not injected, this
-  degraded case is a setup error per the existing §7 `fetch_ticket` rule.
+- Loop up to **5 attempts**. Each attempt runs `ToolSearch` for
+  `mcp__*linear*__get_issue` (and the other needed tools); if it resolves →
+  `transport: mcp` (stop looping); otherwise wait ~3s via `Bash` (`sleep 3`)
+  before the next attempt (≈15s worst case).
+- If a server was registered but its tools never load after all attempts → fall
+  to `prompt-relay` **gracefully** when content was injected, else a §7
+  `fetch_ticket` setup error; bounded, never an infinite hang.
+- When the tools are immediately callable (e.g. a laptop's always-on connector)
+  the first attempt resolves and no wait occurs.
 
-3 is a starting value chosen from the observed connect time (the server
-connected well within one run); it is documented as tunable.
+The 5-attempt / ~3-second bounds are tunable.
+
+> **Validation note (2026-07-19):** an initial version used 3 *rapid* ToolSearch
+> attempts with no wait, assuming "the round-trips cover the connect." A
+> cold-start Cyrus run (BMC-205) disproved that — the three calls completed in
+> ~1–2s and missed a connect that finishes at ~5–10s, degrading the run to
+> prompt-relay with zero real MCP calls. The explicit `sleep`-based wait is the
+> correction.
 
 ### 3. Grounding-block transport is authoritative
 
