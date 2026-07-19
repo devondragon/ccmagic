@@ -110,6 +110,14 @@ Resolution for these keys follows the existing project → user → built-in pre
 - Inside a step subagent, any transitively-invoked `context: fork` skill (e.g. work-ticket → analyze-impact, review-ticket → review) runs **inline** within that step's isolated context rather than forking again. Preloading the needed skills on the agent makes this clean.
 - To avoid double-review, the orchestrated **work** step should defer full code review to the orchestrator's dedicated **review** step (it already runs `review-ticket` in Step 3); the work step keeps only its lightweight self-check.
 
+## CI wait mechanism (added after field-run B, 2026-07)
+
+The one long-latency step in the run — Step 4c's "wait for CI" — was originally specced as a 60s poll loop, which is not executable: the orchestrator runs as a forked subagent whose toolset (`Read, Edit, Bash(git/gh), Glob, Grep, Task, TodoWrite, Skill`) has no wait primitive, and foreground sleep is blocked in the harness. In field-run B the fork returned control and the run silently stalled — the "third outcome" contract §6 promises never happens.
+
+The mechanism is now a **bounded blocking watch**: `gh pr checks {PR} --watch --interval {ci_poll_interval_seconds}` invoked as a single Bash call at the maximum tool timeout (600000 ms), re-invoked while elapsed time (tracked via `date +%s`) is under `ci_timeout_minutes`, then route-and-stop on timeout. `--watch` blocks inside one Bash call, which *is* executable in a forked subagent, portable to headless/Cyrus deployments (needs only `gh`), and stays inside the already-allowed `Bash(gh:*)` surface. A no-checks guard (re-check up to 3×, then treat as "no CI configured") covers the check-registration race just after a push; finish-ticket's merge gate re-verifies `statusCheckRollup` as the backstop.
+
+The wait deliberately stays in Step 4c (not finish-ticket): the feedback loop's new-bot-review detection (high-water-mark `H`) needs CI and reviews to have settled *inside* the loop.
+
 ## Risks to validate during implementation
 
 1. **Skill-frontmatter model clobber — now designed out (was highest priority):** originally the concern was that an invoked lifecycle skill's own `model: sonnet` would override the step-agent's chosen model. The skill-frontmatter model strategy above removes the disagreement at the source (skills `inherit` or already match the step-agent), so no step has a model to clobber. The preload-not-invoke approach remains as belt-and-suspenders. Nothing model-related needs a live smoke test now; the end-to-end test only confirms the fork + handshake plumbing.

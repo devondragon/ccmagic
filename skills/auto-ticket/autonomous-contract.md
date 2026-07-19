@@ -128,7 +128,7 @@ When the run is on the **prompt-relay transport** (§7), the park routine change
 | `max_review_fix_passes` | int | `2` | Cap on the ticket-review fix loop (orchestrator Step 3) before parking. |
 | `max_validate_attempts` | int | `2` | Cap on local `/ccmagic:validate` fix attempts (orchestrator Step 4b) before parking. |
 | `ci_timeout_minutes` | int | `30` | Max minutes to wait for CI to settle (orchestrator Step 4c) before parking on timeout. |
-| `ci_poll_interval_seconds` | int | `60` | Interval between CI status polls (orchestrator Step 4c). |
+| `ci_poll_interval_seconds` | int | `60` | Interval passed to `gh pr checks --watch` during the CI wait (orchestrator Step 4c). |
 | `model_work_ticket` | string | `opus` | Model for the work step's agent (`auto-work`). |
 | `model_review_ticket` | string | `opus` | Model for the review step's agent (`auto-review`). |
 | `model_pr_feedback` | string | `sonnet` | Model for the pr-feedback step's agent (`auto-feedback`). |

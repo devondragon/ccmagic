@@ -122,11 +122,15 @@ Everything this pass pushes is measured against `H`, so bot reviews triggered *b
 **4b. Validate locally before trusting CI.** Run the validate step via `run_step` — `/ccmagic:validate`. If it fails, fix the regressions (bounded: `max_validate_attempts` attempts, default **2**, editing + re-validating), then commit/push via `/ccmagic:push` (run this via `run_step`). If it still fails after the attempts → **route-and-stop** (reason: "local validation fails: {summary}"). Doing this locally keeps CI + bot-review round-trips rare.
 
 **4c. Wait for CI and new reviews.** This pass's push(es) already happened (in 4a via `pr-feedback`, and possibly again in 4b); `H` was captured before them at the top of the pass. Now that they've landed:
-  - Poll CI until it settles — no check is `pending`/`in_progress`:
-    ```bash
-    gh pr checks {PR_NUMBER}
-    ```
-    Poll on `ci_poll_interval_seconds` (default ≈60s) up to `ci_timeout_minutes` (default ≈30 min). If CI never settles within the cap → **route-and-stop** (reason: "CI did not complete within the timeout").
+  - **Wait for CI to settle** — no check `pending`/`in_progress` — using a **bounded blocking watch**. (A sleep-based poll loop is not executable in this context: the orchestrator has no wait primitive. The blocking watch below is.)
+    1. Record the start time: `START=$(date +%s)`.
+    2. Run the watch as a single Bash call **with the maximum tool timeout (600000 ms)**:
+       ```bash
+       gh pr checks {PR_NUMBER} --watch --interval {ci_poll_interval_seconds}
+       ```
+       `--watch` blocks until no check is pending, so each call either returns with CI settled or is cut off by the 10-minute tool timeout.
+    3. If the call was cut off by the tool timeout: recompute elapsed minutes (`$(( ($(date +%s) - START) / 60 ))`). Elapsed < `ci_timeout_minutes` → re-invoke the watch (step 2). Cap reached → **route-and-stop** (reason: "CI did not complete within the timeout").
+    4. **No-checks guard:** if `gh pr checks` reports no checks at all (immediate exit / "no checks reported"), re-check up to 3 times — checks can register a few seconds after a push. Still none → treat CI as settled ("no CI configured"), record that in the run summary, and rely on finish-ticket's merge-gate `statusCheckRollup` re-verification as the backstop.
   - Then re-fetch review comments (`gh api repos/{owner}/{repo}/pulls/{PR_NUMBER}/comments`) and PR reviews. New reviewer comments — **id above `H`**, not authored by the PR author (e.g. Copilot/Claude bot reviews) — are **new actionable threads** for the next pass. Capturing `H` before the push is what lets a bot review posted in response to this push count as new rather than being mistaken for an already-handled thread.
 
 **4d. Recompute "clean".** The pass is **clean** when **both** hold:
@@ -215,7 +219,7 @@ There is no third "stalled" outcome. Never hang waiting for input.
 | `review-ticket` → `needs-human`, or `fixable-findings` unresolved after the bounded loop | route-and-stop (stage `review-ticket`). |
 | `pr-feedback` → `needs-human` (genuine reviewer tie) | route-and-stop (stage `pr-feedback`). |
 | Local `/ccmagic:validate` can't be made green within the bounded attempts | route-and-stop (reason: validation failures). |
-| CI never settles within the poll cap | route-and-stop (reason: CI timeout). |
+| CI never settles within `ci_timeout_minutes` (watch loop cap) | route-and-stop (reason: CI timeout). |
 | Feedback-pass cap hit still not clean | route-and-stop (reason: remaining threads / red CI). |
 | `finish-ticket` merge gate not satisfied | It returns `needs-human` and does not merge → route-and-stop (stage `finish-ticket`). |
 | `route-and-stop` can't move state (no matching state) | **mcp:** apply `needs_human_label`, leave state unchanged, still post the comment (contract §4). **prompt-relay:** contract §4's prompt-relay branch applies — no state/label writes; PR comment + relayed parked note. |
