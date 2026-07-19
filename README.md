@@ -166,6 +166,8 @@ auto-ticket {ID}
   → summary          posted to the PR and the ticket
 ```
 
+Review-fix passes fix systemic findings as a whole class, re-reviews post deltas rather than fresh full reports, and the CI wait is a bounded blocking watch (`gh pr checks --watch`) — never a sleep loop.
+
 ### Merge, or park — never guess, never stall
 
 For solo-dev projects, **auto-merge with no human in the loop is intended**. The safety property is *not* "avoid merging" — it's that when the work is genuinely uncertain or needs a human decision, the run **parks** the ticket instead of guessing or stalling:
@@ -191,7 +193,7 @@ max_feedback_passes: 3         # cap on the pr-feedback loop before parking
 # max_review_fix_passes: 3     # ticket-review fix loop
 # max_validate_attempts: 2     # local /ccmagic:validate fix attempts
 # ci_timeout_minutes: 30       # how long to wait for CI before parking on timeout
-# ci_poll_interval_seconds: 60 # how often to poll CI status
+# ci_poll_interval_seconds: 60 # interval for the gh pr checks --watch CI wait
 ```
 
 **Config precedence:** each key resolves highest-first — an explicit arg / grounding-block value → the project file `.claude/ccmagic.local.md` → the user file `~/.claude/ccmagic.local.md` → the built-in skill default. Put personal defaults (e.g. a longer `ci_timeout_minutes`) in the user file once and override them per-repo in the project file.

@@ -55,7 +55,7 @@ max_feedback_passes: 3
 # to override). max_review_fix_passes: ticket-review fix loop. max_validate_attempts:
 # local /ccmagic:validate fix attempts. ci_timeout_minutes: how long to wait for CI
 # to settle before parking on timeout (raise it if your CI is slow).
-# ci_poll_interval_seconds: how often to poll CI status.
+# ci_poll_interval_seconds: interval for the gh pr checks --watch CI wait.
 # max_review_fix_passes: 3
 # max_validate_attempts: 2
 # ci_timeout_minutes: 30
@@ -94,7 +94,7 @@ Copy this file to **`.claude/ccmagic.local.md`** in your project root and edit t
 | `max_review_fix_passes` | Cap on the ticket-review fix loop in an autonomous run before parking. | `3` |
 | `max_validate_attempts` | Cap on local `/ccmagic:validate` fix attempts in an autonomous run before parking. | `2` |
 | `ci_timeout_minutes` | Max minutes to wait for CI to settle before parking on timeout. | `30` |
-| `ci_poll_interval_seconds` | Interval between CI status polls in an autonomous run. | `60` |
+| `ci_poll_interval_seconds` | Interval for the `gh pr checks --watch` CI wait in an autonomous run. | `60` |
 | `model_<step>` | Per-step model override (`model_work_ticket` … `model_push`). | Balanced mapping |
 
 Every key above also has effect from a **user-level** `~/.claude/ccmagic.local.md` — the project file (this one) takes precedence over the user file, and both override the built-in defaults. Put personal defaults you want in every project (e.g. a longer `ci_timeout_minutes`) in the user file; override them per-repo here.
