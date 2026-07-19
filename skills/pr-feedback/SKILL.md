@@ -229,7 +229,7 @@ Autonomous mode is ON when the first present signal (in priority order) resolves
 
 Absent all three, run the interactive plan-only path exactly as documented above.
 
-**Tracker for follow-ups.** Resolve the tracker with the same cascade as `/ccmagic:work-ticket` (or reuse `tracker:` / `ticket:` if the grounding block carries them). **Under prompt-relay** (contract §7): skip tracker resolution for follow-ups — there is no ticket-creation API in this transport; see the defer/out-of-scope rule below for how deferred items are recorded instead. **Orchestrated vs. standalone** works as in `/ccmagic:work-ticket` → *Autonomous mode*.
+**Tracker for follow-ups.** Resolve the tracker with the same cascade as `/ccmagic:work-ticket` (or reuse `tracker:` / `ticket:` / `transport:` if the grounding block carries them — trust the grounding block's `transport:` rather than re-detecting). **Under prompt-relay** (contract §7): skip tracker resolution for follow-ups — there is no ticket-creation API in this transport; see the defer/out-of-scope rule below for how deferred items are recorded instead. **Orchestrated vs. standalone** works as in `/ccmagic:work-ticket` → *Autonomous mode*.
 
 ### What changes: triage → execute
 

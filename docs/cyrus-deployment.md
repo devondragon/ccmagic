@@ -1,10 +1,12 @@
 # Deploying auto-ticket inside Cyrus
 
-How to run `/ccmagic:auto-ticket` unattended inside [Cyrus](https://github.com/cyrusagents/cyrus) — a Dockerized, Linear-triggered Claude Code worker. Cyrus assigns an issue, spins up a container with a fresh worktree, and runs a Claude Code session against it. That container has **no Linear MCP server** — Linear is reached only through the prompt Cyrus builds and the output Cyrus relays back as a comment. ccmagic's **prompt-relay transport** (`skills/auto-ticket/autonomous-contract.md` §7) is the generic mechanism that carries the Linear side of the ticket lifecycle over that constraint; Cyrus is simply the motivating, concrete deployment.
+How to run `/ccmagic:auto-ticket` unattended inside [Cyrus](https://github.com/cyrusagents/cyrus) — a Dockerized, Linear-triggered Claude Code worker. Cyrus assigns an issue, spins up a container with a fresh worktree, and runs a Claude Code session against it. That container **does** provide the official hosted **Linear MCP** (`https://mcp.linear.app/mcp`, authed with the workspace OAuth token), so the **`mcp` transport is primary** — the ticket lifecycle reads and writes Linear directly via `mcp__linear__*` (verified end-to-end 2026-07-19: a FullAuto ticket ran implement → review → merge → Done entirely over MCP). ccmagic's **prompt-relay transport** (`skills/auto-ticket/autonomous-contract.md` §7) remains as the **fallback**: it covers the brief window at session start where Cyrus's non-blocking MCP is still connecting, and any other headless harness with no Linear MCP at all.
+
+**Two prerequisites make `mcp` work in-container** (both were required in testing): (i) each repo's `allowedTools` must include `mcp__linear` — a verbatim `allowedTools` override in Cyrus config *replaces* the platform default and silently drops it; (ii) the plugin directory (`~/.cyrus/user-skills-plugin`) must be readable by the session — Cyrus's home-directory read-deny otherwise blocks skills from reading their `${CLAUDE_SKILL_DIR}` support files (e.g. `autonomous-contract.md`), which strands auto-ticket.
 
 ## Prerequisites
 
-1. **Linear's GitHub integration, with auto-close automation enabled on the team.** This is what moves the issue to Done when the linked PR merges. The agent never calls a Linear state-transition API under prompt-relay — it only emits state *intents* (`Requested state: Done`) in its final message. Without this automation enabled, a merged ticket stays stuck in whatever state Cyrus set on assignment (typically In Progress).
+1. **Linear's GitHub integration with auto-close automation — required only under prompt-relay.** Under the `mcp` transport (the primary path) `finish-ticket` moves the issue to Done directly via `mcp__linear__save_issue`, so no automation is needed. Under **prompt-relay** the agent never calls a state-transition API — it only emits state *intents* (`Requested state: Done`) — so the team's GitHub auto-close automation is what moves a merged ticket to Done; without it, a prompt-relay ticket stays in whatever state Cyrus set on assignment (typically In Progress).
 2. **`gh` authenticated in the container.** Verified on a live Cyrus instance (2026-07-18): `gh` is present and logged in via the `GH_TOKEN` environment variable. The entire PR/git/CI half of the cycle — branch, push, PR, review comments, merge — runs through `gh` exactly as it does on a laptop; only the Linear side changes transport.
 3. **The repo checkout includes ccmagic** (plugin installed) and its `.claude/ccmagic.local.md` pinning `tracker: linear` (or a Linear-shaped `ticket_url_base:`). No prompt-relay-specific config keys exist — transport detection is automatic (content-presence, see below) — but the tracker still has to resolve first: with `tracker: auto` and no MCPs in the container, an `ENG-123`-shaped ID can't be disambiguated from JIRA. Pinning the tracker (or a Linear-shaped `ticket_url_base:`) is what makes detection deterministic in-container; that same pinned config file then works unmodified on a laptop and inside Cyrus.
 
@@ -12,7 +14,7 @@ How to run `/ccmagic:auto-ticket` unattended inside [Cyrus](https://github.com/c
 
 Cyrus builds the prompt for each container run from a template in the Cyrus repo. For that prompt to work with ccmagic's prompt-relay transport, it must do two things:
 
-1. **Invoke `/ccmagic:auto-ticket {TICKET-ID}` with the issue title and description included in the same message.** `auto-ticket` is `context: fork` — it only ever sees its own arguments, not anything else that was in the top-level prompt. Content that isn't passed into the invocation never reaches the skill, so "the issue is already in the prompt somewhere" is not sufficient — it must be in the invocation text itself.
+1. **Write the issue title + description to `.ccmagic-ticket.md` in the working directory, then invoke `/ccmagic:auto-ticket {TICKET-ID}`.** `auto-ticket` is `context: fork` — it only ever sees its own arguments, not anything else in the top-level prompt. Sibling text ("the issue is already in the prompt somewhere") never reaches the fork; the handoff file does — parent and fork share the worktree, so `auto-ticket` reads the content from `.ccmagic-ticket.md` (contract §7 `fetch_ticket`) and `rm`s it afterward. (This replaces the earlier "put the content in the same message" approach, which did not survive the fork boundary.)
 2. **Instruct the session to reproduce the skill's returned final-message block verbatim as its own final message.** `auto-ticket` ends its output with a delimited block:
 
    ```
@@ -23,19 +25,20 @@ Cyrus builds the prompt for each container run from a template in the Cyrus repo
 
    Cyrus relays the session's top-level final output to Linear as a comment — and the main-loop model can paraphrase or truncate a forked skill's return before that. The delimited block plus an explicit verbatim-repeat instruction in the prompt are the two mitigations against that; the live test below is what confirms they work.
 
-Copy-pasteable template — fill in `{TICKET-ID}`, `{issue title}`, and `{issue description}` with the values Cyrus already has for the assigned issue. The ticket content sits in the same message as the invocation itself, not as separate framing text above it:
+Copy-pasteable template — fill in `{TICKET-ID}`, `{issue title}`, and `{issue description}` with the values Cyrus already has for the assigned issue. The template first writes the content to the handoff file, then invokes the skill:
 
 ```
-Run this command, with the ticket content included in the same message:
-
-/ccmagic:auto-ticket {TICKET-ID}
-
-Ticket content (title + description, verbatim):
+First write the ticket content to a handoff file the forked skill can read.
+Create `.ccmagic-ticket.md` in the working directory with exactly this content:
 ~~~
 {issue title}
 
 {issue description}
 ~~~
+
+Then run:
+
+/ccmagic:auto-ticket {TICKET-ID}
 
 When the command finishes, its output will end with a block delimited by:
 === FINAL MESSAGE TO RELAY (reproduce verbatim) ===

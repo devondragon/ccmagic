@@ -168,7 +168,17 @@ A **transport** is *how* a tracker is reached, independent of *which* tracker it
 
 ### Detection
 
-transport = `prompt-relay` when ALL of: (a) the tracker resolves to `linear`; (b) no `mcp__*Linear*__*` tool is present in the session; (c) ticket content (title + description) was explicitly provided in the invocation arguments or grounding block. Otherwise transport = `mcp` and behavior is unchanged. The check runs *before* any "none available → stop" branch. Content-presence (c) is a *transport* signal, not a tracker tiebreaker — condition (a) still resolves the tracker via config or the detection cascade, so a headless deployment with no MCPs should pin `tracker: linear` (or a Linear-shaped `ticket_url_base:`) to keep (a) deterministic.
+transport = `prompt-relay` when ALL of: (a) the tracker resolves to `linear`; (b) **no Linear MCP server is available to the session** (definition below); (c) ticket content (title + description) was explicitly provided in the invocation arguments or grounding block. Otherwise transport = `mcp`. The check runs *before* any "none available → stop" branch. Content-presence (c) is a *transport* signal, not a tracker tiebreaker — condition (a) still resolves the tracker via config or the detection cascade, so a headless deployment with no MCP should pin `tracker: linear` (or a Linear-shaped `ticket_url_base:`) to keep (a) deterministic.
+
+**A Linear MCP server is "available"** if ANY of these hold (the pattern is **case-insensitive** — Cyrus registers its server lowercase as `mcp__linear__*`):
+
+1. a `mcp__*[Ll]inear*__*` tool (e.g. `mcp__linear__get_issue`, `mcp__claude_ai_Linear__get_issue`) is directly callable; or
+2. `mcp__*[Ll]inear*__*` tool names appear in the session's deferred / loadable tool list (discoverable via `ToolSearch`); or
+3. the session reports a Linear MCP server that is registered but **still connecting** (e.g. a system-reminder naming a `linear` server as connecting).
+
+A registered-but-connecting server (signals 2–3) is **present, not absent** — do not fall to prompt-relay on the strength of a tool not being *immediately* callable.
+
+**Loading the tools (bounded, non-blocking).** When a Linear MCP server is present but its tools are not yet callable in *this* context, make a bounded attempt to load them: run `ToolSearch` for `mcp__*linear*__get_issue` (plus the other tools the step needs) 2–3 times. If they resolve, `transport = mcp`. If they do not, **do not block or sleep waiting** — on Cyrus the server connects in well under a second, but its tools populate the deferred-tool index on a **per-context lag**: a forked sub-skill frequently cannot see tools the top-level session already has, and a short wait does not reliably bridge that gap. Fall through to `prompt-relay`, which must **always** be viable because the run's ticket content travels with the invocation (see §2 — inline `ticket_content:` or the working-directory handoff file). If neither the MCP tools nor injected content is available, stop with the §7 `fetch_ticket` setup-error (never hang, never guess). When the tools are immediately callable (e.g. a laptop's always-on connector) the first attempt resolves.
 
 ### Operations
 
@@ -176,7 +186,7 @@ Each tracker-I/O step in the lifecycle skills carries a one-line "in prompt-rela
 
 | Op | Prompt-relay behavior |
 |---|---|
-| `fetch_ticket(id)` | Read the title + description from the invocation arguments / grounding block's `ticket_content:` section (§2). Absent → **setup error, stop and say so** — never guess, never park (the caller should have injected it). |
+| `fetch_ticket(id)` | Read the title + description from the invocation arguments / grounding block's `ticket_content:` section (§2), or — for a forked orchestrator whose parent injected the content — from a `.ccmagic-ticket.md` handoff file in the working directory (read it, then `rm` it so it is never committed). Absent from all → **setup error, stop and say so** — never guess, never park (the caller should have injected it). |
 | `set_state(In Progress)` | No-op — the harness already moved the ticket to "started" on assignment. |
 | `set_state(In Review \| Done \| needs_human)` | No-op at the API level; report the intended state via the handshake's `requested_state:` field (§3), and the orchestrator emits `Requested state: {X}` as an intent line in the final message. The harness lifecycle / tracker automation owns the actual move. Never a failure or a park trigger. |
 | `comment(ticket, body)` | **Skip.** No accumulation machinery — the PR carries the detailed audit trail via `gh`, and the orchestrator's single Step 6 summary is the only Linear-facing message. |
