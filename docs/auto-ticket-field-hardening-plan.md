@@ -44,13 +44,13 @@ with:
 
 ```markdown
   - **Wait for CI to settle** — no check `pending`/`in_progress` — using a **bounded blocking watch**. (A sleep-based poll loop is not executable in this context: the orchestrator has no wait primitive. The blocking watch below is.)
-    1. Record the start time: `START=$(date +%s)`.
+    1. Compute the watch budget: `CYCLES = ceil(ci_timeout_minutes / 10)` (default 30 min → 3 watch invocations).
     2. Run the watch as a single Bash call **with the maximum tool timeout (600000 ms)**:
        ```bash
        gh pr checks {PR_NUMBER} --watch --interval {ci_poll_interval_seconds}
        ```
        `--watch` blocks until no check is pending, so each call either returns with CI settled or is cut off by the 10-minute tool timeout.
-    3. If the call was cut off by the tool timeout: recompute elapsed minutes (`$(( ($(date +%s) - START) / 60 ))`). Elapsed < `ci_timeout_minutes` → re-invoke the watch (step 2). Cap reached → **route-and-stop** (reason: "CI did not complete within the timeout").
+    3. If the call was cut off by the tool timeout, it consumed a full 10 minutes by construction — count it. Fewer than `CYCLES` cut-off calls so far → re-invoke the watch (step 2). `CYCLES` reached → **route-and-stop** (reason: "CI did not complete within the timeout"). Track the count in your own working notes — never in shell variables, which do not persist between Bash calls.
     4. **No-checks guard:** if `gh pr checks` reports no checks at all (immediate exit / "no checks reported"), re-check up to 3 times — checks can register a few seconds after a push. Still none → treat CI as settled ("no CI configured"), record that in the run summary, and rely on finish-ticket's merge-gate `statusCheckRollup` re-verification as the backstop.
 ```
 
@@ -91,7 +91,7 @@ Read the file first; insert this section between "## Behavior changes" and "## R
 
 The one long-latency step in the run — Step 4c's "wait for CI" — was originally specced as a 60s poll loop, which is not executable: the orchestrator runs as a forked subagent whose toolset (`Read, Edit, Bash(git/gh), Glob, Grep, Task, TodoWrite, Skill`) has no wait primitive, and foreground sleep is blocked in the harness. In field-run B the fork returned control and the run silently stalled — the "third outcome" contract §6 promises never happens.
 
-The mechanism is now a **bounded blocking watch**: `gh pr checks {PR} --watch --interval {ci_poll_interval_seconds}` invoked as a single Bash call at the maximum tool timeout (600000 ms), re-invoked while elapsed time (tracked via `date +%s`) is under `ci_timeout_minutes`, then route-and-stop on timeout. `--watch` blocks inside one Bash call, which *is* executable in a forked subagent, portable to headless/Cyrus deployments (needs only `gh`), and stays inside the already-allowed `Bash(gh:*)` surface. A no-checks guard (re-check up to 3×, then treat as "no CI configured") covers the check-registration race just after a push; finish-ticket's merge gate re-verifies `statusCheckRollup` as the backstop.
+The mechanism is now a **bounded blocking watch**: `gh pr checks {PR} --watch --interval {ci_poll_interval_seconds}` invoked as a single Bash call at the maximum tool timeout (600000 ms), re-invoked up to ⌈`ci_timeout_minutes`/10⌉ times — each cut-off call consumed its full 10-minute cap by construction, so an invocation count tracks elapsed time without cross-call shell state (which does not persist between Bash calls) — then route-and-stop on timeout. `--watch` blocks inside one Bash call, which *is* executable in a forked subagent, portable to headless/Cyrus deployments (needs only `gh`), and stays inside the already-allowed `Bash(gh:*)` surface. A no-checks guard (re-check up to 3×, then treat as "no CI configured") covers the check-registration race just after a push; finish-ticket's merge gate re-verifies `statusCheckRollup` as the backstop.
 
 The wait deliberately stays in Step 4c (not finish-ticket): the feedback loop's new-bot-review detection (high-water-mark `H`) needs CI and reviews to have settled *inside* the loop.
 ```
@@ -108,6 +108,8 @@ Run: `grep -c "CI wait mechanism" docs/auto-ticket-per-step-subagents-design.md`
 git add skills/auto-ticket/SKILL.md skills/auto-ticket/autonomous-contract.md docs/auto-ticket-per-step-subagents-design.md
 git commit -m "fix(auto-ticket): make Step 4c CI wait executable via gh pr checks --watch"
 ```
+
+*Amended during execution: elapsed tracking switched from `date +%s` to an invocation counter — shell state does not persist across Bash calls.*
 
 ---
 

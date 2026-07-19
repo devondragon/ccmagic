@@ -123,13 +123,13 @@ Everything this pass pushes is measured against `H`, so bot reviews triggered *b
 
 **4c. Wait for CI and new reviews.** This pass's push(es) already happened (in 4a via `pr-feedback`, and possibly again in 4b); `H` was captured before them at the top of the pass. Now that they've landed:
   - **Wait for CI to settle** — no check `pending`/`in_progress` — using a **bounded blocking watch**. (A sleep-based poll loop is not executable in this context: the orchestrator has no wait primitive. The blocking watch below is.)
-    1. Record the start time: `START=$(date +%s)`.
+    1. Compute the watch budget: `CYCLES = ceil(ci_timeout_minutes / 10)` (default 30 min → 3 watch invocations).
     2. Run the watch as a single Bash call **with the maximum tool timeout (600000 ms)**:
        ```bash
        gh pr checks {PR_NUMBER} --watch --interval {ci_poll_interval_seconds}
        ```
        `--watch` blocks until no check is pending, so each call either returns with CI settled or is cut off by the 10-minute tool timeout.
-    3. If the call was cut off by the tool timeout: recompute elapsed minutes (`$(( ($(date +%s) - START) / 60 ))`). Elapsed < `ci_timeout_minutes` → re-invoke the watch (step 2). Cap reached → **route-and-stop** (reason: "CI did not complete within the timeout").
+    3. If the call was cut off by the tool timeout, it consumed a full 10 minutes by construction — count it. Fewer than `CYCLES` cut-off calls so far → re-invoke the watch (step 2). `CYCLES` reached → **route-and-stop** (reason: "CI did not complete within the timeout"). Track the count in your own working notes — never in shell variables, which do not persist between Bash calls.
     4. **No-checks guard:** if `gh pr checks` reports no checks at all (immediate exit / "no checks reported"), re-check up to 3 times — checks can register a few seconds after a push. Still none → treat CI as settled ("no CI configured"), record that in the run summary, and rely on finish-ticket's merge-gate `statusCheckRollup` re-verification as the backstop.
   - Then re-fetch review comments (`gh api repos/{owner}/{repo}/pulls/{PR_NUMBER}/comments`) and PR reviews. New reviewer comments — **id above `H`**, not authored by the PR author (e.g. Copilot/Claude bot reviews) — are **new actionable threads** for the next pass. Capturing `H` before the push is what lets a bot review posted in response to this push count as new rather than being mistaken for an already-handled thread.
 

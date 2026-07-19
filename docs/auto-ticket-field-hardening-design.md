@@ -21,9 +21,9 @@ This design fixes both failure classes plus approved polish items. Everything is
 
 Replace the unexecutable "poll every `ci_poll_interval_seconds`" instruction with a bounded blocking watch:
 
-- Record a start timestamp (`date +%s`).
+- Compute the watch budget: `CYCLES = ceil(ci_timeout_minutes / 10)` (default 30 min → 3 invocations).
 - Loop: invoke `gh pr checks {PR_NUMBER} --watch --interval {ci_poll_interval_seconds}` as a **single Bash call with the maximum tool timeout (600000 ms)**. `--watch` blocks until no check is pending, so each call either returns "settled" or is cut off by the tool timeout.
-- On tool timeout: recompute elapsed via `date +%s`; if elapsed < `ci_timeout_minutes`, re-invoke the watch; otherwise **route-and-stop** (reason: CI timeout) exactly as today.
+- On tool timeout: it consumed a full 10 minutes by construction — count it. Fewer than `CYCLES` cut-off calls so far → re-invoke the watch; `CYCLES` reached → **route-and-stop** (reason: CI timeout) exactly as today. The count is tracked in working notes, not shell variables — shell state does not persist between Bash calls.
 - **No-checks guard:** if `gh pr checks` reports no checks at all (exit immediately / "no checks reported"), re-check up to 3 times — this covers the registration race just after a push — then treat as "no CI configured → settled" and record that in the run summary. The finish-ticket merge gate re-verifies `statusCheckRollup` before merging, so it remains the backstop.
 
 Contract §5: update the `ci_poll_interval_seconds` description to "interval passed to `gh pr checks --watch`". SKILL.md Step 4c and the error-handling row are rewritten to match; no config keys are added or removed.
@@ -111,7 +111,7 @@ Run A only caught the second instance because a pass remained. Change 3 addresse
 
 ## Acceptance criteria
 
-1. Step 4c contains no instruction that requires an unavailable wait primitive; the watch loop is expressible with `Bash(gh:*)` + `date` only.
+1. Step 4c contains no instruction that requires an unavailable wait primitive; the watch loop is expressible with `Bash(gh:*)` alone, with no cross-call shell state.
 2. A re-run of Run B's shape (push → CI wait → finish) reaches Step 6 and posts exactly one summary per `run_id`, even if Step 6 executes twice.
 3. A finding of the Run A shape (pattern with multiple reference mechanisms) forces enumeration across mechanisms in the report, and the Step 3 loop fixes the full class before re-review.
 4. finish-ticket in a linked worktree merges cleanly, deletes the remote branch, and exits without error while the worktree remains.
