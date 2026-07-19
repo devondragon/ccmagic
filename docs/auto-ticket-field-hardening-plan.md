@@ -323,7 +323,7 @@ with:
 First detect whether this checkout is a linked worktree (a worktree-per-ticket setup is normal, not an error):
 
 ```bash
-[ "$(git rev-parse --git-dir)" != "$(git rev-parse --git-common-dir)" ] && echo worktree || echo primary
+[ "$(git rev-parse --path-format=absolute --git-dir)" != "$(git rev-parse --path-format=absolute --git-common-dir)" ] && echo worktree || echo primary
 ```
 
 **Primary checkout:**
@@ -339,7 +339,7 @@ gh pr merge {pr_number} {--squash | --merge}
 git push origin --delete {headRefName} 2>/dev/null || true
 ```
 
-Note the worktree in the Step 8 report ("Local worktree left in place: {path}"). No warnings, no errors.
+Note the worktree in the Step 8 report ("Worktree: left in place at {path}"). No warnings, no errors.
 
 Use the strategy flag chosen in Step 5 (`--squash` for feature/bugfix/hotfix/chore branches, `--merge` for `release/...`). If `--delete-branch` is not supported by the installed `gh` version, omit it.
 ````
@@ -349,7 +349,7 @@ Use the strategy flag chosen in Step 5 (`--squash` for feature/bugfix/hotfix/cho
 In the Error Handling table, after the row `| Merge fails for other reason | … |`, insert:
 
 ```markdown
-| `--delete-branch` fails (branch checked out in a worktree, or any local-checkout reason) | Verify the merge succeeded (`gh pr view --json state`), delete the remote branch best-effort (`git push origin --delete {branch}`), leave the local checkout alone, and report the outcome gracefully — this is not an error. |
+| `--delete-branch` fails (branch checked out in a worktree, or any local-checkout reason) | Verify the merge succeeded (`gh pr view --json state`), delete the remote branch best-effort (`git push origin --delete {headRefName}`), leave the local checkout alone, and report the outcome gracefully — this is not an error. |
 ```
 
 - [ ] **Step 3: Add the worktree line to the Step 8 report template**
@@ -373,6 +373,8 @@ Run: `wc -l skills/finish-ticket/SKILL.md` — Expected: < 500.
 git add skills/finish-ticket/SKILL.md
 git commit -m "fix(finish-ticket): worktree-aware branch cleanup, no error on linked worktrees"
 ```
+
+*Amended during execution: detection test normalized with `--path-format=absolute` (relative/absolute output mismatch caused a false positive from subdirectories); conflict-resolution worktree row added; placeholder + phrasing normalized.*
 
 ---
 

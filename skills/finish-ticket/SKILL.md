@@ -255,7 +255,7 @@ Use the merge strategy you determined in Step 5.
 First detect whether this checkout is a linked worktree (a worktree-per-ticket setup is normal, not an error):
 
 ```bash
-[ "$(git rev-parse --git-dir)" != "$(git rev-parse --git-common-dir)" ] && echo worktree || echo primary
+[ "$(git rev-parse --path-format=absolute --git-dir)" != "$(git rev-parse --path-format=absolute --git-common-dir)" ] && echo worktree || echo primary
 ```
 
 **Primary checkout:**
@@ -271,7 +271,7 @@ gh pr merge {pr_number} {--squash | --merge}
 git push origin --delete {headRefName} 2>/dev/null || true
 ```
 
-Note the worktree in the Step 8 report ("Local worktree left in place: {path}"). No warnings, no errors.
+Note the worktree in the Step 8 report ("Worktree: left in place at {path}"). No warnings, no errors.
 
 Use the strategy flag chosen in Step 5 (`--squash` for feature/bugfix/hotfix/chore branches, `--merge` for `release/...`). If `--delete-branch` is not supported by the installed `gh` version, omit it.
 
@@ -439,7 +439,8 @@ requested_state: <Done — prompt-relay only, omit otherwise>
 | Changes requested on PR | Surface them. Ask user to address or override. (Autonomous: `needs-human` — do not merge.) |
 | PR has conflicts | Attempt local resolution. Escalate unresolvable conflicts to user. (Autonomous: trivial → resolve; business-logic → `needs-human`.) |
 | Merge fails for other reason | Show the error. Do not retry blindly. |
-| `--delete-branch` fails (branch checked out in a worktree, or any local-checkout reason) | Verify the merge succeeded (`gh pr view --json state`), delete the remote branch best-effort (`git push origin --delete {branch}`), leave the local checkout alone, and report the outcome gracefully — this is not an error. |
+| `--delete-branch` fails (branch checked out in a worktree, or any local-checkout reason) | Verify the merge succeeded (`gh pr view --json state`), delete the remote branch best-effort (`git push origin --delete {headRefName}`), leave the local checkout alone, and report the outcome gracefully — this is not an error. |
+| Conflict resolution: `git checkout {headRefName}` fails with "already checked out at {path}" | The branch lives in a linked worktree — run the same conflict-resolution commands from that worktree path instead, then re-attempt the merge. Not an error. |
 | Target transition not found (JIRA/Linear) | Show available transitions/states. Ask user to pick. (Autonomous: for the Done target, try the fallbacks; if none match, apply `needs_human_label` and note it.) |
 | QA label missing (GitHub QA path) | Ask user which label, offer to save to config. |
 | Ticket update fails | Warn user. Report what was and wasn't updated. Continue to Done. |
