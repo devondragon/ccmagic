@@ -182,6 +182,8 @@ Implement the feature inline in this session, following these phases:
 
 > If you want the multi-agent feature workflow (parallel codebase exploration, architecture review), consider `/ccmagic:research` for the exploration phase and `/ccmagic:codex-review` for the review phase.
 
+**Scoping a broad ticket:** when the ticket is too broad to ship whole and you narrow it to a slice (deferring the rest with rationale), prefer shipping the **lower-risk** slice first. If the retained slice introduces a new latent-failure mode — an aggressive caching policy, a destructive migration, an auth change — call that out explicitly in the PR body so reviewers and future readers see the risk you took on.
+
 ### Debugging path
 
 Invoke the `ccmagic:debug` skill via the Skill tool. Pass the ticket details as context:
@@ -215,6 +217,8 @@ git diff {base-branch}...HEAD
 ```
 
 Read the changed files to confirm the implementation aligns with the ticket.
+
+**Invariant self-check.** Identify any invariant the change's correctness or safety depends on — *especially one the change itself asserts* in a comment, doc, or the PR body (e.g. "every /js asset is fingerprinted", "all callers hold the lock"). Verify each one actually holds repo-wide with a search across every mechanism that could violate it, before shipping. A violated invariant is a gap like any unmet acceptance criterion: close it, or surface it (autonomous mode: close it or `needs-human` — never ship on a premise the repo violates).
 
 For each acceptance criterion or stated goal in the ticket, report:
 - **Addressed** — describe how.
