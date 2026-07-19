@@ -188,7 +188,7 @@ needs_human_state: Blocked     # where parked tickets go (falls back to the labe
 needs_human_label: needs-human # applied when the state doesn't exist / on GitHub
 max_feedback_passes: 3         # cap on the pr-feedback loop before parking
 # Other autonomous loop bounds (skill defaults shown — set only to override):
-# max_review_fix_passes: 2     # ticket-review fix loop
+# max_review_fix_passes: 3     # ticket-review fix loop
 # max_validate_attempts: 2     # local /ccmagic:validate fix attempts
 # ci_timeout_minutes: 30       # how long to wait for CI before parking on timeout
 # ci_poll_interval_seconds: 60 # how often to poll CI status

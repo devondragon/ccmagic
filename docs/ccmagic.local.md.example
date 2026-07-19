@@ -56,7 +56,7 @@ max_feedback_passes: 3
 # local /ccmagic:validate fix attempts. ci_timeout_minutes: how long to wait for CI
 # to settle before parking on timeout (raise it if your CI is slow).
 # ci_poll_interval_seconds: how often to poll CI status.
-# max_review_fix_passes: 2
+# max_review_fix_passes: 3
 # max_validate_attempts: 2
 # ci_timeout_minutes: 30
 # ci_poll_interval_seconds: 60
@@ -91,7 +91,7 @@ Copy this file to **`.claude/ccmagic.local.md`** in your project root and edit t
 | `needs_human_state` | Tracker state a parked ("needs a human") ticket is moved to during an autonomous run. | none (falls back to `needs_human_label`) |
 | `needs_human_label` | Fallback label applied when `needs_human_state` doesn't exist (and always on GitHub). | `needs-human` |
 | `max_feedback_passes` | Cap on the `pr-feedback` loop in an autonomous run before parking. | `3` |
-| `max_review_fix_passes` | Cap on the ticket-review fix loop in an autonomous run before parking. | `2` |
+| `max_review_fix_passes` | Cap on the ticket-review fix loop in an autonomous run before parking. | `3` |
 | `max_validate_attempts` | Cap on local `/ccmagic:validate` fix attempts in an autonomous run before parking. | `2` |
 | `ci_timeout_minutes` | Max minutes to wait for CI to settle before parking on timeout. | `30` |
 | `ci_poll_interval_seconds` | Interval between CI status polls in an autonomous run. | `60` |
