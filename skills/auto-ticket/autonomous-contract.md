@@ -168,7 +168,17 @@ A **transport** is *how* a tracker is reached, independent of *which* tracker it
 
 ### Detection
 
-transport = `prompt-relay` when ALL of: (a) the tracker resolves to `linear`; (b) no `mcp__*Linear*__*` tool is present in the session; (c) ticket content (title + description) was explicitly provided in the invocation arguments or grounding block. Otherwise transport = `mcp` and behavior is unchanged. The check runs *before* any "none available → stop" branch. Content-presence (c) is a *transport* signal, not a tracker tiebreaker — condition (a) still resolves the tracker via config or the detection cascade, so a headless deployment with no MCPs should pin `tracker: linear` (or a Linear-shaped `ticket_url_base:`) to keep (a) deterministic.
+transport = `prompt-relay` when ALL of: (a) the tracker resolves to `linear`; (b) **no Linear MCP server is available to the session** (definition below); (c) ticket content (title + description) was explicitly provided in the invocation arguments or grounding block. Otherwise transport = `mcp`. The check runs *before* any "none available → stop" branch. Content-presence (c) is a *transport* signal, not a tracker tiebreaker — condition (a) still resolves the tracker via config or the detection cascade, so a headless deployment with no MCP should pin `tracker: linear` (or a Linear-shaped `ticket_url_base:`) to keep (a) deterministic.
+
+**A Linear MCP server is "available"** if ANY of these hold (the pattern is **case-insensitive** — Cyrus registers its server lowercase as `mcp__linear__*`):
+
+1. a `mcp__*[Ll]inear*__*` tool (e.g. `mcp__linear__get_issue`, `mcp__claude_ai_Linear__get_issue`) is directly callable; or
+2. `mcp__*[Ll]inear*__*` tool names appear in the session's deferred / loadable tool list (discoverable via `ToolSearch`); or
+3. the session reports a Linear MCP server that is registered but **still connecting** (e.g. a system-reminder naming a `linear` server as connecting).
+
+A registered-but-connecting server (signals 2–3) is **present, not absent** — do not fall to prompt-relay on the strength of a tool not being *immediately* callable.
+
+**Load-with-retry.** When the server is available by signal 2 or 3 but its tools are not yet callable, load them before use: run `ToolSearch` for `mcp__*linear*__get_issue` (plus the other tools the step needs) up to **3 attempts** — the round-trips themselves cover the asynchronous connect. If the tools resolve, `transport = mcp`. If a server was registered but its tools never load after 3 attempts, fall back to `prompt-relay` **only when ticket content was injected** (condition (c)), and note the degraded transport in the run output; if content was not injected, stop with the §7 `fetch_ticket` setup-error (never hang, never guess). The retry bound of 3 is tunable.
 
 ### Operations
 
