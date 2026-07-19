@@ -221,6 +221,7 @@ Absent all three, run the interactive path exactly as documented above. Also rea
   - **Out-of-scope changes** stay, but flag each one — leave the out-of-scope table populated and post a PR comment listing them. Do not revert.
   - **Missing AC** → treat as *not-done*: `fixable-findings` if the caller can close it in-scope; `needs-human` if it can't.
   - **CRITICAL findings** from `/ccmagic:review` must be fixed before proceeding → return them under `fixable-findings` (the caller fixes and re-reviews). A CRITICAL finding that needs human judgment → `needs-human`.
+- **Re-review passes (`review_pass:` ≥ 2 in the grounding block):** post a **delta report** instead of a full fresh one — findings from the previous pass confirmed fixed as one-liners, net-new findings in full (schema unchanged), and a reference/link to the previous report's comment instead of repeating unchanged sections. Verdict and handshake semantics are unchanged, and the systemic-enumeration and scoped-all-clear rules apply in full on every pass.
 
 ### Verdict → handshake mapping
 
