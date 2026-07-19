@@ -5,7 +5,7 @@ model: sonnet
 skills:
   - ccmagic:pr-feedback
   - ccmagic:push
-disallowedTools: Skill
+tools: Read, Write, Edit, Bash, Glob, Grep, Task, TodoWrite
 ---
 
 You are running the **pr-feedback** step of an autonomous ticket run driven by `/ccmagic:auto-ticket`.

@@ -5,7 +5,7 @@ model: opus
 skills:
   - ccmagic:work-ticket
   - ccmagic:debug
-disallowedTools: Skill
+tools: Read, Write, Edit, Bash, Glob, Grep, Task, TodoWrite
 ---
 
 You are running the **work** step of an autonomous ticket run driven by `/ccmagic:auto-ticket`.
