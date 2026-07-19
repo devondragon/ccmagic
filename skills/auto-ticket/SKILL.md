@@ -162,6 +162,7 @@ Whatever the outcome, record it on the PR and the ticket so the unattended run l
 
 **Outcome:** {✅ Merged into `{base}` | 🅿️ Parked — needs human}
 **PR:** {pr_url}
+**Run:** {run_id}
 **Requested state:** {Done | needs_human_state} *(prompt-relay only — omit under mcp)*
 
 ### What ran
@@ -181,6 +182,8 @@ Whatever the outcome, record it on the PR and the ticket so the unattended run l
 ### If parked
 **Waiting on:** {the reason}. Nothing was merged. Resolve it, then re-run `/ccmagic:auto-ticket {TICKET-ID}`.
 ```
+
+**Idempotency guard:** before posting to any surface, list its existing comments (`gh pr view {PR_NUMBER} --json comments --jq '.comments[].body'` for the PR; the tracker's comment list for the ticket) and **skip that surface** if a `🤖 Autonomous run summary` comment carrying this `run_id` already exists. Re-running Step 6 — after a resume, retry, or manual re-invocation — must never double-post.
 
 - **Merged (mcp transport)** → post the summary as a PR comment and a ticket comment, then report the final status to the user.
 - **Parked (mcp transport)** → the summary is folded into the parked-comment posted by route-and-stop (contract §4); don't double-post.
