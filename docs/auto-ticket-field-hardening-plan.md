@@ -140,7 +140,7 @@ with:
 Immediately before the line starting `- **Merged (mcp transport)** →`, insert:
 
 ```markdown
-**Idempotency guard:** before posting to any surface, list its existing comments (`gh pr view {PR_NUMBER} --json comments --jq '.comments[].body'` for the PR; the tracker's comment list for the ticket) and **skip that surface** if a `🤖 Autonomous run summary` comment carrying this `run_id` already exists. Re-running Step 6 — after a resume, retry, or manual re-invocation — must never double-post.
+**Idempotency guard:** before posting to any surface, list its existing comments (`gh pr view {PR_NUMBER} --json comments --jq '.comments[].body'` for the PR; the tracker's comment list for the ticket) and **skip that surface** if a `🤖 Autonomous run summary` comment carrying this `run_id` already exists. Re-running Step 6 within the same run — after a resume or retry — must never double-post. (A fresh invocation mints a new `run_id` and posts its own summary; that is intentional — each run leaves its own audit trail.)
 ```
 
 - [ ] **Step 3: Verify**
@@ -154,6 +154,8 @@ Run: `grep -c "Idempotency guard" skills/auto-ticket/SKILL.md` — Expected: `1`
 git add skills/auto-ticket/SKILL.md
 git commit -m "feat(auto-ticket): idempotent Step 6 run summary keyed by run_id"
 ```
+
+*Amended during execution: guard claim scoped to same-run re-execution — a fresh invocation mints a new run_id by design.*
 
 ---
 
