@@ -108,6 +108,8 @@ Cross-reference the diff against the AC and out-of-scope notes:
 
 Hold this analysis — it will be merged into the final report after `/ccmagic:review` runs.
 
+**Systemic findings.** When any finding — drift or code-quality — is an instance of a repeatable pattern, enumerate all instances across every reference mechanism that could carry the pattern (template attributes, raw attributes, ES-module imports, CSS `@import`/`url()`, manifests, service workers, config), not just the syntax of the first hit, and tag the finding `systemic:` per the review finding schema. Any "no other instances" claim must state its search scope and the mechanisms covered, or be downgraded to "no other {mechanism} instances found".
+
 ---
 
 ## Step 5: Invoke /ccmagic:review with ticket context

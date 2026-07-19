@@ -14,11 +14,14 @@ Every finding reported by a review agent MUST use this exact structure. Omitting
 - suggestion: <minimal fix — what to change, not a rewrite>
 - specialist: <agent name that produced this finding — e.g. correctness, security, testing, performance, migration>
 - fixable: <true | false — true if the fix is mechanical and can be auto-applied without judgment>
+- systemic: <optional — present only when the issue is an instance of a repeatable pattern: name the defect class, then enumerate EVERY instance found, searching across all reference mechanisms that could carry the pattern (template attributes, raw attributes, ES-module imports, CSS @import/url(), manifests, service workers, config files — whichever apply). Omit for one-off issues.>
 ```
 
 Use one block per finding. Separate findings with a blank line.
 
 The `specialist` field enables multi-specialist confirmation (boosted confidence when 2+ agents flag the same issue). The `fixable` field drives the fix-first workflow — mechanical fixes are auto-applied, judgment calls are batched for user decision.
+
+The `systemic` field prevents whack-a-mole fix loops — a point-fix to the reported line while sibling instances survive to the next review pass. When an issue is one instance of a pattern, the **enumeration is the finding**, not the first hit: search every mechanism that could carry the pattern, not just the syntax the first instance used. And scope your all-clears: a "no other instances" claim MUST state its search scope and the mechanisms covered, or be downgraded to "no other {mechanism} instances found". An unscoped universal claim is more dangerous than silence in an autonomous loop that acts on verdicts.
 
 ## Severity Definitions
 

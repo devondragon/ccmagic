@@ -97,7 +97,7 @@ Run the review-ticket step via `run_step` — `/ccmagic:review-ticket {TICKET-ID
 - `clean` → continue to Step 4.
 - `needs-human` → **route-and-stop** (stage = `review-ticket`).
 - `fixable-findings` → run a **bounded fix loop** (max `max_review_fix_passes` passes, default **2**):
-  1. Apply the CRITICAL findings (and any listed fixable missing-AC items) from the report — edit the code directly.
+  1. Apply the CRITICAL findings (and any listed fixable missing-AC items) from the report — edit the code directly. A `systemic:`-tagged finding is fixed **as a class**: apply the fix to every enumerated instance, then re-run the enumeration search yourself to catch stragglers — never point-fix only the reported line.
   2. Commit and push via `/ccmagic:push` with the grounding block (run this via `run_step`). If push returns `needs-human`, **route-and-stop**.
   3. Re-invoke the review-ticket step via `run_step`.
   4. `clean` → continue to Step 4. `fixable-findings` again and passes remain → repeat. Passes exhausted still not clean, or `needs-human` → **route-and-stop** (reason: the outstanding findings).
