@@ -212,14 +212,14 @@ By default `auto-ticket` runs each lifecycle step in its own **forked subagent**
 
 Each step always runs in its own subagent — override any step's model with `model_<step>` (e.g. `model_pr_feedback: opus`) (the agent file `agents/auto-<step>.md` is the authoritative model source).
 
-### Headless / prompt-relay (Cyrus)
+### Headless runners (Cyrus)
 
-`auto-ticket` also runs inside headless harnesses that inject the ticket into the prompt and relay the session's output back to the tracker — with no tracker MCP in that environment at all.
+`auto-ticket` runs unattended inside headless harnesses like [Cyrus](https://github.com/cyrusagents/cyrus), which assigns a Linear issue, spins up a container with a fresh worktree, and runs the session. Cyrus provides the hosted Linear MCP, so runs go over the **`mcp` transport by default** — the ticket lifecycle reads and writes Linear directly via `mcp__linear__*`. The **prompt-relay transport** is the automatic fallback: for the brief window at session start before Cyrus's non-blocking MCP finishes connecting, and for any harness that injects the ticket into the prompt with no tracker MCP at all.
 
-- **Detection is automatic** — content-presence, zero config keys.
+- **Transport selection is automatic** — by whether the Linear MCP is available, zero config keys.
 - **One consolidated summary** (or parked note) reaches the tracker per run; the GitHub/PR half of the cycle is unaffected — `gh` still drives the branch, PR, and merge.
 
-See `docs/cyrus-deployment.md` for the full deployment walkthrough, prerequisites, and the required prompt template.
+See `docs/cyrus-deployment.md` for the full deployment walkthrough, prerequisites, the build-time patches, and the required prompt template.
 
 ## Configuration
 
@@ -244,7 +244,7 @@ See `docs/ccmagic.local.md.example` for the full config template.
 
 The tracker-aware skills (`work-ticket`, `finish-ticket`, `review-ticket`, `auto-ticket`) auto-detect, or honor a pinned `tracker:` in `.claude/ccmagic.local.md`. Multi-tracker projects are supported — set `tracker: auto` and let each invocation pick.
 
-Linear is reachable over two transports: its MCP server (default, above), or **prompt-relay** for headless harnesses with no Linear MCP in the environment — see [Headless / prompt-relay (Cyrus)](#headless--prompt-relay-cyrus).
+Linear is reachable over two transports: its MCP server (the default — including inside Cyrus, above), or **prompt-relay**, the automatic fallback for the session-start connect window and for headless harnesses that inject the ticket with no Linear MCP at all — see [Headless runners (Cyrus)](#headless-runners-cyrus).
 
 ## Commit-format hook
 
