@@ -127,6 +127,12 @@ Examine `statusCheckRollup`:
 - Are any checks pending, failing, or erroring?
 - List any failing checks by name.
 
+**If `statusCheckRollup` can't be read** — `gh pr view` fails with `Resource not accessible by personal access token` / HTTP 403 — the token is a **fine-grained PAT, which cannot read App-authored check runs** (GitHub Actions, and bot reviewers like Copilot/Claude, are Apps). Do **not** treat this as "CI failing", and do **not** ask anyone to eyeball the checks; read CI from the APIs a fine-grained token *can* see (`Actions: read` + `Commit statuses: read`):
+- `gh run list --commit <headSHA> --json workflowName,status,conclusion` — green only when every run is `completed` with conclusion in {`success`, `skipped`, `neutral`}; block on `queued`/`in_progress` runs with `gh run watch <databaseId>`.
+- `gh api repos/{owner}/{repo}/commits/<headSHA>/status --jq .state` — expect `success`, or no statuses (`total_count: 0`).
+
+This fallback sees GitHub Actions + legacy statuses only, not third-party-App check runs. Only if **neither** the Checks API nor the Actions/Status APIs are readable is CI genuinely unreadable — a blocker (in autonomous mode: `needs-human`, reason "cannot read CI status").
+
 ### 3c. Reviews
 Examine `reviews`:
 - Are there any blocking review requests (CHANGES_REQUESTED) that have not been addressed?
@@ -403,7 +409,7 @@ Absent all three, run the interactive path exactly as documented above. Also rea
 
 ### Behavior at each human-gate
 
-- **Step 3 (Sanity check) — this is the merge gate.** Merge **only if all** of: PR is `MERGEABLE`, every required CI check has passed (green) — an **empty** `statusCheckRollup` counts as green only when the repo genuinely has no CI (no workflow files under `.github/workflows/`, no required status checks on the base branch); CI configured but zero checks registered on the PR is **not** green — and there are no unaddressed `CHANGES_REQUESTED` reviews. If any is not satisfied → `needs-human` (do **not** merge; the `reason` lists the specific blockers). Do not take the interactive "proceed anyway" option.
+- **Step 3 (Sanity check) — this is the merge gate.** Merge **only if all** of: PR is `MERGEABLE`, every required CI check has passed (green) — an **empty** `statusCheckRollup` counts as green only when the repo genuinely has no CI (no workflow files under `.github/workflows/`, no required status checks on the base branch); CI configured but zero checks registered on the PR is **not** green — and there are no unaddressed `CHANGES_REQUESTED` reviews. **If `statusCheckRollup` can't be read at all** (a permissions 403 — a fine-grained PAT cannot read App-authored check runs), determine green via the **Actions + Status API fallback** in §3b; park as "cannot read CI status" only if that is *also* unreadable. **Never ask a human to confirm CI, and never emit a question as the run's result** — an autonomous run ends by merging or by route-and-stop, never by asking. If any gate is not satisfied → `needs-human` (do **not** merge; the `reason` lists the specific blockers). Do not take the interactive "proceed anyway" option.
 - **Step 4 (Disposition):** always take the **Done** path. The QA path needs an interactive hand-off (QA-assignee lookup, status confirmation) that would hang an unattended run, so autonomous mode never enters it — **even if `default_qa_workflow: true`**. If the QA path was explicitly forced (`--qa` passed *together with* an autonomous signal), that's a conflict autonomous mode can't satisfy → `needs-human` (reason: "QA disposition requires a human — re-run without `--qa`, or complete QA manually"); do **not** merge. A project that requires QA on every ticket should not be driven by `/ccmagic:auto-ticket`.
 - **Step 5 (Merge confirmation):** proceed with the determined strategy — squash for `feature/`/`bugfix/`/`hotfix/`/`chore/`, merge commit for `release/` — no pause.
 - **Step 6 (Merge conflicts):** auto-resolve **trivial** conflicts (version bumps, import lists, config values) exactly as Step 6 already describes. A **business-logic** conflict → `needs-human` (do not merge; leave the branch unmerged, `reason` names the conflicting files).

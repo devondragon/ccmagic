@@ -2,6 +2,14 @@
 
 All notable changes to ccmagic are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.6.0] — 2026-07
+
+Field hardening from the FullAuto smoke test on the live [Cyrus](https://github.com/cyrusagents/cyrus) instance: a run implemented a ticket, opened and reviewed the PR, then — unable to read the PR's checks — **ended by asking a human to confirm CI was green** instead of merging or parking. The root cause is not the pipeline but the token: Cyrus authenticates with a **fine-grained PAT**, and fine-grained PATs cannot read check runs authored by a GitHub App (GitHub Actions, and bot reviewers like Copilot/Claude, are Apps), so `gh pr checks` / `statusCheckRollup` return `Resource not accessible by personal access token` (HTTP 403) even with `Checks: read` granted. The Actions API (`gh run …`) and the Status API stay readable with `Actions: read` + `Commit statuses: read`.
+
+### Fixed
+
+- **CI reads are permission-robust; an autonomous run never ends by asking about CI** (`skills/auto-ticket/SKILL.md` Step 4c, `skills/finish-ticket/SKILL.md` §3b + merge gate, `skills/auto-ticket/autonomous-contract.md`) — when `gh pr checks` / `gh pr view --json statusCheckRollup` fail with a permissions 403 (a fine-grained PAT cannot read App-authored check runs), the CI wait and the merge gate now fall back to the **Actions + Status APIs**: `gh run list --commit <sha>` / `gh run watch <id>` for GitHub Actions runs (green = every run `completed` with conclusion in {success, skipped, neutral}) plus `gh api …/commits/<sha>/status` for legacy statuses, instead of treating CI as unreadable. CI is parked as "cannot read CI status" only when **both** the Checks API and the Actions/Status APIs are unreadable, and the merge gate now states explicitly that an autonomous run ends by merging or route-and-stop — **never** by emitting a question. The fallback sees GitHub Actions runs and legacy commit statuses; a repo whose required checks are third-party-App check runs (unreadable by any fine-grained token) is treated as unreadable and parked, never a false green.
+
 ## [3.5.0] — 2026-07
 
 Hardens Linear transport selection after end-to-end validation on a live self-hosted [Cyrus](https://github.com/cyrusagents/cyrus) instance disproved the founding assumption of the prompt-relay work: Cyrus **does** provide the official hosted Linear MCP (`https://mcp.linear.app/mcp`), connecting in ~450 ms with the full toolset. `mcp` is the primary transport on Cyrus; prompt-relay is the fallback for the connect-window and for genuinely MCP-less harnesses. See `docs/mcp-transport-detection-hardening-design.md`.
