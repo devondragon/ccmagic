@@ -2,6 +2,12 @@
 
 All notable changes to ccmagic are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.6.2] — 2026-07
+
+### Fixed
+
+- **`validate` catalogued broken commands and could mask real failures** (`skills/validate/SKILL.md`) — two illustrative commands didn't work as written: `python -m ast **/*.py` (§2) errors on more than one file (the `ast` CLI accepts a single file, and `py_compile` on the line above already covers multi-file syntax checking), and `npx eslint --no-eslintrc --parser espree --no-config` (§2) uses flags that don't coexist (`--no-eslintrc` was removed in ESLint 9) with no target path. Removed the former and replaced the latter with `node --check`. Also reframed the `||` command chains: a check tool exiting non-zero usually means a real failure (lint errors, failing tests), so chaining past it with `||` masked that failure by falling through to the next tool. Added a note under *Implementation Steps* clarifying that `||` denotes *"whichever tool this project uses"* — pick one per detected stack, don't shell-fallback — split the cross-stack test chain (§6) into per-language lines, and hardened the autonomous-mode handshake (§10) to state that a non-zero exit from any selected check is a failure and must never be converted to a pass, since it gates the `/ccmagic:auto-ticket` merge decision.
+
 ## [3.6.1] — 2026-07
 
 ### Fixed

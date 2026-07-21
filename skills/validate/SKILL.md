@@ -27,6 +27,8 @@ Comprehensive pre-commit validation to ensure code quality, tests pass, and chan
 
 ## Implementation Steps
 
+> **How to read the command blocks below.** These are a catalog, not a script to run verbatim. After Step 1 detects the project's stack and tooling, **select the single command that matches** — do not run them all. Where a block chains alternatives with `||` (e.g. `pylint || flake8 || ruff check`, `npm audit || yarn audit`), the `||` denotes *"whichever of these tools this project actually uses"* — **pick the one that's configured, not a shell fallback**. A check tool exiting non-zero almost always means a real failure (lint errors, failing tests), so chaining past it with `||` would mask that failure by falling through to the next tool. Run one command per check and read its exit code directly.
+
 ### 1. Detect Project Type and Tools
 
 ```bash
@@ -47,17 +49,14 @@ ls -la | grep -E ".prettierrc|black.toml|.rustfmt"
 # TypeScript compilation
 npx tsc --noEmit
 
-# JavaScript syntax check
-npx eslint --no-eslintrc --parser espree --no-config
+# Plain-JS syntax check (per file; no config needed)
+node --check path/to/file.js
 ```
 
 #### Python
 ```bash
-# Syntax check
+# Syntax check (accepts multiple files)
 python -m py_compile **/*.py
-
-# AST validation
-python -m ast **/*.py
 ```
 
 #### Go
@@ -121,11 +120,13 @@ cargo fmt -- --check
 ### 6. Test Execution
 
 ```bash
-# Run tests with coverage
-npm test -- --coverage || pytest --cov || go test -cover ./... || cargo test
+# Run tests with coverage — pick the line for the detected stack
+npm test -- --coverage   # JavaScript/TypeScript
+pytest --cov             # Python
+go test -cover ./...     # Go
+cargo test               # Rust
 
-# Check coverage thresholds
-# Fail if coverage < 80%
+# Then check coverage against the threshold (default 80%; see .validation.json)
 ```
 
 ### 7. Security Scanning
@@ -322,6 +323,8 @@ Autonomous mode is ON when the first present signal (in priority order) resolves
 Absent all three, run the interactive path exactly as documented above.
 
 `/ccmagic:validate` has no tracker access; it never moves a ticket. It runs the checks, reports the result, and emits the handshake — the parent skill/orchestrator owns any route-and-stop. Emit `done` when every check passes; emit `needs-human` when one or more checks fail, summarizing the failing checks on the `reason` line (the orchestrator decides whether to fix-and-retry or park). Auto-fix is **off** in autonomous mode — report failures, don't silently rewrite code.
+
+**A non-zero exit from any selected check is a failure.** Because this handshake gates a merge decision in `/ccmagic:auto-ticket`, never let a `||` chain convert a real failure into a pass by falling through to another tool (see the note under *Implementation Steps*): run the one command that matches the detected stack and treat its exit code as authoritative. Emit `done` only when *every* selected check exited zero.
 
 ### Handshake (emit last, in autonomous mode)
 
