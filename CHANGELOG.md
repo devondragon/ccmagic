@@ -2,6 +2,12 @@
 
 All notable changes to ccmagic are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.6.1] — 2026-07
+
+### Fixed
+
+- **`doctor` ran two dead checks and under-reported config** (`skills/doctor/SKILL.md`) — the commit-hook (§4) and skill-inventory (§7) checks located the plugin via `claude plugins show ccmagic --path`, which is not a real CLI subcommand; wrapped in `$(… 2>/dev/null)` the failure was swallowed and the substitution returned empty, so the hook check always ran `test -f "/hooks/…"` against the filesystem root (always "missing") and the inventory check `ls`-ed a nonexistent `/skills` (always skipped). Both now resolve via `$CLAUDE_PLUGIN_ROOT` (the variable already used by `hooks/hooks.json`), degrading to an `INFO` line when it is unset rather than emitting a false failure. Additionally, the project-config section (§2) now parses `.claude/ccmagic.local.md` frontmatter and echoes the resolved `tracker`, `ticket_url_base`, `ticket_id_regex`, `default_qa_workflow`, `github_repo`, `autonomous`, and `needs_human_label` values (falling back to documented defaults for absent/commented keys) instead of only describing what it would report.
+
 ## [3.6.0] — 2026-07
 
 Field hardening from the FullAuto smoke test on the live [Cyrus](https://github.com/cyrusagents/cyrus) instance: a run implemented a ticket, opened and reviewed the PR, then — unable to read the PR's checks — **ended by asking a human to confirm CI was green** instead of merging or parking. The root cause is not the pipeline but the token: Cyrus authenticates with a **fine-grained PAT**, and fine-grained PATs cannot read check runs authored by a GitHub App (GitHub Actions, and bot reviewers like Copilot/Claude, are Apps), so `gh pr checks` / `statusCheckRollup` return `Resource not accessible by personal access token` (HTTP 403) even with `Checks: read` granted. The Actions API (`gh run …`) and the Status API stay readable with `Actions: read` + `Commit statuses: read`.

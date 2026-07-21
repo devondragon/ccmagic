@@ -31,16 +31,25 @@ test -f context/knowledge/CONVENTIONS.md && echo "OK   context/knowledge/CONVENT
 ### 2. ccmagic project configuration
 
 ```bash
-test -f .claude/ccmagic.local.md && echo "OK   .claude/ccmagic.local.md" || echo "INFO .claude/ccmagic.local.md missing — tracker will auto-detect"
+CFG=.claude/ccmagic.local.md
+if [ -f "$CFG" ]; then
+  echo "OK   $CFG present — resolved settings:"
+  # Read a key from the YAML frontmatter (ignoring commented # lines);
+  # print the value, or the $2 default when the key is absent/blank.
+  cfg() { local v; v=$(grep -E "^\s*$1\s*:" "$CFG" 2>/dev/null | grep -v '^\s*#' | head -1 | sed -E "s/^\s*$1\s*:\s*//" | sed -E 's/\s*#.*$//' | tr -d '"' | xargs); echo "${v:-$2}"; }
+  echo "     tracker            = $(cfg tracker 'auto (default)')"
+  echo "     ticket_url_base    = $(cfg ticket_url_base 'not set')"
+  echo "     ticket_id_regex    = $(cfg ticket_id_regex '[A-Z][A-Z0-9]+-[0-9]+ (default)')"
+  echo "     default_qa_workflow= $(cfg default_qa_workflow 'false (default)')"
+  echo "     github_repo        = $(cfg github_repo 'auto-detect via gh')"
+  echo "     autonomous         = $(cfg autonomous 'false (default)')"
+  echo "     needs_human_label  = $(cfg needs_human_label 'needs-human (default)')"
+else
+  echo "INFO $CFG missing — tracker auto-detects on each ticket skill invocation (not broken, just not pinned)"
+fi
 ```
 
-If `.claude/ccmagic.local.md` exists, read its YAML frontmatter and report:
-- Active `tracker:` value (`linear`, `github`, `jira`, or `auto`)
-- `ticket_url_base` (or "not set")
-- `ticket_id_regex` (or the default `[A-Z][A-Z0-9]+-[0-9]+`)
-- `default_qa_workflow` (`true` / `false`)
-
-If the file is missing entirely, note that tracker auto-detection will run on each ticket skill invocation — not broken, just not pinned.
+Echo the values the parse produced verbatim into the report's **Tracker integration** section — a blank `tracker` in the config resolves to `auto`, and blank optional keys fall back to the defaults shown above. Feed the resolved `tracker` value into section 3 so the report probes the right integration, and the resolved `ticket_id_regex` into section 6.
 
 ### 3. Tracker integration availability
 
@@ -72,12 +81,16 @@ For Linear and JIRA, surface this checklist in the report instead of trying to p
 ### 4. Commit hook
 
 ```bash
-test -f "$(claude plugins show ccmagic --path 2>/dev/null)/hooks/post-tool-use-commit.sh" \
-  && echo "OK   commit-format hook installed" \
-  || echo "INFO commit-format hook not found via plugin path — check that ccmagic is installed as a plugin"
+if [ -n "$CLAUDE_PLUGIN_ROOT" ] && [ -f "$CLAUDE_PLUGIN_ROOT/hooks/post-tool-use-commit.sh" ]; then
+  echo "OK   commit-format hook installed ($CLAUDE_PLUGIN_ROOT/hooks/post-tool-use-commit.sh)"
+elif [ -n "$CLAUDE_PLUGIN_ROOT" ]; then
+  echo "WARN CLAUDE_PLUGIN_ROOT set but hooks/post-tool-use-commit.sh missing — reinstall the ccmagic plugin"
+else
+  echo "INFO CLAUDE_PLUGIN_ROOT not set — can't locate the plugin dir from here; the hook ships with the plugin and runs automatically on git commits"
+fi
 ```
 
-If the `claude plugins` CLI isn't available, fall back to a softer check: just note in the report that the hook ships with the plugin and runs automatically on `git commit` calls made by Claude Code.
+`$CLAUDE_PLUGIN_ROOT` is the plugin root exported to plugin skills (the same variable `hooks/hooks.json` uses). If it isn't set, fall back to the note above rather than reporting a false failure.
 
 ### 5. Git configuration
 
@@ -110,10 +123,15 @@ Then test the branch name against the ticket regex (or integer for GitHub) and r
 ### 7. Skill availability
 
 ```bash
-ls "$(claude plugins show ccmagic --path 2>/dev/null)/skills" 2>/dev/null | head -50
+if [ -n "$CLAUDE_PLUGIN_ROOT" ] && [ -d "$CLAUDE_PLUGIN_ROOT/skills" ]; then
+  echo "OK   $(ls "$CLAUDE_PLUGIN_ROOT/skills" | wc -l | tr -d ' ') skills present:"
+  ls "$CLAUDE_PLUGIN_ROOT/skills" | sort | column -c 80 2>/dev/null || ls "$CLAUDE_PLUGIN_ROOT/skills" | sort
+else
+  echo "INFO CLAUDE_PLUGIN_ROOT not set — skipping skill inventory"
+fi
 ```
 
-Compare against the expected skill list. If the `claude plugins` CLI isn't available, skip this check.
+Compare against the expected skill list. If `$CLAUDE_PLUGIN_ROOT` isn't set, skip this check.
 
 ## Report Output
 
