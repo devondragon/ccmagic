@@ -2,6 +2,24 @@
 
 All notable changes to ccmagic are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.6.3] — 2026-07
+
+### Fixed
+
+Field report: a live `/ccmagic:review-ticket` DEEP run **deadlocked and never produced a report**. Six dimension agents ran and five reported; the sixth's completion notification never arrived, and Codex — launched in the background — was still working. With no deadline it could observe and no sanctioned way to ship an incomplete review, the orchestrator waited indefinitely, burning turns on `echo waiting for correctness agent and codex`. It was killed and the review was redone by hand. The recovered agent reports contained a **High**-severity finding the manual review had missed, so the cost of stalling was real findings lost, not just time.
+
+- **`review` discarded the stderr its own error handling matches on** (`skills/review/SKILL.md` §3.5) — the Codex invocation ended in `2>/dev/null`, while the *Error handling* block immediately below classifies failures by testing whether **stderr** contains `auth`/`login`/`unauthorized`. Every branch of that block was therefore unreachable, and an auth failure surfaced as an indistinguishable empty result. Now `2>&1 | tee /tmp/codex-review-output.txt`, matching the pattern `codex-review` already used, with the error handling re-pointed at that file.
+
+- **`review`'s 5-minute Codex timeout was documented but never enforced** (`skills/review/SKILL.md` §3.5) — the step said *"use a 5-minute timeout (`timeout: 300000`)"* while also specifying `run_in_background: true`. A backgrounded Bash task is detached and runs across turns, so a tool-level timeout does not stop it, and nothing gave the model a way to observe the 5-minute mark; the documented *"Codex timed out after 5 minutes — continuing"* branch had no trigger. The bound now lives in the command (`timeout 300 codex exec …`), where it holds regardless of how the call is launched, and exit code 124 is the timeout signal. Added the same `timeout 600` to every external CLI call in `codex-review` (Codex and Gemini, branch and full mode), which had no deadline at all.
+
+- **An empty output file was being read as failure** (`skills/review/SKILL.md` §3.5, `skills/codex-review/SKILL.md` §4) — `codex exec` buffers and writes nothing until it finishes, so a 0-byte file means "still working" exactly as often as "died"; in the field report this ambiguity led to Codex being declared dead while it was still running normally. Both skills now state that an empty file, an empty `BashOutput`, or absence from `ps` is **not** evidence of failure — only a reported completion, exit 124, or an error in the output file is.
+
+- **No fan-in protocol existed for the parallel agents** (`skills/review/SKILL.md`, new §3.9) — Step 3 dispatched up to 7 agents and Step 4 assumed every result was in hand; nothing anywhere covered an agent that never reports, which is what deadlocked the run. New *Collect agent results* step: commit to a deadline once the majority have reported, then produce the report with what arrived. It also bans the three things that run did — polling with no-op `echo` commands, fabricating a missing dimension, and `SendMessage`-ing a **completed** agent to ask for findings it already produced (resuming a finished agent restarts it from its transcript and it may answer as if fresh, *overwriting the report it already wrote* — recover the result by reading its output file instead).
+
+- **A degraded review was indistinguishable from a clean one** (`skills/review/SKILL.md` §6, `skills/codex-review/SKILL.md` §10) — the report metadata listed which agents ran but had nowhere to record which ones *didn't*, so a silently omitted dimension read as "came back clean". Both report templates now require a coverage line marking any dimension as `unavailable — did not report` / `timed out`, and Codex as `findings | timed out | unavailable | auth failed`.
+
+Scoped to `review` and `codex-review` deliberately: `debug`, `design-qa`, `browser-qa`, and `analyze-impact` also dispatch parallel agents but none use `run_in_background`, so they cannot hit this stall.
+
 ## [3.6.2] — 2026-07
 
 ### Fixed

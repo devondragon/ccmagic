@@ -300,10 +300,17 @@ which codex 2>/dev/null && echo "CODEX_AVAILABLE" || echo "CODEX_NOT_AVAILABLE"
 **If Codex is available**, launch an adversarial review pass via Bash. This runs in the background alongside the Explore agents from Step 3 — it's an independent voice, not a replacement.
 
 ```bash
-codex exec "Review the changes on this branch against the base branch. Run git diff main...HEAD to see the diff. Find ways this code will fail in production: edge cases, race conditions, security holes, resource leaks, failure modes, silent data corruption, logic errors that produce wrong results silently, error handling that swallows failures. Be adversarial. For each finding, output: severity (Critical/High/Medium/Low), confidence (0-100), file, line, issue, detail, suggestion. No compliments — just problems." -C "$(git rev-parse --show-toplevel)" -s read-only 2>/dev/null
+timeout 300 codex exec "Review the changes on this branch against the base branch. Run git diff main...HEAD to see the diff. Find ways this code will fail in production: edge cases, race conditions, security holes, resource leaks, failure modes, silent data corruption, logic errors that produce wrong results silently, error handling that swallows failures. Be adversarial. For each finding, output: severity (Critical/High/Medium/Low), confidence (0-100), file, line, issue, detail, suggestion. No compliments — just problems." -C "$(git rev-parse --show-toplevel)" -s read-only \
+  2>&1 | tee /tmp/codex-review-output.txt
 ```
 
-Use a 5-minute timeout (`timeout: 300000`). Run via the Bash tool with `run_in_background: true` so it doesn't block the Explore agents.
+Run via the Bash tool with `run_in_background: true` so it doesn't block the Explore agents.
+
+**The deadline must live in the command, not in your intentions.** `timeout 300` is what actually bounds this run — a backgrounded Bash task is detached and keeps running across turns, so a tool-level `timeout:` parameter does not stop it and you have no way to observe the 5-minute mark yourself. Without the shell `timeout`, a slow Codex is indistinguishable from a hung one and the review waits forever. Exit code 124 means it hit the deadline.
+
+**Keep stderr.** `2>&1 | tee` is required, not cosmetic: the error handling below classifies failures by matching on stderr text, so discarding stderr (`2>/dev/null`) makes every branch of it unreachable and turns an auth failure into a silent empty result.
+
+**An empty output file is NOT a failure signal.** `codex exec` buffers and writes nothing until it finishes, so a 0-byte file means "still working" exactly as often as it means "died". Never conclude Codex failed from an empty file, an empty `BashOutput`, or the absence of a `codex` process in `ps`. Only these are evidence: the background task reported completion, or `timeout` returned 124, or the output file contains an error. Until one of those, treat Codex as still running.
 
 **Processing Codex output:**
 
@@ -314,13 +321,32 @@ After Codex completes, parse its findings into the same finding schema:
 
 **Multi-model confirmation:** When a Codex finding matches a finding from an Explore agent (same file + overlapping line range + same issue type), apply the multi-specialist confirmation boost (+10 confidence, tag as `[MULTI-MODEL: codex + {agent}]`). Cross-model agreement is a strong signal.
 
-**Error handling (all non-blocking):**
-- Auth failure (stderr contains "auth", "login", "unauthorized"): `Codex authentication failed. Run 'codex login' to authenticate.`
-- Timeout: `Codex timed out after 5 minutes — continuing without Codex findings.`
-- Empty response or error: `Codex returned no findings — continuing.`
+**Error handling (all non-blocking).** Read `/tmp/codex-review-output.txt` to classify — that file has stderr merged in:
+- Auth failure (output contains "auth", "login", "unauthorized"): `Codex authentication failed. Run 'codex login' to authenticate.`
+- Exit code 124: `Codex timed out after 5 minutes — continuing without Codex findings.`
+- Completed but the file is empty or unparseable: `Codex returned no findings — continuing.`
 - Any failure: proceed with Explore agent findings only. Codex is additive, never blocking.
 
+Record the outcome in the report as `Codex: findings | timed out | unavailable | auth failed` so a reader can tell a genuinely clean cross-model pass from one that never ran.
+
 **If Codex is not available:** Print `Codex CLI not found — skipping cross-model review. Install: npm install -g @openai/codex` and continue. This is informational, not an error.
+
+---
+
+## Step 3.9: Collect agent results (fan-in)
+
+Steps 3 and 3.5 dispatch up to 7 agents plus Codex. **Some of them will not report back.** A completion notification can be dropped, an agent can finish abnormally, a CLI can die silently. The pipeline must degrade, not stall — a review that never produces a report is strictly worse than one that reports five dimensions out of six and says so.
+
+**Collect, then commit to a deadline.** Once you have results from the majority of dispatched agents, give the stragglers one further wait. If they still have not reported, **stop waiting and produce the report** with what you have.
+
+**Never do these while waiting:**
+- **Do not poll with no-op commands.** `echo waiting for the correctness agent` does nothing except consume a turn. There is nothing to poll — agent completions arrive as notifications on their own.
+- **Do not `SendMessage` a completed agent to ask for findings it already produced.** Resuming a finished agent starts it from its transcript, and it may answer as if fresh — *overwriting the report it already wrote*. Its result already exists on disk. Read the agent's output/transcript file instead. Recover, don't re-run.
+- **Do not fabricate, infer, or "reconstruct" a missing agent's findings.** An absent dimension is absent.
+
+**Report what actually ran.** Mark every dimension that did not report as `unavailable — did not report` in the report's agent roster, and say so in your summary. A degraded review must be visibly degraded; silently omitting a dimension lets a reader believe it came back clean.
+
+If **no** agent reported, say so plainly and stop — do not emit an empty report implying the code is clean.
 
 ---
 
@@ -369,6 +395,7 @@ If MCP and Explore agents disagree on a finding → flag for user decision in St
 - **Branch**: [current branch or PR base]
 - **Files Analyzed**: N total (M in Tier 1/2)
 - **Agents**: 4 core + N specialists (testing, performance, migration — list which ran) [+ Codex CLI]
+- **Coverage**: list any dimension that did not report as `unavailable — did not report`, and Codex as `findings | timed out | unavailable | auth failed`. If everything ran, say `full`. Never leave a dimension unlisted — an omission reads as "came back clean".
 - **Confidence Threshold**: [threshold used]
 - **Convention Sources**: [files loaded, or "none found"]
 - **Findings**: X Critical, Y High, Z Medium, W Low, V Convention

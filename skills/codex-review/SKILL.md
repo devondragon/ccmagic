@@ -157,14 +157,14 @@ FALLBACK_MODEL="${FALLBACK_MODEL:-gpt-5-codex}"
 # Inject dimension-specific prompt and diff content via stdin
 # (--base and [PROMPT] are mutually exclusive in codex; pipe diff instead)
 cat /tmp/codex-{dimension}-prompt.txt /tmp/codex-review-diff.txt | \
-  codex --model ${REVIEW_MODEL} --full-auto exec - \
+  timeout 600 codex --model ${REVIEW_MODEL} --full-auto exec - \
   2>&1 | tee /tmp/codex-{dimension}-output.txt
 ```
 
 **Gemini pass (if available):**
 ```bash
 # Run same dimension prompt through Gemini for cross-model coverage
-gemini --model gemini-2.5-pro -p "$(cat /tmp/codex-{dimension}-prompt.txt)" \
+timeout 600 gemini --model gemini-2.5-pro -p "$(cat /tmp/codex-{dimension}-prompt.txt)" \
   2>&1 | tee /tmp/gemini-{dimension}-output.txt
 ```
 
@@ -172,9 +172,11 @@ gemini --model gemini-2.5-pro -p "$(cat /tmp/codex-{dimension}-prompt.txt)" \
 ```bash
 # Per module, per dimension
 cat /tmp/codex-{dimension}-prompt.txt <(echo "Files to review:") /tmp/codex-module-{name}.txt | \
-  codex --model ${REVIEW_MODEL} --full-auto exec - \
+  timeout 600 codex --model ${REVIEW_MODEL} --full-auto exec - \
   2>&1 | tee /tmp/codex-{dimension}-{module}-output.txt
 ```
+
+**Every external CLI call carries `timeout`.** These tools write nothing until they finish, so an empty output file means "still working" exactly as often as it means "died" — without an enforced deadline there is no way to tell, and a single slow dimension stalls the whole review indefinitely. Exit code 124 means the deadline was hit: record that dimension as `timed out` and carry on with the rest. Never conclude a CLI died from an empty file or from its absence in `ps`.
 
 **Model fallback:** If primary model access fails (check for "model not found", "not available", "permission denied"), retry once with `FALLBACK_MODEL`.
 
@@ -248,7 +250,7 @@ Process verdicts:
 ## Summary
 - **Scope**: branch changes | full codebase | PR #X
 - **Tools Used**: Codex ({model}) [+ Gemini] + Claude
-- **Dimensions**: [list of passes run]
+- **Dimensions**: [list of passes run — mark any that hit `timeout` (exit 124) or produced no output as `timed out` / `no output`, never silently omit one]
 - **Files Analyzed**: N total (M prioritized)
 - **Confidence Threshold**: [threshold]
 - **Convention Sources**: [files loaded or "none"]
