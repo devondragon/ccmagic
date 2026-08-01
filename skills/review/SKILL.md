@@ -415,7 +415,7 @@ For findings marked `fixable: true` by triage (see triage-instructions.md Step 7
 - Commit each fix atomically: `git commit -m "fix(review): FINDING-NNN — description"`
 - Output per fix: `[AUTO-FIXED] file:line — issue → what was changed`
 
-Skip auto-fix if the working tree was dirty at the start of the review (detected in Step 0).
+Skip auto-fix if the working tree is dirty — run `git status --porcelain` before touching any file, and if it returns anything, report the findings without applying fixes. Auto-fixing over uncommitted work makes the user's changes and yours indistinguishable.
 
 ### 7b. Batch-ask about judgment calls
 

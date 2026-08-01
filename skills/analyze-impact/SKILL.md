@@ -3,7 +3,7 @@ name: analyze-impact
 user-invocable: true
 allowed-tools: Read(*), Bash(git:*), Glob(*), Grep(*), Task(*), TodoWrite(*), mcp__pal__analyze(*)
 description: Analyze blast radius and dependencies for a file or feature
-argument-hint: [file-path or feature-name]
+argument-hint: "[file-path or feature-name]"
 model: sonnet
 context: fork
 ---

@@ -1,7 +1,7 @@
 ---
 name: codex-review
 user-invocable: true
-allowed-tools: Read(*), Bash(*), Glob(*), Grep(*), Task(*), TodoWrite(*), AskUserQuestion(*)
+allowed-tools: Read(*), Write(*), Bash(*), Glob(*), Grep(*), Task(*), TodoWrite(*), AskUserQuestion(*)
 description: Multi-model code review (Codex + Gemini + Claude triage) with dimension-focused passes
 argument-hint: "[branch|full|PR#] [--model MODEL] [--focus DIMENSION] [--threshold N]"
 model: sonnet
@@ -259,7 +259,7 @@ Drop findings below threshold (default 80, `--threshold N` override). Exception:
 
 After triaging external findings, Claude reviews areas where it has an advantage (full codebase access, convention knowledge). See Part 2 of `${CLAUDE_SKILL_DIR}/codex-triage.md`.
 
-Launch parallel Explore agents for:
+Launch parallel Explore agents for the areas below. **This is a fan-out, so it needs a fan-in** — follow `${CLAUDE_PLUGIN_ROOT}/skills/review/fan-in-protocol.md`: stamp a deadline at dispatch, and when it expires, proceed with whatever reported and mark the rest `unavailable — did not report` on the Coverage line. The same applies to the verification agents in Step 7. Bounding the external CLI calls but not these joins would leave the stall intact, just one step over.
 
 1. **Codebase Consistency** — Does new code follow established patterns? Are there existing utilities it should reuse? Duplicated logic?
 2. **Convention Compliance** — Violations of explicit CLAUDE.md/conventions.md rules that Codex/Gemini wouldn't know about.
