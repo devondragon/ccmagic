@@ -2,6 +2,18 @@
 
 All notable changes to ccmagic are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.6.4] — 2026-07
+
+### Fixed
+
+3.6.3 fixed the fan-in deadlock in `review` and `codex-review` and named four other skills as still exposed. Two of them actually were.
+
+- **`debug` could treat an uninvestigated hypothesis as disproven** (`skills/debug/SKILL.md` §5) — Step 5 launches up to 3 Explore agents, one per independent hypothesis, and Step 6 evaluates the results as though all of them arrived. An agent that never reports produces no verdict, and a missing verdict read as a negative result is worse here than in a review: a review loses findings, but a debugging session that silently rules out the correct hypothesis follows the wrong branch for the rest of its life. Step 5 now follows the shared fan-in protocol and records a silent agent's hypothesis as `not tested — agent did not report`, keeping it on the candidate list as the first thing to re-run when the others fail.
+
+- **`analyze-impact` could report a missing dependency scan as a clean one** (`skills/analyze-impact/SKILL.md` §2) — Step 2 fans out three Explore agents (outward dependencies, inward dependencies, test coverage) and Step 3 consumes their results directly. If the outward-dependency agent goes silent and its silence renders as "no dependents found", the report declares a change safe at exactly the moment there is least evidence for that. Blast radius is the one output where a gap and a clean result look identical and mean opposite things. Missing directions are now labelled `unknown — agent did not report` and the summary must say the assessment is partial. `allowed-tools` gained `date:*, echo:*` for the deadline stamp, which its `Bash(git:*)` allowlist didn't cover.
+
+- **The 3.6.3 entry overstated who was affected** — it said `debug`, `design-qa`, `browser-qa`, and `analyze-impact` "dispatch parallel agents". `design-qa` and `browser-qa` declare `Agent(*)` in `allowed-tools` but neither SKILL.md body ever instructs launching one, so there is no join to protect and nothing to fix. The exposure was real for `debug` and `analyze-impact` only.
+
 ## [3.6.3] — 2026-07
 
 ### Fixed
