@@ -106,6 +106,12 @@ Use Task tool with:
        - If INCONCLUSIVE: what additional experiment would be decisive?
 ```
 
+### Collecting the results
+
+Follow `${CLAUDE_PLUGIN_ROOT}/skills/review/fan-in-protocol.md`: stamp a deadline when you dispatch the batch, and when it expires, proceed with the hypotheses that reported. Don't poll with no-op commands, and don't `SendMessage` an agent that already finished — read its output instead.
+
+**A hypothesis whose agent never reported is untested, not disproven.** This is the distinction that matters here: in a review, a missing dimension costs you findings; in debugging, silently treating an uninvestigated hypothesis as ruled out sends the whole session down the wrong branch. Record it in the session file as `not tested — agent did not report` and keep it on the candidate list. If the surviving hypotheses all fail, it is the first thing to re-run.
+
 ### For the git bisect path (regression bugs)
 When the bug is a regression with a known-good point:
 

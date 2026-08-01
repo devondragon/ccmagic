@@ -1,7 +1,7 @@
 ---
 name: analyze-impact
 user-invocable: true
-allowed-tools: Read(*), Bash(git:*), Glob(*), Grep(*), Task(*), TodoWrite(*), mcp__pal__analyze(*)
+allowed-tools: Read(*), Bash(git:*, date:*, echo:*), Glob(*), Grep(*), Task(*), TodoWrite(*), mcp__pal__analyze(*)
 description: Analyze blast radius and dependencies for a file or feature
 argument-hint: "[file-path or feature-name]"
 model: sonnet
@@ -52,6 +52,10 @@ Task 3: {
            Identify test files, test functions, and coverage areas."
 }
 ```
+
+**Collecting the results.** Follow `${CLAUDE_PLUGIN_ROOT}/skills/review/fan-in-protocol.md`: stamp a deadline at dispatch, and when it expires, produce the analysis with whatever reported rather than waiting indefinitely on a silent agent.
+
+**An agent that never reported is not an empty result — and here the difference is dangerous.** If the outward-dependency agent goes silent and you render its silence as "no dependents found", the report says this change is safe to make precisely when you have the least evidence for that. Blast radius is the one output where a gap and a clean result look identical and mean opposite things. Label any missing direction explicitly — `dependents: unknown — agent did not report` — and state in the summary that the impact assessment is partial.
 
 ### Step 3: Expert Analysis (if MCP tools available)
 
