@@ -1,7 +1,7 @@
 ---
 name: review
 user-invocable: true
-allowed-tools: Read(*), Edit(*), Bash(git:*, gh:*, codex:*, which:*), Glob(*), Grep(*), Agent(*), Task(*), TodoWrite(*), AskUserQuestion(*), mcp__pal__codereview(*)
+allowed-tools: Read(*), Edit(*), Bash(git:*, gh:*, codex:*, which:*, command:*, timeout:*, gtimeout:*, echo:*), Glob(*), Grep(*), Agent(*), Task(*), TodoWrite(*), AskUserQuestion(*), mcp__pal__codereview(*)
 description: Adaptive code review — auto-routes between a fast inline checklist (QUICK) and the full multi-agent pipeline (DEEP) with confidence scoring and convention awareness. Biased toward depth.
 argument-hint: "[branch|full|PR#] [--quick|--deep] [--threshold N]"
 model: sonnet
@@ -291,26 +291,32 @@ After the review completes (Step 7), update `context/review-stats.json` with the
 
 ## Step 3.5: Codex CLI Review (optional, parallel)
 
-Check for Codex CLI availability:
+Check for Codex CLI availability, and for a timeout binary to bound it with:
 
 ```bash
 which codex 2>/dev/null && echo "CODEX_AVAILABLE" || echo "CODEX_NOT_AVAILABLE"
+command -v timeout >/dev/null && echo "TIMEOUT_BIN=timeout" \
+  || { command -v gtimeout >/dev/null && echo "TIMEOUT_BIN=gtimeout" || echo "TIMEOUT_BIN=none"; }
 ```
+
+**`timeout` is GNU coreutils, not a POSIX given.** Stock macOS ships neither `timeout` nor `gtimeout` — they appear only once someone runs `brew install coreutils`. Substitute whichever name the check printed into the command below. If it printed `TIMEOUT_BIN=none`, **skip the Codex pass** and print `No timeout/gtimeout found (brew install coreutils) — skipping cross-model review.` Running Codex without an enforced deadline is exactly the hang this step exists to prevent, so an unbounded run is not an acceptable fallback.
 
 **If Codex is available**, launch an adversarial review pass via Bash. This runs in the background alongside the Explore agents from Step 3 — it's an independent voice, not a replacement.
 
 ```bash
 timeout 300 codex exec "Review the changes on this branch against the base branch. Run git diff main...HEAD to see the diff. Find ways this code will fail in production: edge cases, race conditions, security holes, resource leaks, failure modes, silent data corruption, logic errors that produce wrong results silently, error handling that swallows failures. Be adversarial. For each finding, output: severity (Critical/High/Medium/Low), confidence (0-100), file, line, issue, detail, suggestion. No compliments — just problems." -C "$(git rev-parse --show-toplevel)" -s read-only \
-  2>&1 | tee /tmp/codex-review-output.txt
+  > /tmp/codex-review-output.txt 2>&1; echo "CODEX_EXIT=$?" >> /tmp/codex-review-output.txt
 ```
 
 Run via the Bash tool with `run_in_background: true` so it doesn't block the Explore agents.
 
-**The deadline must live in the command, not in your intentions.** `timeout 300` is what actually bounds this run — a backgrounded Bash task is detached and keeps running across turns, so a tool-level `timeout:` parameter does not stop it and you have no way to observe the 5-minute mark yourself. Without the shell `timeout`, a slow Codex is indistinguishable from a hung one and the review waits forever. Exit code 124 means it hit the deadline.
+**The deadline must live in the command, not in your intentions.** `timeout 300` is what actually bounds this run — a backgrounded Bash task is detached and keeps running across turns, so a tool-level `timeout:` parameter does not stop it and you have no way to observe the 5-minute mark yourself. Without the shell `timeout`, a slow Codex is indistinguishable from a hung one and the review waits forever.
 
-**Keep stderr.** `2>&1 | tee` is required, not cosmetic: the error handling below classifies failures by matching on stderr text, so discarding stderr (`2>/dev/null`) makes every branch of it unreachable and turns an auth failure into a silent empty result.
+**Redirect, don't pipe.** The exit status has to survive to be read, and `cmd | tee file` throws it away — a pipeline reports `tee`'s status, so a timed-out Codex still looks like exit 0 and the 124 branch below becomes dead code. Writing the exit code into the output file with `; echo "CODEX_EXIT=$?" >> …` is what makes the deadline observable. (`tee` buys nothing here anyway: `codex exec` buffers and streams nothing to watch live.) If you do need a pipeline, `set -o pipefail` first or read `${PIPESTATUS[0]}`.
 
-**An empty output file is NOT a failure signal.** `codex exec` buffers and writes nothing until it finishes, so a 0-byte file means "still working" exactly as often as it means "died". Never conclude Codex failed from an empty file, an empty `BashOutput`, or the absence of a `codex` process in `ps`. Only these are evidence: the background task reported completion, or `timeout` returned 124, or the output file contains an error. Until one of those, treat Codex as still running.
+**Keep stderr.** `2>&1` into the same file is required, not cosmetic: the error handling below classifies failures by matching on stderr text, so discarding stderr (`2>/dev/null`) makes every branch of it unreachable and turns an auth failure into a silent empty result.
+
+**An empty output file is NOT a failure signal.** `codex exec` buffers and writes nothing until it finishes, so a 0-byte file means "still working" exactly as often as it means "died". Never conclude Codex failed from an empty file, an empty `BashOutput`, or the absence of a `codex` process in `ps`. Only these are evidence: the background task reported completion, or the file ends with a `CODEX_EXIT=` line, or the output file contains an error. Until one of those, treat Codex as still running.
 
 **Processing Codex output:**
 
@@ -323,7 +329,7 @@ After Codex completes, parse its findings into the same finding schema:
 
 **Error handling (all non-blocking).** Read `/tmp/codex-review-output.txt` to classify — that file has stderr merged in:
 - Auth failure (output contains "auth", "login", "unauthorized"): `Codex authentication failed. Run 'codex login' to authenticate.`
-- Exit code 124: `Codex timed out after 5 minutes — continuing without Codex findings.`
+- `CODEX_EXIT=124` (the last line of the file): `Codex timed out after 5 minutes — continuing without Codex findings.`
 - Completed but the file is empty or unparseable: `Codex returned no findings — continuing.`
 - Any failure: proceed with Explore agent findings only. Codex is additive, never blocking.
 

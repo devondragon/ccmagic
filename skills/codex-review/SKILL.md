@@ -149,6 +149,15 @@ Load `${CLAUDE_SKILL_DIR}/codex-prompts.md` for dimension-specific prompt templa
 
 For each dimension, run available tools in parallel:
 
+**Resolve a timeout binary first.** `timeout` is GNU coreutils — stock macOS ships neither it nor `gtimeout`, so check before relying on it and substitute the name that resolves into every command below:
+
+```bash
+command -v timeout >/dev/null && echo "TIMEOUT_BIN=timeout" \
+  || { command -v gtimeout >/dev/null && echo "TIMEOUT_BIN=gtimeout" || echo "TIMEOUT_BIN=none"; }
+```
+
+If this prints `TIMEOUT_BIN=none`, print `No timeout/gtimeout found (brew install coreutils) — skipping external CLI passes.` and run the review with Claude-side analysis only. An unbounded external CLI call is the stall this deadline exists to prevent, so running without one is not an acceptable fallback.
+
 **Codex pass:**
 ```bash
 REVIEW_MODEL="${MODEL:-gpt-5.3-codex}"
@@ -156,27 +165,34 @@ FALLBACK_MODEL="${FALLBACK_MODEL:-gpt-5-codex}"
 
 # Inject dimension-specific prompt and diff content via stdin
 # (--base and [PROMPT] are mutually exclusive in codex; pipe diff instead)
+set -o pipefail
 cat /tmp/codex-{dimension}-prompt.txt /tmp/codex-review-diff.txt | \
   timeout 600 codex --model ${REVIEW_MODEL} --full-auto exec - \
-  2>&1 | tee /tmp/codex-{dimension}-output.txt
+  > /tmp/codex-{dimension}-output.txt 2>&1
+echo "CLI_EXIT=$?" >> /tmp/codex-{dimension}-output.txt
 ```
 
 **Gemini pass (if available):**
 ```bash
 # Run same dimension prompt through Gemini for cross-model coverage
 timeout 600 gemini --model gemini-2.5-pro -p "$(cat /tmp/codex-{dimension}-prompt.txt)" \
-  2>&1 | tee /tmp/gemini-{dimension}-output.txt
+  > /tmp/gemini-{dimension}-output.txt 2>&1
+echo "CLI_EXIT=$?" >> /tmp/gemini-{dimension}-output.txt
 ```
 
 **For full mode:** Run each dimension per module, then aggregate:
 ```bash
 # Per module, per dimension
+set -o pipefail
 cat /tmp/codex-{dimension}-prompt.txt <(echo "Files to review:") /tmp/codex-module-{name}.txt | \
   timeout 600 codex --model ${REVIEW_MODEL} --full-auto exec - \
-  2>&1 | tee /tmp/codex-{dimension}-{module}-output.txt
+  > /tmp/codex-{dimension}-{module}-output.txt 2>&1
+echo "CLI_EXIT=$?" >> /tmp/codex-{dimension}-{module}-output.txt
 ```
 
-**Every external CLI call carries `timeout`.** These tools write nothing until they finish, so an empty output file means "still working" exactly as often as it means "died" — without an enforced deadline there is no way to tell, and a single slow dimension stalls the whole review indefinitely. Exit code 124 means the deadline was hit: record that dimension as `timed out` and carry on with the rest. Never conclude a CLI died from an empty file or from its absence in `ps`.
+**Every external CLI call carries `timeout`.** These tools write nothing until they finish, so an empty output file means "still working" exactly as often as it means "died" — without an enforced deadline there is no way to tell, and a single slow dimension stalls the whole review indefinitely. Never conclude a CLI died from an empty file or from its absence in `ps`.
+
+**The exit code has to survive to be read.** Write the CLI's output to the file with `>` and record the status with `echo "CLI_EXIT=$?"` — do **not** end these commands with `| tee file`. A pipeline reports the status of its *last* command, so `timeout 600 codex … | tee out.txt` yields `tee`'s exit 0 and a genuine timeout becomes indistinguishable from a clean run. Where a pipeline is structural (the `cat … | codex` stdin feed above), `set -o pipefail` is what makes the upstream failure propagate; without it the same masking applies. `CLI_EXIT=124` means the deadline was hit: record that dimension as `timed out` and carry on with the rest.
 
 **Model fallback:** If primary model access fails (check for "model not found", "not available", "permission denied"), retry once with `FALLBACK_MODEL`.
 
@@ -250,7 +266,7 @@ Process verdicts:
 ## Summary
 - **Scope**: branch changes | full codebase | PR #X
 - **Tools Used**: Codex ({model}) [+ Gemini] + Claude
-- **Dimensions**: [list of passes run — mark any that hit `timeout` (exit 124) or produced no output as `timed out` / `no output`, never silently omit one]
+- **Dimensions**: [list of passes run — mark any that hit `timeout` (`CLI_EXIT=124`) or produced no output as `timed out` / `no output`, never silently omit one]
 - **Files Analyzed**: N total (M prioritized)
 - **Confidence Threshold**: [threshold]
 - **Convention Sources**: [files loaded or "none"]
