@@ -1,7 +1,7 @@
 ---
 name: review
 user-invocable: true
-allowed-tools: Read(*), Edit(*), Bash(git:*, gh:*, codex:*, which:*, command:*, timeout:*, gtimeout:*, echo:*), Glob(*), Grep(*), Agent(*), Task(*), TodoWrite(*), AskUserQuestion(*), mcp__pal__codereview(*)
+allowed-tools: Read(*), Edit(*), Bash(git:*, gh:*, codex:*, which:*, command:*, timeout:*, gtimeout:*, echo:*, date:*, mktemp:*), Glob(*), Grep(*), Agent(*), Task(*), TodoWrite(*), AskUserQuestion(*), mcp__pal__codereview(*)
 description: Adaptive code review — auto-routes between a fast inline checklist (QUICK) and the full multi-agent pipeline (DEEP) with confidence scoring and convention awareness. Biased toward depth.
 argument-hint: "[branch|full|PR#] [--quick|--deep] [--threshold N]"
 model: sonnet
@@ -287,72 +287,21 @@ After the review completes (Step 7), update `context/review-stats.json` with the
 ### Full mode — module-based agents:
 
 1. Launch **1 Explore agent per module** (capped at 6) covering all 4 concern areas within that module. Use the "Module Agent" prompt from agent-instructions.md.
-2. After module agents complete, launch a **Cross-Module Agent** to check inter-module concerns.
+2. Once the module agents have reported — or their deadline has passed, per the fan-in protocol in Step 3.9 — launch a **Cross-Module Agent** to check inter-module concerns. Do not block indefinitely on a module agent that never reports; proceed with the modules you have and mark the missing one `unavailable — did not report`.
 
 ## Step 3.5: Codex CLI Review (optional, parallel)
 
-Check for Codex CLI availability, and for a timeout binary to bound it with:
+Load `${CLAUDE_SKILL_DIR}/codex-pass.md` and follow it. It covers availability detection, the run-scoped workspace, the bounded `codex exec` invocation, and how to classify the result.
 
-```bash
-which codex 2>/dev/null && echo "CODEX_AVAILABLE" || echo "CODEX_NOT_AVAILABLE"
-command -v timeout >/dev/null && echo "TIMEOUT_BIN=timeout" \
-  || { command -v gtimeout >/dev/null && echo "TIMEOUT_BIN=gtimeout" || echo "TIMEOUT_BIN=none"; }
-```
-
-**`timeout` is GNU coreutils, not a POSIX given.** Stock macOS ships neither `timeout` nor `gtimeout` — they appear only once someone runs `brew install coreutils`. Substitute whichever name the check printed into the command below. If it printed `TIMEOUT_BIN=none`, **skip the Codex pass** and print `No timeout/gtimeout found (brew install coreutils) — skipping cross-model review.` Running Codex without an enforced deadline is exactly the hang this step exists to prevent, so an unbounded run is not an acceptable fallback.
-
-**If Codex is available**, launch an adversarial review pass via Bash. This runs in the background alongside the Explore agents from Step 3 — it's an independent voice, not a replacement.
-
-```bash
-timeout 300 codex exec "Review the changes on this branch against the base branch. Run git diff main...HEAD to see the diff. Find ways this code will fail in production: edge cases, race conditions, security holes, resource leaks, failure modes, silent data corruption, logic errors that produce wrong results silently, error handling that swallows failures. Be adversarial. For each finding, output: severity (Critical/High/Medium/Low), confidence (0-100), file, line, issue, detail, suggestion. No compliments — just problems." -C "$(git rev-parse --show-toplevel)" -s read-only \
-  > /tmp/codex-review-output.txt 2>&1; echo "CODEX_EXIT=$?" >> /tmp/codex-review-output.txt
-```
-
-Run via the Bash tool with `run_in_background: true` so it doesn't block the Explore agents.
-
-**The deadline must live in the command, not in your intentions.** `timeout 300` is what actually bounds this run — a backgrounded Bash task is detached and keeps running across turns, so a tool-level `timeout:` parameter does not stop it and you have no way to observe the 5-minute mark yourself. Without the shell `timeout`, a slow Codex is indistinguishable from a hung one and the review waits forever.
-
-**Redirect, don't pipe.** The exit status has to survive to be read, and `cmd | tee file` throws it away — a pipeline reports `tee`'s status, so a timed-out Codex still looks like exit 0 and the 124 branch below becomes dead code. Writing the exit code into the output file with `; echo "CODEX_EXIT=$?" >> …` is what makes the deadline observable. (`tee` buys nothing here anyway: `codex exec` buffers and streams nothing to watch live.) If you do need a pipeline, `set -o pipefail` first or read `${PIPESTATUS[0]}`.
-
-**Keep stderr.** `2>&1` into the same file is required, not cosmetic: the error handling below classifies failures by matching on stderr text, so discarding stderr (`2>/dev/null`) makes every branch of it unreachable and turns an auth failure into a silent empty result.
-
-**An empty output file is NOT a failure signal.** `codex exec` buffers and writes nothing until it finishes, so a 0-byte file means "still working" exactly as often as it means "died". Never conclude Codex failed from an empty file, an empty `BashOutput`, or the absence of a `codex` process in `ps`. Only these are evidence: the background task reported completion, or the file ends with a `CODEX_EXIT=` line, or the output file contains an error. Until one of those, treat Codex as still running.
-
-**Processing Codex output:**
-
-After Codex completes, parse its findings into the same finding schema:
-- Tag each finding with `specialist: codex`
-- Set `fixable` based on the fix-first classification rules in triage-instructions.md
-- Findings enter the same deduplication and triage pipeline as all other findings
-
-**Multi-model confirmation:** When a Codex finding matches a finding from an Explore agent (same file + overlapping line range + same issue type), apply the multi-specialist confirmation boost (+10 confidence, tag as `[MULTI-MODEL: codex + {agent}]`). Cross-model agreement is a strong signal.
-
-**Error handling (all non-blocking).** Read `/tmp/codex-review-output.txt` to classify — that file has stderr merged in:
-- Auth failure (output contains "auth", "login", "unauthorized"): `Codex authentication failed. Run 'codex login' to authenticate.`
-- `CODEX_EXIT=124` (the last line of the file): `Codex timed out after 5 minutes — continuing without Codex findings.`
-- Completed but the file is empty or unparseable: `Codex returned no findings — continuing.`
-- Any failure: proceed with Explore agent findings only. Codex is additive, never blocking.
-
-Record the outcome in the report as `Codex: findings | timed out | unavailable | auth failed` so a reader can tell a genuinely clean cross-model pass from one that never ran.
-
-**If Codex is not available:** Print `Codex CLI not found — skipping cross-model review. Install: npm install -g @openai/codex` and continue. This is informational, not an error.
+In short: if Codex and a `timeout` binary are both available, launch the adversarial pass in the background alongside the Step 3 agents, bound it with `timeout --kill-after=30 300`, record its exit status into the output file, and classify by that status rather than by keyword. Codex is additive and never blocking — every failure mode continues the review with Explore agent findings only.
 
 ---
 
 ## Step 3.9: Collect agent results (fan-in)
 
-Steps 3 and 3.5 dispatch up to 7 agents plus Codex. **Some of them will not report back.** A completion notification can be dropped, an agent can finish abnormally, a CLI can die silently. The pipeline must degrade, not stall — a review that never produces a report is strictly worse than one that reports five dimensions out of six and says so.
+Load `${CLAUDE_SKILL_DIR}/fan-in-protocol.md` and follow it at **every** fan-out in this skill — Step 3 (both modes), Step 3.5, and Step 5c.
 
-**Collect, then commit to a deadline.** Once you have results from the majority of dispatched agents, give the stragglers one further wait. If they still have not reported, **stop waiting and produce the report** with what you have.
-
-**Never do these while waiting:**
-- **Do not poll with no-op commands.** `echo waiting for the correctness agent` does nothing except consume a turn. There is nothing to poll — agent completions arrive as notifications on their own.
-- **Do not `SendMessage` a completed agent to ask for findings it already produced.** Resuming a finished agent starts it from its transcript, and it may answer as if fresh — *overwriting the report it already wrote*. Its result already exists on disk. Read the agent's output/transcript file instead. Recover, don't re-run.
-- **Do not fabricate, infer, or "reconstruct" a missing agent's findings.** An absent dimension is absent.
-
-**Report what actually ran.** Mark every dimension that did not report as `unavailable — did not report` in the report's agent roster, and say so in your summary. A degraded review must be visibly degraded; silently omitting a dimension lets a reader believe it came back clean.
-
-If **no** agent reported, say so plainly and stop — do not emit an empty report implying the code is clean.
+In short: stamp a deadline when you dispatch a batch, not when you start to worry. When it expires, produce the report with whatever arrived and mark the rest `unavailable — did not report`. The deadline is absolute, never conditional on a majority having reported. While waiting, never poll with no-op commands, never `SendMessage` a completed agent, and never invent a missing agent's findings.
 
 ---
 
@@ -383,10 +332,13 @@ For each Critical/High finding that survived, launch a parallel **verification E
 - Attempts to construct concrete triggering scenario
 - Returns verdict: **CONFIRMED** / **MITIGATED** / **FALSE_POSITIVE**
 
+This is a fan-out like any other — apply the Step 3.9 collection protocol here too, with its own deadline stamped at dispatch. A verification agent that never reports must not hold the report hostage.
+
 ### 5d. Process verdicts
 - CONFIRMED → keep with "[Verified]" tag
 - MITIGATED → downgrade severity by one level, note the mitigation
 - FALSE_POSITIVE → move to Dismissed Findings section
+- **No verdict (agent did not report before the deadline)** → keep the finding at its original severity, tagged `[Unverified — verification agent did not report]`. Never silently drop a Critical/High finding because its verifier went missing, and never promote an unverified finding to `[Verified]`.
 
 ### 5e. Handle MCP vs Explore disagreements
 If MCP and Explore agents disagree on a finding → flag for user decision in Step 8.
@@ -401,7 +353,7 @@ If MCP and Explore agents disagree on a finding → flag for user decision in St
 - **Branch**: [current branch or PR base]
 - **Files Analyzed**: N total (M in Tier 1/2)
 - **Agents**: 4 core + N specialists (testing, performance, migration — list which ran) [+ Codex CLI]
-- **Coverage**: list any dimension that did not report as `unavailable — did not report`, and Codex as `findings | timed out | unavailable | auth failed`. If everything ran, say `full`. Never leave a dimension unlisted — an omission reads as "came back clean".
+- **Coverage**: list any dimension that did not report as `unavailable — did not report`, and Codex as `findings | completed — 0 findings | timed out | unparseable | unavailable | auth failed | failed (exit N)`. If everything ran, say `full`. Never leave a dimension unlisted — an omission reads as "came back clean".
 - **Confidence Threshold**: [threshold used]
 - **Convention Sources**: [files loaded, or "none found"]
 - **Findings**: X Critical, Y High, Z Medium, W Low, V Convention

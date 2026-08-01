@@ -35,7 +35,12 @@ Check for available review tools:
 which codex 2>/dev/null && codex --version 2>/dev/null
 # Check Gemini CLI
 which gemini 2>/dev/null && gemini --version 2>/dev/null
+# Check for a timeout binary to bound them with — GNU coreutils, absent from stock macOS
+command -v timeout >/dev/null && echo "TIMEOUT_BIN=timeout" \
+  || { command -v gtimeout >/dev/null && echo "TIMEOUT_BIN=gtimeout" || echo "TIMEOUT_BIN=none"; }
 ```
+
+If `TIMEOUT_BIN=none`, print `No timeout/gtimeout found (brew install coreutils) — skipping external CLI passes.` and run with Claude-side analysis only. An unbounded external CLI call is the stall the deadline exists to prevent, so running without one is not an acceptable fallback. Otherwise substitute the resolved name wherever Step 4 writes `timeout`.
 
 **Tool availability determines the review strategy:**
 - **Both available**: Run Codex + Gemini in parallel, Claude triages and reconciles. Multi-model agreement boosts confidence.
@@ -62,19 +67,29 @@ Collect into `{PROJECT_CONVENTIONS}` for the Claude triage pass and Claude-origi
 
 ## Step 3: Determine Scope and Discover Files
 
+### Create a run-scoped workspace first
+
+Every intermediate file this skill writes lives in one per-run directory. Create it before anything else and substitute the printed path for `{RUN_DIR}` in every command below:
+
+```bash
+mktemp -d /tmp/ccmagic-codex-review.XXXXXX
+```
+
+**Never write these to a fixed `/tmp` path.** Step 5a aggregates results with a `codex-*-output.txt` wildcard, and a wildcard over shared `/tmp` matches leftovers from every previous run — plus `codex-review-output.txt`, written by the separate `/ccmagic:review` skill. Unscoped, that glob silently ingests a stale dimension nobody ran this time, or another skill's adversarial pass, then feeds it into the multi-model agreement boost in Step 5d and inflates confidence on the strength of a file from last week. Concurrent runs are worse: `codex-review-diff.txt` is opened with `>`, so one run truncates the diff another is mid-way through piping to Codex — and since `/ccmagic:review-ticket` and `/ccmagic:auto-ticket` both reach this skill without anyone typing its name, concurrent runs are ordinary rather than hypothetical. Confining the glob to a fresh per-run directory makes all of it impossible by construction.
+
 ### Branch mode
 ```bash
 git diff --name-only main...HEAD
 git diff --stat main...HEAD
 git log --oneline main...HEAD
-git diff main...HEAD > /tmp/codex-review-diff.txt
+git diff main...HEAD > {RUN_DIR}/codex-review-diff.txt
 ```
 
 ### PR mode
 ```bash
 gh pr diff {N} --name-only
 gh pr view {N} --json title,body,baseRefName
-gh pr diff {N} > /tmp/codex-review-diff.txt
+gh pr diff {N} > {RUN_DIR}/codex-review-diff.txt
 ```
 
 ### Full mode — Module-Aware Chunking
@@ -108,13 +123,13 @@ find . -type f \( \
   -not -path "*/__pycache__/*" -not -path "*/vendor/*" \
   -not -path "*/target/*" -not -path "*/.next/*" \
   -not -path "*/.terraform/*" \
-  > /tmp/codex-review-files.txt
+  > {RUN_DIR}/codex-review-files.txt
 ```
 
 **Partition into modules** by top-level source directory:
 ```bash
 # Group files by first meaningful directory (src/*, app/*, lib/*, cmd/*, pkg/*, etc.)
-# Create one file list per module: /tmp/codex-module-{name}.txt
+# Create one file list per module: {RUN_DIR}/codex-module-{name}.txt
 # Cap at 6 modules. Group smaller dirs together if >6.
 ```
 
@@ -133,6 +148,8 @@ For >50 files, focus Codex/Gemini on Tier 1+2 only.
 
 Load `${CLAUDE_SKILL_DIR}/codex-prompts.md` for dimension-specific prompt templates.
 
+**Write each dimension's prompt to disk before you invoke anything.** The commands below feed the CLIs from `{RUN_DIR}/codex-{dimension}-prompt.txt`; that file does not create itself. For every dimension you selected, fill in its template from `codex-prompts.md` (substituting the project conventions gathered in Step 2) and write the result with the Write tool to `{RUN_DIR}/codex-{dimension}-prompt.txt`. Skipping this is not a no-op: `cat` on a missing prompt file fails, `set -o pipefail` propagates that failure, and the Gemini pass — which interpolates the file with `$(cat …)` — would otherwise send an empty prompt and get back a confidently useless review.
+
 ### Dimension Selection
 
 **Default (no --focus):** Run all applicable dimensions:
@@ -149,14 +166,7 @@ Load `${CLAUDE_SKILL_DIR}/codex-prompts.md` for dimension-specific prompt templa
 
 For each dimension, run available tools in parallel:
 
-**Resolve a timeout binary first.** `timeout` is GNU coreutils — stock macOS ships neither it nor `gtimeout`, so check before relying on it and substitute the name that resolves into every command below:
-
-```bash
-command -v timeout >/dev/null && echo "TIMEOUT_BIN=timeout" \
-  || { command -v gtimeout >/dev/null && echo "TIMEOUT_BIN=gtimeout" || echo "TIMEOUT_BIN=none"; }
-```
-
-If this prints `TIMEOUT_BIN=none`, print `No timeout/gtimeout found (brew install coreutils) — skipping external CLI passes.` and run the review with Claude-side analysis only. An unbounded external CLI call is the stall this deadline exists to prevent, so running without one is not an acceptable fallback.
+Substitute the `TIMEOUT_BIN` resolved in Step 1 for `timeout` in every command below.
 
 **Codex pass:**
 ```bash
@@ -166,33 +176,33 @@ FALLBACK_MODEL="${FALLBACK_MODEL:-gpt-5-codex}"
 # Inject dimension-specific prompt and diff content via stdin
 # (--base and [PROMPT] are mutually exclusive in codex; pipe diff instead)
 set -o pipefail
-cat /tmp/codex-{dimension}-prompt.txt /tmp/codex-review-diff.txt | \
-  timeout 600 codex --model ${REVIEW_MODEL} --full-auto exec - \
-  > /tmp/codex-{dimension}-output.txt 2>&1
-echo "CLI_EXIT=$?" >> /tmp/codex-{dimension}-output.txt
+cat {RUN_DIR}/codex-{dimension}-prompt.txt {RUN_DIR}/codex-review-diff.txt | \
+  timeout --kill-after=30 600 codex --model ${REVIEW_MODEL} --full-auto exec - \
+  > {RUN_DIR}/codex-{dimension}-output.txt 2>&1
+echo "CLI_EXIT=$?" >> {RUN_DIR}/codex-{dimension}-output.txt
 ```
 
 **Gemini pass (if available):**
 ```bash
 # Run same dimension prompt through Gemini for cross-model coverage
-timeout 600 gemini --model gemini-2.5-pro -p "$(cat /tmp/codex-{dimension}-prompt.txt)" \
-  > /tmp/gemini-{dimension}-output.txt 2>&1
-echo "CLI_EXIT=$?" >> /tmp/gemini-{dimension}-output.txt
+timeout --kill-after=30 600 gemini --model gemini-2.5-pro -p "$(cat {RUN_DIR}/codex-{dimension}-prompt.txt)" \
+  > {RUN_DIR}/gemini-{dimension}-output.txt 2>&1
+echo "CLI_EXIT=$?" >> {RUN_DIR}/gemini-{dimension}-output.txt
 ```
 
 **For full mode:** Run each dimension per module, then aggregate:
 ```bash
 # Per module, per dimension
 set -o pipefail
-cat /tmp/codex-{dimension}-prompt.txt <(echo "Files to review:") /tmp/codex-module-{name}.txt | \
-  timeout 600 codex --model ${REVIEW_MODEL} --full-auto exec - \
-  > /tmp/codex-{dimension}-{module}-output.txt 2>&1
-echo "CLI_EXIT=$?" >> /tmp/codex-{dimension}-{module}-output.txt
+cat {RUN_DIR}/codex-{dimension}-prompt.txt <(echo "Files to review:") {RUN_DIR}/codex-module-{name}.txt | \
+  timeout --kill-after=30 600 codex --model ${REVIEW_MODEL} --full-auto exec - \
+  > {RUN_DIR}/codex-{dimension}-{module}-output.txt 2>&1
+echo "CLI_EXIT=$?" >> {RUN_DIR}/codex-{dimension}-{module}-output.txt
 ```
 
-**Every external CLI call carries `timeout`.** These tools write nothing until they finish, so an empty output file means "still working" exactly as often as it means "died" — without an enforced deadline there is no way to tell, and a single slow dimension stalls the whole review indefinitely. Never conclude a CLI died from an empty file or from its absence in `ps`.
+**Every external CLI call carries `timeout`.** These tools write nothing until they finish, so an empty output file means "still working" exactly as often as it means "died" — without an enforced deadline there is no way to tell, and a single slow dimension stalls the whole review indefinitely. Never conclude a CLI died from an empty file or from its absence in `ps`. `--kill-after=30` is not decoration: bare `timeout` sends only `SIGTERM`, which the child may trap or ignore, so the follow-up `SIGKILL` is what turns the deadline into a guarantee.
 
-**The exit code has to survive to be read.** Write the CLI's output to the file with `>` and record the status with `echo "CLI_EXIT=$?"` — do **not** end these commands with `| tee file`. A pipeline reports the status of its *last* command, so `timeout 600 codex … | tee out.txt` yields `tee`'s exit 0 and a genuine timeout becomes indistinguishable from a clean run. Where a pipeline is structural (the `cat … | codex` stdin feed above), `set -o pipefail` is what makes the upstream failure propagate; without it the same masking applies. `CLI_EXIT=124` means the deadline was hit: record that dimension as `timed out` and carry on with the rest.
+**The exit code has to survive to be read.** Write the CLI's output to the file with `>` and record the status with `echo "CLI_EXIT=$?"` — do **not** end these commands with `| tee file`. A pipeline reports the status of its *last* command, so `timeout 600 codex … | tee out.txt` yields `tee`'s exit 0 and a genuine timeout becomes indistinguishable from a clean run. Where a pipeline is structural (the `cat … | codex` stdin feed above), `timeout` is already the last element, so its status does survive — but `set -o pipefail` is still needed to catch a failing `cat`, which would otherwise feed Codex an empty prompt and report success. `CLI_EXIT=124` means the deadline was hit: record that dimension as `timed out` and carry on with the rest.
 
 **Model fallback:** If primary model access fails (check for "model not found", "not available", "permission denied"), retry once with `FALLBACK_MODEL`.
 
@@ -207,9 +217,22 @@ echo "CLI_EXIT=$?" >> /tmp/codex-{dimension}-{module}-output.txt
 Load `${CLAUDE_SKILL_DIR}/codex-triage.md` for full triage instructions.
 
 ### 5a. Read all external outputs
+
 ```bash
-cat /tmp/codex-*-output.txt /tmp/gemini-*-output.txt 2>/dev/null
+cat {RUN_DIR}/codex-*-output.txt {RUN_DIR}/gemini-*-output.txt 2>/dev/null
 ```
+
+**Classify each file by its `CLI_EXIT=` line before you read a single finding.** That line is the last thing in every output file and it is the only reliable statement about whether the pass succeeded; the findings above it are meaningless if the run died halfway. Per file:
+
+- `CLI_EXIT=0` → the pass completed. Parse its findings. If there are none, that dimension is `completed — 0 findings`, which is a *result*, not a failure.
+- `CLI_EXIT=124` → `timed out`. Record it on the coverage line and continue with the other dimensions.
+- `CLI_EXIT=` non-zero, with an authentication diagnostic (`not logged in`, `unauthorized`, `authentication failed`, `run codex login`) → `auth failed`.
+- `CLI_EXIT=` non-zero, cause unclear → `failed (exit N)`.
+- No `CLI_EXIT=` line at all → the command never finished writing. Treat as `unavailable`, never as "clean".
+
+**Branch on the exit status first, never on keywords alone.** These files hold the models' *findings* as well as their diagnostics, and review findings routinely discuss authentication, logins, and unauthorized access. Grepping the whole file for `auth` without checking the status first throws away a successful review as an auth failure — and the more findings the pass produced, the likelier the misfire.
+
+**An empty output file is NOT a failure signal.** These CLIs buffer and write nothing until they finish, so a 0-byte file means "still working" exactly as often as it means "died". Never conclude a pass failed from an empty file, an empty `BashOutput`, or the absence of the process in `ps`. Only a recorded `CLI_EXIT=` status, a reported completion, or an error in the file itself is evidence.
 
 ### 5b. Load convention context
 Apply `{PROJECT_CONVENTIONS}` from Step 2 when evaluating findings.
@@ -267,6 +290,7 @@ Process verdicts:
 - **Scope**: branch changes | full codebase | PR #X
 - **Tools Used**: Codex ({model}) [+ Gemini] + Claude
 - **Dimensions**: [list of passes run — mark any that hit `timeout` (`CLI_EXIT=124`) or produced no output as `timed out` / `no output`, never silently omit one]
+- **Coverage**: per external CLI, one of `findings | completed — 0 findings | timed out | unparseable | unavailable | auth failed | failed (exit N)` — e.g. `Codex: findings; Gemini: unavailable`. If every selected dimension ran on every available CLI, say `full`. A dimension left off this line reads as "came back clean", which is exactly the failure this line exists to prevent.
 - **Files Analyzed**: N total (M prioritized)
 - **Confidence Threshold**: [threshold]
 - **Convention Sources**: [files loaded or "none"]
