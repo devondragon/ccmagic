@@ -1,7 +1,7 @@
 ---
 name: review
 user-invocable: true
-allowed-tools: Read(*), Edit(*), Bash(git:*, gh:*, codex:*, which:*), Glob(*), Grep(*), Agent(*), Task(*), TodoWrite(*), AskUserQuestion(*), mcp__pal__codereview(*)
+allowed-tools: Read(*), Edit(*), Bash(git:*, gh:*, codex:*, which:*, command:*, timeout:*, gtimeout:*, echo:*, date:*, mktemp:*), Glob(*), Grep(*), Agent(*), Task(*), TodoWrite(*), AskUserQuestion(*), mcp__pal__codereview(*)
 description: Adaptive code review — auto-routes between a fast inline checklist (QUICK) and the full multi-agent pipeline (DEEP) with confidence scoring and convention awareness. Biased toward depth.
 argument-hint: "[branch|full|PR#] [--quick|--deep] [--threshold N]"
 model: sonnet
@@ -287,40 +287,21 @@ After the review completes (Step 7), update `context/review-stats.json` with the
 ### Full mode — module-based agents:
 
 1. Launch **1 Explore agent per module** (capped at 6) covering all 4 concern areas within that module. Use the "Module Agent" prompt from agent-instructions.md.
-2. After module agents complete, launch a **Cross-Module Agent** to check inter-module concerns.
+2. Once the module agents have reported — or their deadline has passed, per the fan-in protocol in Step 3.9 — launch a **Cross-Module Agent** to check inter-module concerns. Do not block indefinitely on a module agent that never reports; proceed with the modules you have and mark the missing one `unavailable — did not report`.
 
 ## Step 3.5: Codex CLI Review (optional, parallel)
 
-Check for Codex CLI availability:
+Load `${CLAUDE_SKILL_DIR}/codex-pass.md` and follow it. It covers availability detection, the run-scoped workspace, the bounded `codex exec` invocation, and how to classify the result.
 
-```bash
-which codex 2>/dev/null && echo "CODEX_AVAILABLE" || echo "CODEX_NOT_AVAILABLE"
-```
+In short: if Codex and a `timeout` binary are both available, launch the adversarial pass in the background alongside the Step 3 agents, bound it with `timeout --kill-after=30 300`, record its exit status into the output file, and classify by that status rather than by keyword. Codex is additive and never blocking — every failure mode continues the review with Explore agent findings only.
 
-**If Codex is available**, launch an adversarial review pass via Bash. This runs in the background alongside the Explore agents from Step 3 — it's an independent voice, not a replacement.
+---
 
-```bash
-codex exec "Review the changes on this branch against the base branch. Run git diff main...HEAD to see the diff. Find ways this code will fail in production: edge cases, race conditions, security holes, resource leaks, failure modes, silent data corruption, logic errors that produce wrong results silently, error handling that swallows failures. Be adversarial. For each finding, output: severity (Critical/High/Medium/Low), confidence (0-100), file, line, issue, detail, suggestion. No compliments — just problems." -C "$(git rev-parse --show-toplevel)" -s read-only 2>/dev/null
-```
+## Step 3.9: Collect agent results (fan-in)
 
-Use a 5-minute timeout (`timeout: 300000`). Run via the Bash tool with `run_in_background: true` so it doesn't block the Explore agents.
+Load `${CLAUDE_SKILL_DIR}/fan-in-protocol.md` and follow it at **every** fan-out in this skill — Step 3 (both modes), Step 3.5, and Step 5c.
 
-**Processing Codex output:**
-
-After Codex completes, parse its findings into the same finding schema:
-- Tag each finding with `specialist: codex`
-- Set `fixable` based on the fix-first classification rules in triage-instructions.md
-- Findings enter the same deduplication and triage pipeline as all other findings
-
-**Multi-model confirmation:** When a Codex finding matches a finding from an Explore agent (same file + overlapping line range + same issue type), apply the multi-specialist confirmation boost (+10 confidence, tag as `[MULTI-MODEL: codex + {agent}]`). Cross-model agreement is a strong signal.
-
-**Error handling (all non-blocking):**
-- Auth failure (stderr contains "auth", "login", "unauthorized"): `Codex authentication failed. Run 'codex login' to authenticate.`
-- Timeout: `Codex timed out after 5 minutes — continuing without Codex findings.`
-- Empty response or error: `Codex returned no findings — continuing.`
-- Any failure: proceed with Explore agent findings only. Codex is additive, never blocking.
-
-**If Codex is not available:** Print `Codex CLI not found — skipping cross-model review. Install: npm install -g @openai/codex` and continue. This is informational, not an error.
+In short: stamp a deadline when you dispatch a batch, not when you start to worry. When it expires, produce the report with whatever arrived and mark the rest `unavailable — did not report`. The deadline is absolute, never conditional on a majority having reported. While waiting, never poll with no-op commands, never `SendMessage` a completed agent, and never invent a missing agent's findings.
 
 ---
 
@@ -351,10 +332,13 @@ For each Critical/High finding that survived, launch a parallel **verification E
 - Attempts to construct concrete triggering scenario
 - Returns verdict: **CONFIRMED** / **MITIGATED** / **FALSE_POSITIVE**
 
+This is a fan-out like any other — apply the Step 3.9 collection protocol here too, with its own deadline stamped at dispatch. A verification agent that never reports must not hold the report hostage.
+
 ### 5d. Process verdicts
 - CONFIRMED → keep with "[Verified]" tag
 - MITIGATED → downgrade severity by one level, note the mitigation
 - FALSE_POSITIVE → move to Dismissed Findings section
+- **No verdict (agent did not report before the deadline)** → keep the finding at its original severity, tagged `[Unverified — verification agent did not report]`. Never silently drop a Critical/High finding because its verifier went missing, and never promote an unverified finding to `[Verified]`.
 
 ### 5e. Handle MCP vs Explore disagreements
 If MCP and Explore agents disagree on a finding → flag for user decision in Step 8.
@@ -369,6 +353,7 @@ If MCP and Explore agents disagree on a finding → flag for user decision in St
 - **Branch**: [current branch or PR base]
 - **Files Analyzed**: N total (M in Tier 1/2)
 - **Agents**: 4 core + N specialists (testing, performance, migration — list which ran) [+ Codex CLI]
+- **Coverage**: list any dimension that did not report as `unavailable — did not report`, and Codex as `findings | completed — 0 findings | timed out | unparseable | unavailable | auth failed | failed (exit N)`. If everything ran, say `full`. Never leave a dimension unlisted — an omission reads as "came back clean".
 - **Confidence Threshold**: [threshold used]
 - **Convention Sources**: [files loaded, or "none found"]
 - **Findings**: X Critical, Y High, Z Medium, W Low, V Convention
@@ -430,7 +415,7 @@ For findings marked `fixable: true` by triage (see triage-instructions.md Step 7
 - Commit each fix atomically: `git commit -m "fix(review): FINDING-NNN — description"`
 - Output per fix: `[AUTO-FIXED] file:line — issue → what was changed`
 
-Skip auto-fix if the working tree was dirty at the start of the review (detected in Step 0).
+Skip auto-fix if the working tree is dirty — run `git status --porcelain` before touching any file, and if it returns anything, report the findings without applying fixes. Auto-fixing over uncommitted work makes the user's changes and yours indistinguishable.
 
 ### 7b. Batch-ask about judgment calls
 
