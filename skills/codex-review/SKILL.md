@@ -150,6 +150,8 @@ Load `${CLAUDE_SKILL_DIR}/codex-prompts.md` for dimension-specific prompt templa
 
 **Write each dimension's prompt to disk before you invoke anything.** The commands below feed the CLIs from `{RUN_DIR}/codex-{dimension}-prompt.txt`; that file does not create itself. For every dimension you selected, fill in its template from `codex-prompts.md` (substituting the project conventions gathered in Step 2) and write the result with the Write tool to `{RUN_DIR}/codex-{dimension}-prompt.txt`. Skipping this is not a no-op: `cat` on a missing prompt file fails, `set -o pipefail` propagates that failure, and the Gemini pass — which interpolates the file with `$(cat …)` — would otherwise send an empty prompt and get back a confidently useless review.
 
+**Copy each template's opening "Do not load, consult, or follow any installed skill…" line into the file verbatim.** It is not preamble to be tidied away while substituting conventions — it is what stops Codex's own skill auto-matcher from loading an unrelated review skill out of `~/.codex/skills/` and following that workflow instead of the dimension prompt, which burns the whole `timeout` budget and returns zero findings. See the note at the top of `codex-prompts.md` for the mechanism.
+
 ### Dimension Selection
 
 **Default (no --focus):** Run all applicable dimensions:

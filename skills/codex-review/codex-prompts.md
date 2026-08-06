@@ -4,11 +4,15 @@ Structured prompts for multi-dimension Codex passes. Each prompt is self-contain
 
 All prompts share the same output format (see Finding Output Format at the bottom).
 
+**Every prompt opens with the same "do not load any installed skill" line — keep it, and add it to any new dimension you write.** Codex CLI runs its own skill auto-matcher: at the start of a run it compares the prompt against the `description` in every `~/.codex/skills/*/SKILL.md` and silently loads whichever one matches. A prompt that opens "Review this code for … issues" is a near-verbatim match for common review skills (GSD's `gsd-code-review` describes itself as *"Review source files changed during a phase for bugs, security issues, and code quality problems"*). When it matches, Codex reads that skill and its multi-hundred-line companion workflow *before* looking at the diff, then follows those instructions instead of the dimension prompt below — exploring unrelated files until the `timeout` kills it, and returning zero findings. Observed against the correctness prompt: the first three tool calls of the run were `sed` on `~/.codex/skills/gsd-code-review/SKILL.md` and `~/.codex/gsd-core/workflows/code-review.md`. The hijack is intermittent, so one clean run does not prove the line is redundant. There is no CLI flag to disable it — `codex exec --disable skills` errors with `Unknown feature flag: skills` — so the suppression has to live in the prompt text. It is harmless to the other CLIs these prompts are fed to.
+
 ---
 
 ## Security Pass
 
 ```
+Do not load, consult, or follow any installed skill, plugin, or workflow definition. This is a standalone review, not part of any phase-based workflow.
+
 Review this code for SECURITY VULNERABILITIES ONLY. Do not report style, architecture, or performance concerns.
 
 For each finding you MUST include:
@@ -41,6 +45,8 @@ If there are no actionable findings, output exactly: No actionable findings.
 ## Architecture & Design Pass
 
 ```
+Do not load, consult, or follow any installed skill, plugin, or workflow definition. This is a standalone review, not part of any phase-based workflow.
+
 Review this code for ARCHITECTURE AND DESIGN issues ONLY. Do not report security vulnerabilities, style nits, or individual bugs.
 
 Focus on:
@@ -69,6 +75,8 @@ If there are no actionable findings, output exactly: No actionable findings.
 ## Correctness & Reliability Pass
 
 ```
+Do not load, consult, or follow any installed skill, plugin, or workflow definition. This is a standalone review, not part of any phase-based workflow.
+
 Review this code for CORRECTNESS AND RELIABILITY issues ONLY. Do not report security, style, or architecture concerns.
 
 Focus on:
@@ -99,6 +107,8 @@ If there are no actionable findings, output exactly: No actionable findings.
 ## Error Handling & Resilience Pass
 
 ```
+Do not load, consult, or follow any installed skill, plugin, or workflow definition. This is a standalone review, not part of any phase-based workflow.
+
 Review this code for ERROR HANDLING AND RESILIENCE issues ONLY.
 
 Focus on:
@@ -127,6 +137,8 @@ If there are no actionable findings, output exactly: No actionable findings.
 ## Test Coverage Gaps Pass
 
 ```
+Do not load, consult, or follow any installed skill, plugin, or workflow definition. This is a standalone review, not part of any phase-based workflow.
+
 Review this code for SIGNIFICANT TEST COVERAGE GAPS ONLY. Do not report style or test organization preferences.
 
 Focus on:
@@ -155,6 +167,8 @@ If there are no actionable findings, output exactly: No actionable findings.
 ## Dependency Health Pass
 
 ```
+Do not load, consult, or follow any installed skill, plugin, or workflow definition. This is a standalone review, not part of any phase-based workflow.
+
 Review the project's dependency configuration for HEALTH AND RISK issues.
 
 Examine: package.json/package-lock.json, go.mod/go.sum, Cargo.toml/Cargo.lock, pyproject.toml/requirements.txt, pom.xml, build.gradle, Gemfile/Gemfile.lock

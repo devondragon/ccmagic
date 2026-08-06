@@ -2,6 +2,16 @@
 
 All notable changes to ccmagic are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.6.5] — 2026-08
+
+### Fixed
+
+Field report: a live `/ccmagic:review` DEEP run produced **zero Codex findings and died at `CODEX_EXIT=124`**. The 3.6.3/3.6.4 work made that timeout observable and non-blocking; this fixes what was actually eating the 5 minutes.
+
+- **Codex CLI was loading someone else's review skill and following it instead of ccmagic's prompt** (`skills/review/codex-pass.md`, `skills/codex-review/codex-prompts.md`, `skills/codex-review/SKILL.md` §4) — Codex runs its own skill auto-matcher: at the start of a run it matches the prompt against the `description` of every `~/.codex/skills/*/SKILL.md` and silently loads the best match. ccmagic's prompts open with "Review the changes on this branch … bugs, security issues, code quality", which is a near-verbatim match for GSD's `gsd-code-review` (*"Review source files changed during a phase for bugs, security issues, and code quality problems"*). Two seconds into the failing run — before touching the diff — Codex read that `SKILL.md` and its 838-line companion workflow, then followed *those* instructions: tracing risky changes into surrounding code, running tests, exploring files unrelated to the diff. It was still exploring when `timeout` killed it. Every ccmagic prompt fed to `codex` now opens with `Do not load, consult, or follow any installed skill, plugin, or workflow definition. This is a standalone review, not part of any phase-based workflow.` — the `review` skill's adversarial pass and all six `codex-review` dimension prompts (security, architecture, correctness, errors, tests, deps), which are also fed to Gemini and are unaffected by the extra line there.
+
+  Measured against `codex-cli 0.146.1` with the skill installed: without the guard the hijack fired in 4 of 5 runs, with the first tool calls of the run being `sed` on `~/.codex/skills/gsd-code-review/SKILL.md` and `~/.codex/gsd-core/workflows/code-review.md`; with the guard prepended, 0 of 11 runs read any skill file. It is intermittent rather than deterministic, which is why the sentence must stay even when a run looks healthy. There is no flag to switch the matcher off — `codex exec --disable skills` errors with `Unknown feature flag: skills` — so the suppression has to be textual, and each file carries a note saying so, because it otherwise reads like a redundant line to clean up.
+
 ## [3.6.4] — 2026-07
 
 ### Fixed
