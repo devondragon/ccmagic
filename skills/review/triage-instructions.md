@@ -93,7 +93,7 @@ After triage, apply display rules based on final confidence:
 
 ### 7. Classify Fix-First
 
-For each surviving finding, classify for the fix-first workflow:
+Classify each surviving finding as AUTO-FIX or ASK. This is a **label on the finding**, not permission to change code: the review applies nothing unless it was invoked with `--fix`, and even then it stops at the working tree — it never commits or pushes.
 
 **AUTO-FIX** (fixable: true) — Mechanical changes that don't require judgment:
 - Missing null/undefined checks on obvious code paths

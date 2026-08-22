@@ -1,9 +1,9 @@
 ---
 name: review
 user-invocable: true
-allowed-tools: Read(*), Edit(*), Bash(git:*, gh:*, codex:*, which:*, command:*, timeout:*, gtimeout:*, echo:*, date:*, mktemp:*), Glob(*), Grep(*), Agent(*), Task(*), TodoWrite(*), AskUserQuestion(*), mcp__pal__codereview(*)
+allowed-tools: Read(*), Edit(*), Bash(git diff:*, git log:*, git status:*, git branch:*, git show:*, git rev-parse:*, git merge-base:*, git ls-files:*, git blame:*, gh pr view:*, gh pr diff:*, gh pr list:*, gh repo view:*, codex:*, which:*, command:*, timeout:*, gtimeout:*, echo:*, date:*, mktemp:*), Glob(*), Grep(*), Agent(*), Task(*), TodoWrite(*), AskUserQuestion(*), mcp__pal__codereview(*)
 description: Adaptive code review — auto-routes between a fast inline checklist (QUICK) and the full multi-agent pipeline (DEEP) with confidence scoring and convention awareness. Biased toward depth.
-argument-hint: "[branch|full|PR#] [--quick|--deep] [--threshold N]"
+argument-hint: "[branch|full|PR#] [--quick|--deep] [--fix] [--threshold N]"
 model: sonnet
 context: fork
 ---
@@ -14,6 +14,12 @@ Perform an adaptive code review that **auto-routes between QUICK and DEEP** base
 
 - **QUICK** — Inline checklist pass done by this agent. Categories: correctness, security, performance, maintainability, testing, architecture, conventions. Output is grouped CRITICAL / WARNING / INFO with a PASS / PASS-WITH-WARNINGS / FAIL verdict. Fast, lightweight.
 - **DEEP** — Full multi-agent pipeline: 4 core Explore agents + conditional specialists (testing, performance, migration) + optional Codex CLI cross-model pass + MCP fallback + Round-2 verification of Critical/High findings. Comprehensive, confidence-scored.
+
+## This skill is read-only
+
+**Never `git add`, `git commit`, `git push`, `gh pr create`, `gh pr merge`, or `gh pr comment` from this skill — in any mode, for any reason, including when a fix looks obviously correct or the user seems to want it landed.** Reviewing and landing are separate jobs; the user runs `/ccmagic:push` when they want the work committed. The `git` and `gh` grants in the frontmatter are deliberately narrowed to read-only subcommands so this cannot happen by accident. If you find yourself reaching for a write command, produce the finding instead.
+
+The one permitted write is `--fix` (Step 7a), and it edits the **working tree only** — the user reviews the diff and commits it themselves. Without `--fix`, do not use `Edit` on source files at all.
 
 > **Parallel execution:** Launch independent agents simultaneously. Claude Code determines when this is safe.
 
@@ -29,6 +35,7 @@ Parse `$ARGUMENTS` to determine review mode and options:
 | `<number>` | `pr` | Review PR by number (e.g., `42`) |
 | `--quick` | *(override)* | Force QUICK inline checklist pass. |
 | `--deep` | *(override)* | Force DEEP multi-agent pipeline. |
+| `--fix` | *(modifier)* | Apply mechanical fixes to the working tree after reporting (Step 7a). Off by default — without it the review makes no code changes at all. Never commits or pushes, with or without the flag. |
 | `--threshold N` | *(modifier)* | Confidence threshold for DEEP, default 80. Findings below this are dropped. |
 | `--no-codex` | *(modifier)* | Skip Codex CLI review in DEEP mode even if installed |
 | `--all-specialists` | *(modifier)* | Force all conditional specialists in DEEP, bypass adaptive gating |
@@ -117,6 +124,8 @@ Final verdict line:
 - **FAIL** — one or more critical findings; address before merge.
 
 After producing the report, **stop**. Do not continue into DEEP mode steps.
+
+If `--fix` was passed, apply mechanical fixes under the Step 7a rules (working tree only, clean-tree precondition, no commit) and then stop. Without `--fix`, QUICK ends at the report — change nothing.
 
 ---
 
@@ -390,10 +399,12 @@ For each:
 > ~~`file:line` — [original issue]~~
 > **Dismissed**: [reason — FALSE_POSITIVE or below threshold]
 
-## Fixes Applied ({count})
-[List of auto-fixed and user-approved fixes with commit hashes]
-> `abc1234` fix(review): FINDING-003 — missing null check in user handler
-> `def5678` fix(review): FINDING-007 — N+1 query in order listing
+## Fixes Applied ({count}) — only when `--fix` was passed
+[Working-tree edits made under Step 7a. Omit this section entirely when `--fix` was not passed. Never list commit hashes here — this skill does not commit.]
+> `src/handlers/user.ts:42` FINDING-003 — added the missing null check on `session.user`
+> `src/orders/list.ts:88` FINDING-007 — batched the per-order lookup into one query
+>
+> Uncommitted. Review with `git diff`, then commit with `/ccmagic:push` or your own commit.
 
 ## Positive Findings
 [Well-implemented patterns, good practices observed]
@@ -405,24 +416,37 @@ For each:
 [Quality rating, key risks, actionable recommendation]
 ```
 
-## Step 7: Fix-First & Task Integration
+## Step 7: Follow-up
 
-### 7a. Auto-fix mechanical findings
+**Default (no `--fix`): steps 7a and 7b do not run.** The report is the deliverable. Go straight to 7c and 7d, make no code changes, and do not offer to apply the fixes — the user asks for `--fix` when they want them applied.
+
+### 7a. Apply mechanical fixes — `--fix` only
+
+Skip this step entirely unless `--fix` was passed.
+
+Preconditions, both required:
+- `--fix` present in `$ARGUMENTS`.
+- Working tree clean — run `git status --porcelain` before touching any file. If it returns anything, apply nothing and say so: mixing your edits into the user's uncommitted work makes the two indistinguishable.
 
 For findings marked `fixable: true` by triage (see triage-instructions.md Step 7):
-- Apply each fix directly in source code
+- Apply each fix directly in source code with `Edit`
 - Prefer minimal changes — one fix per finding
-- Commit each fix atomically: `git commit -m "fix(review): FINDING-NNN — description"`
-- Output per fix: `[AUTO-FIXED] file:line — issue → what was changed`
+- Output per fix: `[FIXED] file:line — issue → what was changed`
 
-Skip auto-fix if the working tree is dirty — run `git status --porcelain` before touching any file, and if it returns anything, report the findings without applying fixes. Auto-fixing over uncommitted work makes the user's changes and yours indistinguishable.
+**Stop at the working tree.** Do not `git add`, do not `git commit`, do not `git push`, do not open or update a PR. Close with:
 
-### 7b. Batch-ask about judgment calls
+```
+N fixes applied to the working tree, uncommitted. Review with `git diff`, then commit when you're satisfied.
+```
+
+### 7b. Batch-ask about judgment calls — `--fix` only
+
+Skip this step entirely unless `--fix` was passed. Without `--fix`, judgment-call findings are reported in Step 6 and tracked in 7c; do not open an `AskUserQuestion` about fixing them.
 
 For findings marked `fixable: false`, present via a single `AskUserQuestion`:
 
 ```
-I auto-fixed N issues. M need your input:
+I fixed N issues in the working tree. M need your input:
 
 1. [HIGH] file:line — issue description
    Suggested fix: what to change
@@ -435,7 +459,7 @@ I auto-fixed N issues. M need your input:
 RECOMMENDATION: Fix #1 because [reason]. Skip #2 because [reason].
 ```
 
-Apply fixes for items where the user chose "Fix." Commit each individually.
+Apply fixes for items where the user chose "Fix." These also stay uncommitted.
 
 If 0 fixable findings exist, skip 7a. If 0 judgment-call findings exist, skip 7b.
 
@@ -468,3 +492,5 @@ Record the user's decision in the report.
 ## Execution
 
 When invoked, immediately begin the review process without asking for confirmation. Be thorough but concise. Every finding must meet the confidence threshold and follow the finding schema. Quality over quantity — 5 verified, actionable findings beat 30 unvalidated observations.
+
+**End state:** a report. Without `--fix`, the repository is byte-for-byte unchanged when you finish. With `--fix`, the working tree carries the fixes and nothing is staged, committed, pushed, or turned into a PR. Committing and pushing belong to `/ccmagic:push`; merging belongs to `/ccmagic:merge`. A review that lands its own changes has destroyed the thing that makes it a review — an independent read of work someone else decided to keep.

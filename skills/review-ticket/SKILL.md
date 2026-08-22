@@ -2,7 +2,7 @@
 name: review-ticket
 description: Ticket-grounded code review. Fetches the ticket from Linear, GitHub Issues, or JIRA, then runs /ccmagic:review with the ticket scope as the primary intent source. Adds an explicit Ticket-scope drift section (in-scope / out-of-scope / missing-from-ticket).
 user-invocable: true
-allowed-tools: Read(*), Edit(*), Bash(git:*, gh:*), Glob(*), Grep(*), Agent(*), Task(*), TodoWrite(*), AskUserQuestion(*), Skill(*)
+allowed-tools: Read(*), Bash(git diff:*, git log:*, git status:*, git branch:*, git show:*, git show-ref:*, git rev-parse:*, git merge-base:*, git ls-files:*, gh issue view:*, gh issue comment:*, gh pr view:*, gh pr diff:*, gh pr list:*, gh pr comment:*, gh repo view:*), Glob(*), Grep(*), Agent(*), Task(*), TodoWrite(*), AskUserQuestion(*), Skill(*)
 argument-hint: "[TICKET-ID] [--threshold N]"
 model: inherit
 ---
@@ -12,6 +12,8 @@ model: inherit
 Runs a full code review with the **ticket as the ground truth for intent**. The reviewer sees not just the diff but the ticket's stated problem, scope, and acceptance criteria — so it can flag both code-quality issues *and* drift from what was actually asked for.
 
 **On invocation, announce:** "I'll resolve your tracker, fetch the ticket, run the scope-drift check against acceptance criteria, then call /ccmagic:review with the ticket context attached. The final report includes a Ticket-scope drift section."
+
+**This skill is read-only against the codebase.** It reports and verdicts; it never edits source, and never runs `git add`, `git commit`, `git push`, `gh pr create`, or `gh pr merge` — the frontmatter grants only read-only `git`/`gh` subcommands plus the two comment-posting ones it needs. `/ccmagic:review` runs here **without** `--fix`, even when the findings look mechanically fixable. Applying fixes is the caller's job: interactively that's you, and under `/ccmagic:auto-ticket` it's the orchestrator's bounded fix loop, which applies the findings, pushes via `/ccmagic:push`, and re-invokes this skill for a delta pass. Fixing your own findings and then verifying them yourself is self-certification — the separation is what makes the re-review worth anything.
 
 ## When to use this vs `/ccmagic:review`
 

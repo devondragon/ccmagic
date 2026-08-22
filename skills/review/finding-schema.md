@@ -19,7 +19,7 @@ Every finding reported by a review agent MUST use this exact structure. Omitting
 
 Use one block per finding. Separate findings with a blank line.
 
-The `specialist` field enables multi-specialist confirmation (boosted confidence when 2+ agents flag the same issue). The `fixable` field drives the fix-first workflow — mechanical fixes are auto-applied, judgment calls are batched for user decision.
+The `specialist` field enables multi-specialist confirmation (boosted confidence when 2+ agents flag the same issue). The `fixable` field is a **classification, not an instruction to act** — it marks which findings a `--fix` run may apply to the working tree. Without `--fix`, every finding is reported and nothing is changed.
 
 The `systemic` field prevents whack-a-mole fix loops — a point-fix to the reported line while sibling instances survive to the next review pass. When an issue is one instance of a pattern, the **enumeration is the finding**, not the first hit: search every mechanism that could carry the pattern, not just the syntax the first instance used. And scope your all-clears: a "no other instances" claim MUST state its search scope and the mechanisms covered, or be downgraded to "no other {mechanism} instances found". An unscoped universal claim is more dangerous than silence in an autonomous loop that acts on verdicts.
 
