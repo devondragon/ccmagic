@@ -55,7 +55,7 @@ All four auto-detect the tracker (Linear MCP → GitHub CLI → Atlassian/JIRA M
 
 | Skill | Purpose |
 |---|---|
-| `/ccmagic:review [branch\|full\|PR#] [--quick\|--deep]` | Adaptive code review — auto-routes QUICK (inline checklist) vs DEEP (4 core agents + specialists + Codex CLI + MCP + verification). Biased toward depth. |
+| `/ccmagic:review [branch\|full\|PR#] [--quick\|--deep] [--fix]` | Adaptive code review — auto-routes QUICK (inline checklist) vs DEEP (4 core agents + specialists + Codex CLI + MCP + verification). Biased toward depth. Read-only: reports findings and changes nothing unless you pass `--fix`, which edits the working tree only and never commits or pushes. |
 | `/ccmagic:codex-review [branch\|full\|PR#]` | Multi-model cross-review: Codex + Gemini + Claude triage with dimension-focused passes |
 | `/ccmagic:pr-feedback [PR#]` | Triage PR review comments, plan fixes for the valid ones |
 | `/ccmagic:validate` | Pre-PR validation in parallel: lint, types, tests, build |

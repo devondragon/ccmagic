@@ -2,6 +2,23 @@
 
 All notable changes to ccmagic are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.6.6] — 2026-08
+
+### Fixed
+
+Field report: `/ccmagic:review` — a skill whose whole job is to report — was editing source, committing, and pushing.
+
+- **The review skill told itself to fix and commit** (`skills/review/SKILL.md` Step 7, frontmatter, Step 6 report template) — Step 7a read "Apply each fix directly in source code" and "Commit each fix atomically: `git commit -m \"fix(review): FINDING-NNN — description\"`", with no flag guarding it and no line anywhere forbidding a push. Three things compounded it: the frontmatter granted `Bash(git:*, gh:*)`, which matches `git commit`, `git push`, and `gh pr create`; the Step 6 report template required a **Fixes Applied** section whose example rows are commit hashes, so even a reviewer inclined to only report had an output slot it could not fill without committing; and the push itself was never written down at all — it is what a model does next once it has commits on a branch. Reviewing and landing are now separate: fixes are opt-in behind a new `--fix` flag, `--fix` stops at the working tree, and commit/push/PR are prohibited in every mode.
+
+  - `review` frontmatter now grants read-only subcommands only (`git diff|log|status|branch|show|rev-parse|merge-base|ls-files|blame`, `gh pr view|diff|list`, `gh repo view`) instead of `git:*, gh:*`, so a write is refused by the permission layer rather than discouraged by prose.
+  - Step 7 defaults to no writes: without `--fix`, 7a and 7b are skipped entirely and the review must not offer to apply anything. With `--fix`, fixes require a clean working tree, are reported as `[FIXED] file:line`, and are left uncommitted for the user to review with `git diff`.
+  - The report's **Fixes Applied** section is omitted unless `--fix` ran, and lists `file:line` instead of commit hashes.
+  - `finding-schema.md` and `triage-instructions.md` no longer describe `fixable: true` as meaning "auto-applied" — it is a classification, and only a `--fix` run acts on it.
+
+- **`review-ticket` said it never mutates code while delegating to a skill that did** (`skills/review-ticket/SKILL.md`) — line 204 has always read "This skill still only **reports and verdicts** — it does not mutate code; the caller applies fixes", and `agents/auto-review.md` ships without an `Edit` tool for the same reason, but the `review` pipeline it runs inline carried the Step 7 fix-and-commit instructions with it. It now drops `Edit(*)`, narrows its `git`/`gh` grants to read-only plus the two comment-posting subcommands it needs (`gh pr comment`, `gh issue comment`), and states explicitly that it invokes `review` without `--fix`.
+
+  The autonomous path is unchanged and was already correct: on `fixable-findings`, `/ccmagic:auto-ticket` Step 3 applies the findings itself, pushes via `/ccmagic:push`, and re-invokes `review-ticket` with `review_pass: {n}` for a delta pass. Keeping the fix out of the reviewer is what makes that re-review meaningful — a reviewer that fixes its own findings and then verifies them is self-certifying.
+
 ## [3.6.5] — 2026-08
 
 ### Fixed
