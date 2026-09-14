@@ -48,7 +48,9 @@ autonomous: false
 needs_human_label: needs-human
 
 # Who merges. `self` (default) merges from the run. `reeve` hands the PR off to an
-# external merge gate: finish-ticket moves the ticket to merge_handoff_state and
+# external merge gate instead of merging: on Linear/JIRA it moves the ticket to
+# merge_handoff_state; on GitHub Issues it applies the awaiting-merge label and
+# leaves the issue open; under prompt-relay it reports the requested state. It
 # never merges. Interactive finish-ticket offers the hand-off and lets you merge anyway.
 # Unlike needs_human_state above, there is no fallback: if merge_handoff_state
 # doesn't exist in your tracker, the run parks needs-human instead of merging.
