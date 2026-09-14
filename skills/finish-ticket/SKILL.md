@@ -201,6 +201,8 @@ The QA path is selected when **any** of these are true:
 
 If none of these are true, **go directly to Done** — don't ask, don't recommend QA, don't try to find a QA assignee.
 
+**If `merge_owner: reeve`:** the disposition question does not apply. Reeve owns the merge, so the ticket moves to `merge_handoff_state` at Step 7 and any QA happens after Reeve's merge, outside this skill. Skip the QA path and its assignee lookup and go to Step 5. If `--qa` was passed together with `merge_owner: reeve`, say the two conflict and ask whether to `merge here anyway` (QA path as normal) or `hand off` (QA deferred; no QA assignee is set here). Absent the key, this paragraph does not apply.
+
 ### When the QA path is selected
 
 Form a brief recommendation, then ask:
@@ -245,11 +247,11 @@ Then present a complete summary of what you're about to do:
 Ticket:    {TICKET-ID} — "{ticket title}"
 PR:        #{pr_number} — {pr_url}
 Merge:     {Squash merge | Merge commit} into {baseRefName}
-Action:    Move ticket to "{target_status}"
+Action:    Move ticket to "{target_status | merge_handoff_state}"
 {If QA path:}
 QA:        Assign to {qa_person_name}
 
-Proceed? (yes / no / change something)
+Proceed? {(yes / no / change something) | with merge_owner: reeve: (yes / merge here anyway / no)}
 ```
 
 Wait for explicit confirmation. If the user says "no" or wants to change something, address their concern and re-confirm before proceeding.
@@ -257,6 +259,8 @@ Wait for explicit confirmation. If the user says "no" or wants to change somethi
 ---
 
 ## Step 6: Merge the PR
+
+**If you took the hand-off at Step 5, or `merge_owner: reeve` applies in autonomous mode, skip this step entirely. Nothing is merged on that path.**
 
 Use the merge strategy you determined in Step 5.
 
@@ -328,7 +332,7 @@ Confirm `state` is `MERGED`.
 
 ### Hand-off branch (`merge_owner: reeve` and the PR was not merged here)
 
-Compose this comment instead of the closing comment:
+Post this comment to the ticket instead of the closing comment, using the same per-tracker mechanism the sections below use for the closing comment (Linear: the Linear MCP comment tool; GitHub: `gh issue comment {N}`; JIRA: the Atlassian MCP comment tool). Under prompt-relay (contract §7), do not post it; include its composed content in this skill's final output so the orchestrator's summary carries it.
 
 ````markdown
 ## Ready for merge, handed off to Reeve
@@ -336,7 +340,7 @@ Compose this comment instead of the closing comment:
 **PR:** [{pr_title}]({pr_url})
 **Base:** `{baseRefName}`
 **Branch:** `{headRefName}`
-**Preflight:** mergeable, CI green, no unaddressed change requests.
+**Preflight:** {mergeable | NOT mergeable: conflicts}; CI {green | {n} failing: {check names}}; {no unaddressed change requests | change requests outstanding from {reviewer}}.
 
 ### Summary of changes
 {2-4 bullet points derived from the PR body / commit log}
@@ -344,7 +348,9 @@ Compose this comment instead of the closing comment:
 Reeve classifies this PR against `.reeve/policy.yml`, re-checks CI, and merges or parks it. Nothing was merged by this run.
 ````
 
-Then transition the ticket to `merge_handoff_state` by **exact** state-name match (no fallbacks: not Done, not Merged, not In Review). If no state with that name exists on the team, do not transition and do not merge; in autonomous mode emit `needs-human` with `reason: merge_owner is reeve but state "{merge_handoff_state}" does not exist on {team}`; interactively, say so and stop. Under prompt-relay, report `requested_state: {merge_handoff_state}` in the handshake instead of transitioning. On GitHub Issues, apply the label `awaiting-merge` (create it first if missing) and leave the issue open. Skip the rest of Step 7 and go to Step 8.
+The Preflight line reports what Step 3 actually observed. If the user chose to proceed past a Step 3 blocker interactively, name the blocker there rather than asserting green; Reeve re-checks CI and mergeability before it merges.
+
+Then transition the ticket to `merge_handoff_state` by **exact** state-name match (no fallbacks: not Done, not Merged, not In Review). On JIRA this is a transition to the status with that exact name from the list fetched in Step 2, scoped to the project. If no state with that name exists on the team (or project), do not transition and do not merge; in autonomous mode emit `needs-human` with `reason: merge_owner is reeve but state "{merge_handoff_state}" does not exist on {team}`; interactively, say so and stop. Under prompt-relay, report `requested_state: {merge_handoff_state}` in the handshake instead of transitioning. On GitHub Issues, apply the label `awaiting-merge` (create it first if missing: `gh label create "awaiting-merge" 2>/dev/null || true`, then `gh issue edit {N} --add-label "awaiting-merge"`) and leave the issue open. Skip the rest of Step 7 and go to Step 8.
 
 Compose the closing comment first (same body for all trackers):
 
@@ -402,7 +408,7 @@ Then:
 Report the completed outcome:
 
 ```
-## Ticket closed out
+{## Ticket closed out | ## Handed off for merge}
 
 Ticket:  {TICKET-ID} — "{ticket title}"
 PR:      #{pr_number} {merged → {baseRefName} | handed off to reeve, open against {baseRefName}}
@@ -440,7 +446,7 @@ Absent all three, run the interactive path exactly as documented above. Also rea
 
 ### Merge hand-off (`merge_owner: reeve`)
 
-When `merge_owner` resolves to `reeve`, the run **never merges**. The Step 3 merge gate still runs as a preflight and still parks on any blocker exactly as above (a red or conflicting PR is not handed off). When the gate is satisfied: skip Step 4, Step 5, and Step 6 entirely (no `gh pr merge`, no branch deletion), take the *Hand-off branch* of Step 7, and emit:
+When `merge_owner` resolves to `reeve`, the run **never merges**. The Step 3 merge gate still runs as a preflight and still parks on any blocker exactly as above (a red or conflicting PR is not handed off). When the gate is satisfied: skip Step 4's disposition question (its `--qa` conflict rule still applies), Step 5, and Step 6 entirely (no `gh pr merge`, no branch deletion), take the *Hand-off branch* of Step 7, and emit:
 
 ```
 status: done
