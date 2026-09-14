@@ -26,7 +26,7 @@ This skill and every sub-skill it calls share one contract — the autonomous si
 
 - Sub-skills are invoked in autonomous mode by prepending the **grounding block** (contract §2) to their arguments. Because the block carries `orchestrator: auto-ticket`, sub-skills return their handshake and let **this** skill park — they never park themselves.
 - Every sub-skill ends with a **handshake** (contract §3): `status: clean | fixable-findings | needs-human | done`. Parse the last one. A missing handshake = treat as `needs-human`.
-- **`route-and-stop`** (contract §4) is the one way this skill ends a run early. Every exit path is either **merged** or **parked-needs-human** — never stalled.
+- **`route-and-stop`** (contract §4) is the one way this skill ends a run early. Every exit path is **merged**, **handed-off** (only with `merge_owner: reeve`), or **parked-needs-human** — never stalled.
 
 ---
 
@@ -171,7 +171,7 @@ Whatever the outcome, record it on the PR and the ticket so the unattended run l
 **Outcome:** {✅ Merged into `{base}` | 🔁 Handed off to Reeve, awaiting merge | 🅿️ Parked — needs human}
 **PR:** {pr_url}
 **Run:** {run_id}
-**Requested state:** {Done | needs_human_state} *(prompt-relay only — omit under mcp)*
+**Requested state:** {Done | merge_handoff_state | needs_human_state} *(prompt-relay only — omit under mcp)*
 
 ### What ran
 - Classified as **{class}**, branched, implemented, opened the PR.
@@ -196,14 +196,14 @@ Whatever the outcome, record it on the PR and the ticket so the unattended run l
 ```
 ````
 
-`steps` lists every sub-skill invocation of this run in order, one entry each, with the handshake `status` it returned and, when the status was not `done` or `clean`, its one-line `reason`. Repeated review passes are separate entries. The block is emitted on every outcome and under every transport. It is the machine-readable record an external gate reads, so its keys are fixed and must not be renamed.
+`steps` lists every sub-skill invocation of this run in order, one entry each, with the handshake `status` it returned; include `reason` whenever the sub-skill emitted one. Repeated review passes are separate entries. The block is emitted on every outcome and under every transport. It is the machine-readable record an external gate reads, so its keys are fixed and must not be renamed.
 
 **Idempotency guard:** before posting to any surface, list its existing comments (`gh pr view {PR_NUMBER} --json comments --jq '.comments[].body'` for the PR; the tracker's comment list for the ticket) and **skip that surface** if a `🤖 Autonomous run summary` comment carrying this `run_id` already exists. Re-running Step 6 **within a single orchestrator context** — the same forked run reaching this step more than once — must never double-post. (Any fresh invocation of `/ccmagic:auto-ticket` — including a restart after a crash — mints a new `run_id` in Step 0 and posts its own summary; that is intentional — each run leaves its own audit trail.)
 
 - **Merged or handed-off (mcp transport)** → post the summary as a PR comment and a ticket comment, then report the final status to the user.
 - **Parked (mcp transport)** → the summary is folded into the parked-comment posted by route-and-stop (contract §4); don't double-post.
 - **Under prompt-relay (contract §7)** → do **not** attempt a ticket comment (there is no Linear API in the environment).
-  - **Merged or handed-off** → still post the summary as a PR comment via `gh`, then emit that same summary as this skill's **own final top-level output**, ending with the delimited final-message block (the `=== FINAL MESSAGE TO RELAY (reproduce verbatim) ===` / `=== END FINAL MESSAGE ===` wrapper, contract §7). Carry the intent line `Requested state: Done` — sourced from the step handshakes' `requested_state:` fields (contract §3) — and any "Follow-ups to file" list into that summary.
+  - **Merged or handed-off** → still post the summary as a PR comment via `gh`, then emit that same summary as this skill's **own final top-level output**, ending with the delimited final-message block (the `=== FINAL MESSAGE TO RELAY (reproduce verbatim) ===` / `=== END FINAL MESSAGE ===` wrapper, contract §7). Carry the intent line `Requested state: Done` (merged) or `Requested state: {merge_handoff_state}` (handed-off) — sourced from the step handshakes' `requested_state:` fields (contract §3) — and any "Follow-ups to file" list into that summary.
   - **Parked** → route-and-stop has already produced the parked note and posted it to the PR (contract §4, prompt-relay branch); emit that same note as the single top-level final message, wrapped in the same delimiters.
   - *Why this shape:* only the orchestrator's top-level output is relayed to the tracker — per-step subagent output stays internal — so the summary must be **this** skill's final message, not a sub-skill's.
 
@@ -219,9 +219,9 @@ Every run ends in exactly one of these states:
 |---------|---------|
 | **merged** | PR merged, ticket Done, summary posted. |
 | **handed-off** | PR open, ticket in `merge_handoff_state`, summary posted. Only with `merge_owner: reeve`. |
-| **parked-needs-human** | Not merged, ticket in `needs_human_state` (or labeled), reason posted. |
+| **parked-needs-human** (run record `outcome`: `parked`) | Not merged, ticket in `needs_human_state` (or labeled), reason posted. |
 
-There is no third "stalled" outcome. Never hang waiting for input.
+There is no stalled outcome. Never hang waiting for input.
 
 ---
 
