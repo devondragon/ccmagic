@@ -36,13 +36,13 @@ End-to-end ticket lifecycle backed by Linear, GitHub Issues, or JIRA. Auto-detec
 - **Purpose:** Close out a ticket end-to-end after the PR is ready.
 - **When to use:** Final step before merging.
 - **Example:** `/ccmagic:finish-ticket` (Done path) or `/ccmagic:finish-ticket --qa` (QA path).
-- **What it does:** Detects the ticket from the branch, sanity-checks the PR (CI, reviews, scope), confirms disposition, merges, updates the tracker with a comment and final status.
+- **What it does:** Detects the ticket from the branch, sanity-checks the PR (CI, reviews, scope), confirms disposition, merges (or hands off to an external gate instead with `merge_owner: reeve`), updates the tracker with a comment and final status.
 
 **`/ccmagic:auto-ticket [TICKET-ID]`**
 - **Purpose:** Autonomous end-to-end ticket driver — runs the whole cycle unattended.
 - **When to use:** Solo-dev / headless runner environments where you want the ticket taken from implementation to merge with no human in the loop (see `docs/cyrus-deployment.md` for a deployment example).
 - **Example:** `/ccmagic:auto-ticket ENG-123` (or omit the ID to detect it from the current branch).
-- **What it does:** Invokes `work-ticket → review-ticket → pr-feedback (looped up to max_feedback_passes) → finish-ticket`, all in autonomous mode. Merges when the PR is clean and CI is green; otherwise **parks** the ticket (moves it to `needs_human_state`, comments what it's waiting on) instead of guessing or stalling. Every run ends **merged** or **parked-needs-human** — never hung. Configure via `autonomous`, `needs_human_state`, `needs_human_label`, `max_feedback_passes` in `.claude/ccmagic.local.md`.
+- **What it does:** Invokes `work-ticket → review-ticket → pr-feedback (looped up to max_feedback_passes) → finish-ticket`, all in autonomous mode. Merges when the PR is clean and CI is green, or hands the PR off to an external merge gate instead of merging when `merge_owner: reeve` is set; otherwise **parks** the ticket (moves it to `needs_human_state`, comments what it's waiting on) instead of guessing or stalling. Every run ends **merged**, **handed-off**, or **parked-needs-human** — never hung. Configure via `autonomous`, `needs_human_state`, `needs_human_label`, `merge_owner`, `merge_handoff_state`, `max_feedback_passes` in `.claude/ccmagic.local.md`.
 
 ### Code review & quality
 

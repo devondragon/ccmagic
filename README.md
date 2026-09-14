@@ -46,7 +46,7 @@ claude --plugin-dir .claude/plugins/ccmagic
 |---|---|
 | `/ccmagic:work-ticket {ID}` | End-to-end: lookup → classify (Quick Fix / Complex / Debug) → branch → implement → review → PR |
 | `/ccmagic:review-ticket [ID]` | Code review grounded in the ticket's stated scope and acceptance criteria. Adds explicit in-scope / out-of-scope / missing-from-ticket section |
-| `/ccmagic:finish-ticket [--qa]` | Sanity-check PR → merge → close ticket with summary comment |
+| `/ccmagic:finish-ticket [--qa]` | Sanity-check PR → merge (or hand off with `merge_owner: reeve`) → close ticket with summary comment |
 | `/ccmagic:auto-ticket [ID]` | **Autonomous** end-to-end driver — runs work → review → pr-feedback (looped) → finish with no human in the loop, and either merges or parks the ticket for a human. See [Autonomous mode](#autonomous-mode) |
 
 All four auto-detect the tracker (Linear MCP → GitHub CLI → Atlassian/JIRA MCP) or honor `tracker:` in `.claude/ccmagic.local.md`.
@@ -113,7 +113,7 @@ All four auto-detect the tracker (Linear MCP → GitHub CLI → Atlassian/JIRA M
 ```
 /ccmagic:work-ticket ENG-123     # Linear/JIRA, or use 42 for a GitHub issue
 /ccmagic:review-ticket           # Pre-merge: scope drift + code review
-/ccmagic:finish-ticket           # Merge + close ticket
+/ccmagic:finish-ticket           # Merge (or hand off with merge_owner: reeve) + close ticket
 ```
 
 ### Working a ticket fully autonomously
@@ -177,7 +177,11 @@ For solo-dev projects, **auto-merge with no human in the loop is intended**. The
 - it posts a comment on the PR and the ticket saying exactly what it's waiting on, and
 - it exits cleanly.
 
-Every autonomous run ends in exactly one of two states: **merged**, or **parked-needs-human (with a reason)**. There is no silent hang.
+Every autonomous run ends in exactly one of three states: **merged**, **handed-off** (only with `merge_owner: reeve`), or **parked-needs-human** (with a reason). There is no silent hang.
+
+### Handing off to an external merge gate
+
+A repo whose merges belong to an external gate sets `merge_owner: reeve`. The run implements, reviews, and addresses feedback as usual, then `finish-ticket` runs its merge gate as a preflight and hands the open PR off instead of merging: on Linear/JIRA it moves the ticket to `merge_handoff_state` (default `Awaiting Merge`); on GitHub Issues, which have no custom states, it applies the `awaiting-merge` label instead and leaves the issue open; under the prompt-relay transport it reports the requested state in the handshake rather than transitioning it directly. Every run summary now ends with a fenced JSON run record that such a gate can parse.
 
 ### Turning it on
 
@@ -188,6 +192,8 @@ Every autonomous run ends in exactly one of two states: **merged**, or **parked-
 autonomous: true               # default the lifecycle skills to autonomous
 needs_human_state: Blocked     # where parked tickets go (falls back to the label below)
 needs_human_label: needs-human # applied when the state doesn't exist / on GitHub
+# merge_owner: reeve           # hand off to an external merge gate instead of merging
+# merge_handoff_state: Awaiting Merge # tracker state a handed-off ticket moves to
 max_feedback_passes: 3         # cap on the pr-feedback loop before parking
 # Other autonomous loop bounds (skill defaults shown — set only to override):
 # max_review_fix_passes: 3     # ticket-review fix loop

@@ -12,7 +12,7 @@ context: fork
 
 Drives one ticket through the entire lifecycle **unattended**: `work-ticket → review-ticket → pr-feedback (looped until clean) → finish-ticket`. It invokes each sub-skill in autonomous mode, parses the [status handshake](#the-contract) each returns, and owns the single decision every autonomous run comes down to — **merge**, or **park for a human**.
 
-Designed for solo-dev projects where auto-merge with no human in the loop is intended. The safety property is **not** "avoid merging" — it's that when the work is genuinely uncertain or needs a human decision, the run **parks** the ticket (no merge, moved to a needs-human state, clear note) instead of guessing or stalling.
+Designed for solo-dev projects where auto-merge with no human in the loop is intended. The safety property is **not** "avoid merging" — it's that when the work is genuinely uncertain or needs a human decision, the run **parks** the ticket (no merge, moved to a needs-human state, clear note) instead of guessing or stalling. Repos whose merges belong to an external gate set `merge_owner: reeve`; the run then hands off instead of merging.
 
 **On invocation, announce:** "I'll run `{TICKET-ID}` end-to-end unattended — implement, review, address PR feedback in a loop, and either merge it or park it for you with a clear note if it needs a human decision. Nothing merges unless CI is green and the work is clean."
 
@@ -26,7 +26,7 @@ This skill and every sub-skill it calls share one contract — the autonomous si
 
 - Sub-skills are invoked in autonomous mode by prepending the **grounding block** (contract §2) to their arguments. Because the block carries `orchestrator: auto-ticket`, sub-skills return their handshake and let **this** skill park — they never park themselves.
 - Every sub-skill ends with a **handshake** (contract §3): `status: clean | fixable-findings | needs-human | done`. Parse the last one. A missing handshake = treat as `needs-human`.
-- **`route-and-stop`** (contract §4) is the one way this skill ends a run early. Every exit path is either **merged** or **parked-needs-human** — never stalled.
+- **`route-and-stop`** (contract §4) is the one way this skill ends a run early. Every exit path is **merged**, **handed-off** (only with `merge_owner: reeve`), or **parked-needs-human** — never stalled.
 
 ---
 
@@ -57,7 +57,7 @@ Model resolution per step: the agent's frontmatter `model:` is the authoritative
 
 1. **Resolve the tracker** using the exact same cascade as `/ccmagic:work-ticket` Step 0 (settings → arg/branch shape → MCP probe → CLI probe → branch hint). This runs unattended, so if the cascade is genuinely ambiguous (would otherwise prompt), pick the highest-confidence candidate and record the choice in the run summary. **Then resolve the transport once for the whole run:** default `transport: mcp`, then apply the contract §7 detection rule (server-availability + load-with-retry) *before* the none-available stop below — a Linear run with an MCP server available (even one still connecting) resolves `transport: mcp`; a headless Linear run with no MCP server at all resolves `transport: prompt-relay` instead of stopping. This single resolved value goes into the grounding block (Step 5); every sub-skill inherits it and does not re-detect. Only if **no** tracker resolves (and it isn't a prompt-relay run) do you stop and tell the user (this is a setup error, not a parkable ticket).
 2. **Resolve the ticket ID** from the argument, or parse it from the current branch (strip `feature/`, `bugfix/`, `hotfix/`, `chore/` prefixes) — same logic as `/ccmagic:finish-ticket` Step 1. If neither yields a ticket ID, **exit cleanly** with a one-line message asking the caller to pass one (`/ccmagic:auto-ticket {TICKET-ID}`) — this is a setup error, not a parkable ticket; do not wait for input.
-3. **Load config**, resolving each value by precedence — an explicit arg → the project file `.claude/ccmagic.local.md` → the user file `~/.claude/ccmagic.local.md` → the built-in default (see contract §5). Keys: `needs_human_state`, `needs_human_label` (default `needs-human`), `max_feedback_passes` (default `3`), `max_review_fix_passes` (default `3`), `max_validate_attempts` (default `2`), `ci_timeout_minutes` (default `30`), `ci_poll_interval_seconds` (default `60`), plus the usual `tracker` / `ticket_url_base` / `github_repo`, and the per-step model overrides `model_work_ticket`, `model_review_ticket`, `model_pr_feedback`, `model_finish_ticket`, `model_validate`, `model_push` (each defaulting to the registry value).
+3. **Load config**, resolving each value by precedence — an explicit arg → the project file `.claude/ccmagic.local.md` → the user file `~/.claude/ccmagic.local.md` → the built-in default (see contract §5). Keys: `needs_human_state`, `needs_human_label` (default `needs-human`), `merge_owner` (default `self`), `merge_handoff_state` (default `Awaiting Merge`), `max_feedback_passes` (default `3`), `max_review_fix_passes` (default `3`), `max_validate_attempts` (default `2`), `ci_timeout_minutes` (default `30`), `ci_poll_interval_seconds` (default `60`), plus the usual `tracker` / `ticket_url_base` / `github_repo`, and the per-step model overrides `model_work_ticket`, `model_review_ticket`, `model_pr_feedback`, `model_finish_ticket`, `model_validate`, `model_push` (each defaulting to the registry value).
 4. **Fetch the ticket** to confirm it exists (per the tracker's lookup in `work-ticket`/`review-ticket`). If not found, stop (Sacred Rule). Under **prompt-relay** there is no MCP to fetch from — instead confirm the ticket content (title + description) is present in the invocation arguments / grounding block, **or in a `.ccmagic-ticket.md` handoff file in the working directory** — a fork-safe content source for harnesses (like Cyrus) that inject the ticket into a *parent* prompt the forked skill can't see. If you read it from the handoff file, `rm` the file afterward so it is never committed. If it's absent from all of these, stop with a setup-error message: this is the Sacred Rule made explicit — the caller should have injected the content, so a missing body is a setup error, never a guess and never a park.
 5. **Build the grounding block** (contract §2) with the resolved values. Mint `run_id` first — a short unique id for this run (e.g. `openssl rand -hex 3`, or the last 6 digits of `date +%s`); it keys the Step 6 idempotency guard. The block also carries the `transport:` line, and under prompt-relay the fenced `ticket_content:` section, so every per-step agent receives the ticket body. Prepend it to every sub-skill invocation below. `/ccmagic:auto-ticket` always drives sub-skills with `autonomous: true`, regardless of the `autonomous:` config default.
 
@@ -155,7 +155,8 @@ Everything this pass pushes is measured against `H`, so bot reviews triggered *b
 
 Run the finish-ticket step via `run_step` — `/ccmagic:finish-ticket` with the grounding block. Its Step 3 sanity check is the **merge gate**: it merges only if the PR is mergeable, CI is green, and there are no unaddressed change-requests.
 
-- `done` → the PR merged and the ticket moved to Done. Continue to Step 6 with outcome **merged**.
+- `done` with `reason` beginning `handed off to reeve` → the PR is open, the ticket is in `merge_handoff_state`, nothing merged. Continue to Step 6 with outcome **handed-off**.
+- `done` otherwise → the PR merged and the ticket moved to Done. Continue to Step 6 with outcome **merged**.
 - `needs-human` → the gate wasn't satisfied. It did **not** merge → **route-and-stop** (stage = `finish-ticket`, reason: its blockers).
 
 ---
@@ -164,19 +165,19 @@ Run the finish-ticket step via `run_step` — `/ccmagic:finish-ticket` with the 
 
 Whatever the outcome, record it on the PR and the ticket so the unattended run leaves an audit trail.
 
-```markdown
+````markdown
 ## 🤖 Autonomous run summary — {TICKET-ID}
 
-**Outcome:** {✅ Merged into `{base}` | 🅿️ Parked — needs human}
+**Outcome:** {✅ Merged into `{base}` | 🔁 Handed off to Reeve, awaiting merge | 🅿️ Parked — needs human}
 **PR:** {pr_url}
 **Run:** {run_id}
-**Requested state:** {Done | needs_human_state} *(prompt-relay only — omit under mcp)*
+**Requested state:** {Done | merge_handoff_state | needs_human_state} *(prompt-relay only — omit under mcp)*
 
 ### What ran
 - Classified as **{class}**, branched, implemented, opened the PR.
 - Review: {clean first pass | N CRITICAL findings fixed and re-reviewed}.
 - PR feedback: {P} pass(es) — applied {A}, declined {D}, deferred {F}.
-- Finish: {merged with {squash|merge commit} | gate not satisfied}.
+- Finish: {merged with {squash|merge commit} | handed off to reeve | gate not satisfied}.
 
 ### Key autonomous decisions
 - {classification + reasoning}
@@ -188,14 +189,21 @@ Whatever the outcome, record it on the PR and the ticket so the unattended run l
 
 ### If parked
 **Waiting on:** {the reason}. Nothing was merged. Resolve it, then re-run `/ccmagic:auto-ticket {TICKET-ID}`.
+
+### Run record
+```json
+{"ccmagic": {"version": 1, "run_id": "{run_id}", "ticket": "{TICKET-ID}", "outcome": "{merged | handed-off | parked}", "classification": "{class}", "merge_owner": "{self | reeve}", "pr": {pr_number or null}, "review_passes": {n}, "feedback_passes": {n}, "ci_attempts": {n}, "findings": {"critical": {n}, "high": {n}}, "steps": [{"step": "work-ticket", "status": "done"}, {"step": "review-ticket", "status": "clean"}, {"step": "validate", "status": "needs-human", "reason": "{one line}"}, {"step": "validate", "status": "done"}, {"step": "finish-ticket", "status": "done", "reason": "handed off to reeve; PR #12 awaiting merge"}]}}
 ```
+````
+
+`steps` lists every sub-skill invocation of this run in order, one entry each, with the handshake `status` it returned; include `reason` whenever the sub-skill emitted one. Repeated review passes are separate entries. The block is emitted on every outcome and under every transport. It is the machine-readable record an external gate reads, so its keys are fixed and must not be renamed.
 
 **Idempotency guard:** before posting to any surface, list its existing comments (`gh pr view {PR_NUMBER} --json comments --jq '.comments[].body'` for the PR; the tracker's comment list for the ticket) and **skip that surface** if a `🤖 Autonomous run summary` comment carrying this `run_id` already exists. Re-running Step 6 **within a single orchestrator context** — the same forked run reaching this step more than once — must never double-post. (Any fresh invocation of `/ccmagic:auto-ticket` — including a restart after a crash — mints a new `run_id` in Step 0 and posts its own summary; that is intentional — each run leaves its own audit trail.)
 
-- **Merged (mcp transport)** → post the summary as a PR comment and a ticket comment, then report the final status to the user.
+- **Merged or handed-off (mcp transport)** → post the summary as a PR comment and a ticket comment, then report the final status to the user.
 - **Parked (mcp transport)** → the summary is folded into the parked-comment posted by route-and-stop (contract §4); don't double-post.
 - **Under prompt-relay (contract §7)** → do **not** attempt a ticket comment (there is no Linear API in the environment).
-  - **Merged** → still post the summary as a PR comment via `gh`, then emit that same summary as this skill's **own final top-level output**, ending with the delimited final-message block (the `=== FINAL MESSAGE TO RELAY (reproduce verbatim) ===` / `=== END FINAL MESSAGE ===` wrapper, contract §7). Carry the intent line `Requested state: Done` — sourced from the step handshakes' `requested_state:` fields (contract §3) — and any "Follow-ups to file" list into that summary.
+  - **Merged or handed-off** → still post the summary as a PR comment via `gh`, then emit that same summary as this skill's **own final top-level output**, ending with the delimited final-message block (the `=== FINAL MESSAGE TO RELAY (reproduce verbatim) ===` / `=== END FINAL MESSAGE ===` wrapper, contract §7). Carry the intent line `Requested state: Done` (merged) or `Requested state: {merge_handoff_state}` (handed-off) — sourced from the step handshakes' `requested_state:` fields (contract §3) — and any "Follow-ups to file" list into that summary.
   - **Parked** → route-and-stop has already produced the parked note and posted it to the PR (contract §4, prompt-relay branch); emit that same note as the single top-level final message, wrapped in the same delimiters.
   - *Why this shape:* only the orchestrator's top-level output is relayed to the tracker — per-step subagent output stays internal — so the summary must be **this** skill's final message, not a sub-skill's.
 
@@ -205,14 +213,15 @@ Whatever the outcome, record it on the PR and the ticket so the unattended run l
 
 The single early-exit routine, defined in `${CLAUDE_SKILL_DIR}/autonomous-contract.md` §4. In short: **do not merge**; move the ticket to `needs_human_state` (fall back to `needs_human_label` if the state doesn't exist); comment the exact reason on the PR **and** the ticket using the parked-comment template; emit a clear final status; exit. Call it — with the failing stage and the sub-skill's `reason` — at every `needs-human`, at the feedback-pass cap, and whenever CI/validation can't be made green within bounds.
 
-Every run ends in exactly one of two states:
+Every run ends in exactly one of these states:
 
 | Outcome | Meaning |
 |---------|---------|
 | **merged** | PR merged, ticket Done, summary posted. |
-| **parked-needs-human** | Not merged, ticket in `needs_human_state` (or labeled), reason posted. |
+| **handed-off** | PR open, ticket in `merge_handoff_state`, summary posted. Only with `merge_owner: reeve`. |
+| **parked-needs-human** (run record `outcome`: `parked`) | Not merged, ticket in `needs_human_state` (or labeled), reason posted. |
 
-There is no third "stalled" outcome. Never hang waiting for input.
+There is no stalled outcome. Never hang waiting for input.
 
 ---
 

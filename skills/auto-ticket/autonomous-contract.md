@@ -31,9 +31,13 @@ pr: {PR number/url, once known}
 base_branch: {base}
 needs_human_state: {value}
 needs_human_label: {value}
+merge_owner: {self | reeve}
+merge_handoff_state: {value}
 max_feedback_passes: {n}
 review_pass: {n — only on Step 3 re-reviews; absent on the first review pass}
 ```
+
+`merge_owner` and `merge_handoff_state` come from config (§5) with defaults `self` and `Awaiting Merge`; only `finish-ticket` acts on them.
 
 Under the **prompt-relay transport** (§7) the block also carries the ticket content, because no tracker MCP is available to fetch it. The orchestrator appends a `ticket_content:` section:
 
@@ -82,7 +86,7 @@ Which values each sub-skill can emit:
 | `pr-feedback` | `done` \| `needs-human` |
 | `validate` | `done` \| `needs-human` |
 | `push` | `done` \| `needs-human` |
-| `finish-ticket` | `done` \| `needs-human` |
+| `finish-ticket` | `done` \| `needs-human` (with `merge_owner: reeve`, `done` carries `reason: handed off to reeve; ...` and the PR is not merged) |
 
 Parse the **last** such block in the sub-skill's output. If a sub-skill fails to emit one (crash, tool error), treat it as `needs-human` with `reason: "{skill} produced no handshake"`.
 
@@ -103,8 +107,8 @@ The single routine the orchestrator (or a standalone top-level sub-skill) runs w
 
 ### Parked-comment template
 
-```markdown
-## 🅿️ Parked for a human — {TICKET-ID}
+````markdown
+## 🅿️ Autonomous run summary for {TICKET-ID} (parked for a human)
 
 `/ccmagic:auto-ticket` stopped this run because it needs a human decision.
 
@@ -118,8 +122,15 @@ The single routine the orchestrator (or a standalone top-level sub-skill) runs w
 
 **Follow-ups {filed | to file (prompt-relay)}:** {ticket ids or short descriptions, or "none"}
 
-Nothing was merged. Resolve the item above, then re-run `/ccmagic:auto-ticket {TICKET-ID}` (or continue manually).
+### Run record
+```json
+{"ccmagic": {"version": 1, "run_id": "{run_id}", "ticket": "{TICKET-ID}", "outcome": "parked", "classification": "{class}", "merge_owner": "{self | reeve}", "pr": {pr_number or null}, "review_passes": {n}, "feedback_passes": {n}, "ci_attempts": {n}, "findings": {"critical": {n}, "high": {n}}, "steps": [{"step": "work-ticket", "status": "done"}, {"step": "review-ticket", "status": "needs-human", "reason": "{one line}"}]}}
 ```
+
+Nothing was merged. Resolve the item above, then re-run `/ccmagic:auto-ticket {TICKET-ID}` (or continue manually).
+````
+
+The keys and rules are the same as the Step 6 `### Run record` block (contract §2's grounding block feeds `merge_owner`; see `skills/auto-ticket/SKILL.md` Step 6). This block is what lets Reeve's `parseRunRecord` read a parked run: it matches on a comment containing "Autonomous run summary" and reads that comment's final ```json fence, so the heading above must keep that exact phrase.
 
 ### Under the prompt-relay transport
 
@@ -135,6 +146,8 @@ When the run is on the **prompt-relay transport** (§7), the park routine change
 | `autonomous` | bool | `false` | Default mode when no `--autonomous` flag and no grounding block is passed. |
 | `needs_human_state` | string | *(none)* | Tracker state a parked ticket is moved to (e.g. `Blocked`, `Needs Human`). |
 | `needs_human_label` | string | `needs-human` | Fallback label applied when `needs_human_state` doesn't exist (and always on GitHub). |
+| `merge_owner` | string | `self` | Who owns merging the PR: `self` merges here, `reeve` hands off to an external merge gate instead of merging. |
+| `merge_handoff_state` | string | `Awaiting Merge` | Tracker state a handed-off ticket moves to when `merge_owner: reeve`. |
 | `max_feedback_passes` | int | `3` | Cap on the `pr-feedback` loop (orchestrator Step 4) before parking. |
 | `max_review_fix_passes` | int | `3` | Cap on the ticket-review fix loop (orchestrator Step 3) before parking. |
 | `max_validate_attempts` | int | `2` | Cap on local `/ccmagic:validate` fix attempts (orchestrator Step 4b) before parking. |
@@ -160,7 +173,7 @@ A project file overrides the user file, which overrides the built-in default. Th
 
 - **Autonomous is additive.** Interactive behavior is never changed; every autonomous default is gated behind the signal above.
 - **Every decision is recorded** in the PR body/comments and/or a ticket comment, so an unattended run leaves an audit trail.
-- **Every exit is either `merged` or `parked-needs-human` (with a reason).** Never `stalled`, never a silent hang, never a merge on a guess.
+- **Every exit is `merged`, `handed-off` (only with `merge_owner: reeve`), or `parked-needs-human` (with a reason).** Never `stalled`, never a silent hang, never a merge on a guess.
 
 ## 7. Prompt-relay transport
 
