@@ -181,7 +181,7 @@ Every autonomous run ends in exactly one of three states: **merged**, **handed-o
 
 ### Handing off to an external merge gate
 
-A repo whose merges belong to an external gate sets `merge_owner: reeve`. The run implements, reviews, and addresses feedback as usual, then `finish-ticket` runs its merge gate as a preflight and hands the open PR off by moving the ticket to `merge_handoff_state` (default `Awaiting Merge`) instead of merging. Every run summary now ends with a fenced JSON run record that such a gate can parse.
+A repo whose merges belong to an external gate sets `merge_owner: reeve`. The run implements, reviews, and addresses feedback as usual, then `finish-ticket` runs its merge gate as a preflight and hands the open PR off instead of merging: on Linear/JIRA it moves the ticket to `merge_handoff_state` (default `Awaiting Merge`); on GitHub Issues, which have no custom states, it applies the `awaiting-merge` label instead and leaves the issue open; under the prompt-relay transport it reports the requested state in the handshake rather than transitioning it directly. Every run summary now ends with a fenced JSON run record that such a gate can parse.
 
 ### Turning it on
 
