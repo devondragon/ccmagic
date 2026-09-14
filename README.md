@@ -177,7 +177,11 @@ For solo-dev projects, **auto-merge with no human in the loop is intended**. The
 - it posts a comment on the PR and the ticket saying exactly what it's waiting on, and
 - it exits cleanly.
 
-Every autonomous run ends in exactly one of two states: **merged**, or **parked-needs-human (with a reason)**. There is no silent hang.
+Every autonomous run ends in exactly one of three states: **merged**, **handed-off** (only with `merge_owner: reeve`), or **parked-needs-human** (with a reason). There is no silent hang.
+
+### Handing off to an external merge gate
+
+A repo whose merges belong to an external gate sets `merge_owner: reeve`. The run implements, reviews, and addresses feedback as usual, then `finish-ticket` runs its merge gate as a preflight and hands the open PR off by moving the ticket to `merge_handoff_state` (default `Awaiting Merge`) instead of merging. Every run summary now ends with a fenced JSON run record that such a gate can parse.
 
 ### Turning it on
 

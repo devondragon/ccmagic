@@ -2,6 +2,13 @@
 
 All notable changes to ccmagic are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.7.0] — 2026-09
+
+### Added
+
+- `merge_owner: reeve` and `merge_handoff_state` in `ccmagic.local.md`. With `merge_owner: reeve`, `finish-ticket` runs its merge gate as a preflight and then hands the open PR off by moving the ticket to `merge_handoff_state` instead of merging; `auto-ticket` reports the run as **handed-off**. Absent the key, nothing changes.
+- `auto-ticket` run summaries end with a fenced JSON run record (`ccmagic.version` 1): outcome, classification, pass counts, findings counts, and every step's handshake status and reason. Emitted on every outcome and transport, including parked.
+
 ## [3.6.6] — 2026-08
 
 ### Fixed
