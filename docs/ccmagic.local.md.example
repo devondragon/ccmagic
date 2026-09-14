@@ -50,6 +50,8 @@ needs_human_label: needs-human
 # Who merges. `self` (default) merges from the run. `reeve` hands the PR off to an
 # external merge gate: finish-ticket moves the ticket to merge_handoff_state and
 # never merges. Interactive finish-ticket offers the hand-off and lets you merge anyway.
+# Unlike needs_human_state above, there is no fallback: if merge_handoff_state
+# doesn't exist in your tracker, the run parks needs-human instead of merging.
 # merge_owner: self
 # merge_handoff_state: Awaiting Merge
 
