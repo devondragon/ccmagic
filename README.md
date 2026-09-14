@@ -46,7 +46,7 @@ claude --plugin-dir .claude/plugins/ccmagic
 |---|---|
 | `/ccmagic:work-ticket {ID}` | End-to-end: lookup → classify (Quick Fix / Complex / Debug) → branch → implement → review → PR |
 | `/ccmagic:review-ticket [ID]` | Code review grounded in the ticket's stated scope and acceptance criteria. Adds explicit in-scope / out-of-scope / missing-from-ticket section |
-| `/ccmagic:finish-ticket [--qa]` | Sanity-check PR → merge → close ticket with summary comment |
+| `/ccmagic:finish-ticket [--qa]` | Sanity-check PR → merge (or hand off with `merge_owner: reeve`) → close ticket with summary comment |
 | `/ccmagic:auto-ticket [ID]` | **Autonomous** end-to-end driver — runs work → review → pr-feedback (looped) → finish with no human in the loop, and either merges or parks the ticket for a human. See [Autonomous mode](#autonomous-mode) |
 
 All four auto-detect the tracker (Linear MCP → GitHub CLI → Atlassian/JIRA MCP) or honor `tracker:` in `.claude/ccmagic.local.md`.
@@ -113,7 +113,7 @@ All four auto-detect the tracker (Linear MCP → GitHub CLI → Atlassian/JIRA M
 ```
 /ccmagic:work-ticket ENG-123     # Linear/JIRA, or use 42 for a GitHub issue
 /ccmagic:review-ticket           # Pre-merge: scope drift + code review
-/ccmagic:finish-ticket           # Merge + close ticket
+/ccmagic:finish-ticket           # Merge (or hand off with merge_owner: reeve) + close ticket
 ```
 
 ### Working a ticket fully autonomously
@@ -192,6 +192,8 @@ A repo whose merges belong to an external gate sets `merge_owner: reeve`. The ru
 autonomous: true               # default the lifecycle skills to autonomous
 needs_human_state: Blocked     # where parked tickets go (falls back to the label below)
 needs_human_label: needs-human # applied when the state doesn't exist / on GitHub
+# merge_owner: reeve           # hand off to an external merge gate instead of merging
+# merge_handoff_state: Awaiting Merge # tracker state a handed-off ticket moves to
 max_feedback_passes: 3         # cap on the pr-feedback loop before parking
 # Other autonomous loop bounds (skill defaults shown — set only to override):
 # max_review_fix_passes: 3     # ticket-review fix loop

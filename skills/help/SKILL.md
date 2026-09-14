@@ -36,7 +36,7 @@ End-to-end ticket lifecycle backed by Linear, GitHub Issues, or JIRA. Auto-detec
 - **Purpose:** Close out a ticket end-to-end after the PR is ready.
 - **When to use:** Final step before merging.
 - **Example:** `/ccmagic:finish-ticket` (Done path) or `/ccmagic:finish-ticket --qa` (QA path).
-- **What it does:** Detects the ticket from the branch, sanity-checks the PR (CI, reviews, scope), confirms disposition, merges, updates the tracker with a comment and final status.
+- **What it does:** Detects the ticket from the branch, sanity-checks the PR (CI, reviews, scope), confirms disposition, merges (or hands off to an external gate instead with `merge_owner: reeve`), updates the tracker with a comment and final status.
 
 **`/ccmagic:auto-ticket [TICKET-ID]`**
 - **Purpose:** Autonomous end-to-end ticket driver — runs the whole cycle unattended.

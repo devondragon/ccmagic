@@ -19,9 +19,9 @@ Return **only** the finish-ticket autonomous handshake as the last thing in your
 
 ```
 status: done | needs-human
-reason: <one line — "merged into {base}" on done; the blockers on needs-human>
+reason: <one line: "merged into {base}" on done under merge_owner: self; "handed off to reeve; PR #{pr_number} awaiting merge" on done under merge_owner: reeve; the blockers on needs-human>
 follow_ups: []
-requested_state: <Done — prompt-relay only, omit otherwise>
+requested_state: <prompt-relay only, omit otherwise: Done under merge_owner: self; {merge_handoff_state} under merge_owner: reeve>
 ```
 
 The grounding block arrives as your task prompt — read the tracker / ticket / PR context and the needs-human config from it.

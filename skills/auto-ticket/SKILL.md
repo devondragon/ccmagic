@@ -192,7 +192,7 @@ Whatever the outcome, record it on the PR and the ticket so the unattended run l
 
 ### Run record
 ```json
-{"ccmagic": {"version": 1, "run_id": "{run_id}", "ticket": "{TICKET-ID}", "outcome": "{merged | handed-off | parked}", "classification": "{class}", "merge_owner": "{self | reeve}", "pr": {pr_number or null}, "review_passes": {n}, "feedback_passes": {n}, "ci_attempts": {n}, "findings": {"critical": {n}, "high": {n}}, "steps": [{"step": "work-ticket", "status": "done"}, {"step": "review-ticket", "status": "clean"}, {"step": "validate", "status": "needs-human", "reason": "{one line}"}, {"step": "finish-ticket", "status": "done", "reason": "handed off to reeve; PR #12 awaiting merge"}]}}
+{"ccmagic": {"version": 1, "run_id": "{run_id}", "ticket": "{TICKET-ID}", "outcome": "{merged | handed-off | parked}", "classification": "{class}", "merge_owner": "{self | reeve}", "pr": {pr_number or null}, "review_passes": {n}, "feedback_passes": {n}, "ci_attempts": {n}, "findings": {"critical": {n}, "high": {n}}, "steps": [{"step": "work-ticket", "status": "done"}, {"step": "review-ticket", "status": "clean"}, {"step": "validate", "status": "needs-human", "reason": "{one line}"}, {"step": "validate", "status": "done"}, {"step": "finish-ticket", "status": "done", "reason": "handed off to reeve; PR #12 awaiting merge"}]}}
 ```
 ````
 
