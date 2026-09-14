@@ -30,6 +30,8 @@ If `.claude/ccmagic.local.md` exists at the repo root (`git rev-parse --show-top
 - `ticket_id_regex:` — defaults to `[A-Z][A-Z0-9]+-[0-9]+`
 - `github_repo:` — `owner/repo` (only used when tracker is GitHub)
 - `default_qa_workflow:` — if `true`, the QA path is on by default
+- `merge_owner:` — `self` (default) | `reeve`. With `reeve`, this repo's merges belong to an external gate (Reeve). The autonomous path hands the PR off instead of merging (see *Autonomous mode → Merge hand-off*); the interactive path offers the hand-off at Step 5.
+- `merge_handoff_state:` — tracker state a handed-off ticket moves to. Default `Awaiting Merge`. Linear and JIRA only; on GitHub Issues the hand-off applies the label `awaiting-merge` instead.
 
 The `--qa` argument always forces the QA path regardless of config.
 
@@ -199,6 +201,8 @@ The QA path is selected when **any** of these are true:
 
 If none of these are true, **go directly to Done** — don't ask, don't recommend QA, don't try to find a QA assignee.
 
+**If `merge_owner: reeve`:** the disposition question does not apply. Reeve owns the merge, so the ticket moves to `merge_handoff_state` at Step 7 and any QA happens after Reeve's merge, outside this skill. Skip the QA path and its assignee lookup and go to Step 5. If `--qa` was passed together with `merge_owner: reeve`, say the two conflict and ask whether to `merge here anyway` (QA path as normal) or `hand off` (QA deferred; no QA assignee is set here). Absent the key, this paragraph does not apply.
+
 ### When the QA path is selected
 
 Form a brief recommendation, then ask:
@@ -233,6 +237,8 @@ First, **determine the merge strategy** so the confirmation reflects what will a
 - **Feature and bugfix branches** (`feature/...`, `bugfix/...`, `hotfix/...`, `chore/...`) → squash merge (`--squash`).
 - **Release branches** (`release/...`) → merge commit (`--merge`).
 
+**If `merge_owner: reeve`:** the default action is a hand-off, not a merge. Show `Merge:     Hand off to reeve (no merge here; ticket moves to "{merge_handoff_state}")` in the summary and offer `(yes / merge here anyway / no)`. "Merge here anyway" continues with the normal Step 6; "yes" skips Step 6 and takes the hand-off branch of Step 7. Absent the key, this paragraph does not apply and nothing below changes.
+
 Then present a complete summary of what you're about to do:
 
 ```
@@ -241,11 +247,11 @@ Then present a complete summary of what you're about to do:
 Ticket:    {TICKET-ID} — "{ticket title}"
 PR:        #{pr_number} — {pr_url}
 Merge:     {Squash merge | Merge commit} into {baseRefName}
-Action:    Move ticket to "{target_status}"
+Action:    Move ticket to "{target_status | merge_handoff_state}"
 {If QA path:}
 QA:        Assign to {qa_person_name}
 
-Proceed? (yes / no / change something)
+Proceed? {(yes / no / change something) | with merge_owner: reeve: (yes / merge here anyway / no)}
 ```
 
 Wait for explicit confirmation. If the user says "no" or wants to change something, address their concern and re-confirm before proceeding.
@@ -253,6 +259,8 @@ Wait for explicit confirmation. If the user says "no" or wants to change somethi
 ---
 
 ## Step 6: Merge the PR
+
+**If you took the hand-off at Step 5, or `merge_owner: reeve` applies in autonomous mode, skip this step entirely. Nothing is merged on that path.**
 
 Use the merge strategy you determined in Step 5.
 
@@ -322,6 +330,28 @@ Confirm `state` is `MERGED`.
 
 ## Step 7: Update the Ticket
 
+### Hand-off branch (`merge_owner: reeve` and the PR was not merged here)
+
+Post this comment to the ticket instead of the closing comment, using the same per-tracker mechanism the sections below use for the closing comment (Linear: the Linear MCP comment tool; GitHub: `gh issue comment {N}`; JIRA: the Atlassian MCP comment tool). Under prompt-relay (contract §7), do not post it; include its composed content in this skill's final output so the orchestrator's summary carries it.
+
+````markdown
+## Ready for merge, handed off to Reeve
+
+**PR:** [{pr_title}]({pr_url})
+**Base:** `{baseRefName}`
+**Branch:** `{headRefName}`
+**Preflight:** {mergeable | NOT mergeable: conflicts}; CI {green | {n} failing: {check names}}; {no unaddressed change requests | change requests outstanding from {reviewer}}.
+
+### Summary of changes
+{2-4 bullet points derived from the PR body / commit log}
+
+Reeve classifies this PR against `.reeve/policy.yml`, re-checks CI, and merges or parks it. Nothing was merged by this run.
+````
+
+The Preflight line reports what Step 3 actually observed. If the user chose to proceed past a Step 3 blocker interactively, name the blocker there rather than asserting green; Reeve re-checks CI and mergeability before it merges.
+
+Then transition the ticket to `merge_handoff_state` by **exact** state-name match (no fallbacks: not Done, not Merged, not In Review). On JIRA this is a transition to the status with that exact name from the list fetched in Step 2, scoped to the project. If no state with that name exists on the team (or project), do not transition and do not merge; in autonomous mode emit `needs-human` with `reason: merge_owner is reeve but state "{merge_handoff_state}" does not exist on {team}`; interactively, say so and stop. Under prompt-relay, report `requested_state: {merge_handoff_state}` in the handshake instead of transitioning. On GitHub Issues, apply the label `awaiting-merge` (create it first if missing: `gh label create "awaiting-merge" 2>/dev/null || true`, then `gh issue edit {N} --add-label "awaiting-merge"`) and leave the issue open. Skip the rest of Step 7 and go to Step 8.
+
 Compose the closing comment first (same body for all trackers):
 
 ```markdown
@@ -378,11 +408,11 @@ Then:
 Report the completed outcome:
 
 ```
-## Ticket closed out
+{## Ticket closed out | ## Handed off for merge}
 
 Ticket:  {TICKET-ID} — "{ticket title}"
-PR:      #{pr_number} merged → {baseRefName}
-Status:  Moved to "{target_status}"
+PR:      #{pr_number} {merged → {baseRefName} | handed off to reeve, open against {baseRefName}}
+Status:  Moved to "{target_status | merge_handoff_state}"
 {If a linked worktree:}
 Worktree: left in place at {path}
 {If QA path:}
@@ -405,7 +435,7 @@ Autonomous mode is ON when the first present signal (in priority order) resolves
 2. An `autonomous: true` line in the grounding/context block a parent skill (e.g. `/ccmagic:auto-ticket`) prepends when invoking this skill.
 3. `autonomous: true` in `ccmagic.local.md` frontmatter — the project file `.claude/ccmagic.local.md` first, then the user file `~/.claude/ccmagic.local.md`.
 
-Absent all three, run the interactive path exactly as documented above. Also read `needs_human_state:` / `needs_human_label:` from config. **Orchestrated vs. standalone** works as in `/ccmagic:work-ticket` → *Autonomous mode*.
+Absent all three, run the interactive path exactly as documented above. Also read `needs_human_state:` / `needs_human_label:` / `merge_owner:` / `merge_handoff_state:` from config; a value in the grounding block wins over config. **Orchestrated vs. standalone** works as in `/ccmagic:work-ticket` → *Autonomous mode*.
 
 ### Behavior at each human-gate
 
@@ -413,6 +443,19 @@ Absent all three, run the interactive path exactly as documented above. Also rea
 - **Step 4 (Disposition):** always take the **Done** path. The QA path needs an interactive hand-off (QA-assignee lookup, status confirmation) that would hang an unattended run, so autonomous mode never enters it — **even if `default_qa_workflow: true`**. If the QA path was explicitly forced (`--qa` passed *together with* an autonomous signal), that's a conflict autonomous mode can't satisfy → `needs-human` (reason: "QA disposition requires a human — re-run without `--qa`, or complete QA manually"); do **not** merge. A project that requires QA on every ticket should not be driven by `/ccmagic:auto-ticket`.
 - **Step 5 (Merge confirmation):** proceed with the determined strategy — squash for `feature/`/`bugfix/`/`hotfix/`/`chore/`, merge commit for `release/` — no pause.
 - **Step 6 (Merge conflicts):** auto-resolve **trivial** conflicts (version bumps, import lists, config values) exactly as Step 6 already describes. A **business-logic** conflict → `needs-human` (do not merge; leave the branch unmerged, `reason` names the conflicting files).
+
+### Merge hand-off (`merge_owner: reeve`)
+
+When `merge_owner` resolves to `reeve`, the run **never merges**. The Step 3 merge gate still runs as a preflight and still parks on any blocker exactly as above (a red or conflicting PR is not handed off). When the gate is satisfied: skip Step 4's disposition question (its `--qa` conflict rule still applies), Step 5, and Step 6 entirely (no `gh pr merge`, no branch deletion), take the *Hand-off branch* of Step 7, and emit:
+
+```
+status: done
+reason: handed off to reeve; PR #{pr_number} awaiting merge
+follow_ups: []
+requested_state: <{merge_handoff_state} — prompt-relay only, omit otherwise>
+```
+
+The `reason` must begin with the exact text `handed off to reeve`; `/ccmagic:auto-ticket` keys on it. A missing `merge_handoff_state` on the team is `needs-human` (Step 7 hand-off branch), never a fallback merge. Absent the key, or with `merge_owner: self`, this section does not apply and the run merges as documented above.
 
 ### Route-and-stop (park the ticket) — top-level entry points only
 
@@ -432,7 +475,7 @@ follow_ups: []
 requested_state: <Done — prompt-relay only, omit otherwise>
 ```
 
-`done` = PR merged, ticket moved to Done, closing comment posted. Under prompt-relay (contract §7), `done` = merged, with `requested_state: Done` reported in the handshake — the harness/tracker automation owns the actual move.
+`done` = PR merged, ticket moved to Done, closing comment posted; or, with `merge_owner: reeve`, PR left open, ticket moved to `merge_handoff_state`, hand-off comment posted, and `reason` beginning `handed off to reeve`. Under prompt-relay (contract §7), `done` = merged, with `requested_state: Done` reported in the handshake — the harness/tracker automation owns the actual move.
 
 ---
 
@@ -456,3 +499,4 @@ requested_state: <Done — prompt-relay only, omit otherwise>
 | Cannot identify QA person (QA path only) | Ask the user directly. |
 | User says "no" at confirmation | Stop cleanly. Nothing has been merged yet. |
 | Autonomous: merge gate not satisfied | `needs-human` — route-and-stop (park to `needs_human_state`, comment on PR + ticket) if top-level; else emit the handshake for the parent. |
+| `merge_owner: reeve` and `merge_handoff_state` does not exist on the team | Do not merge, do not transition. Interactive: say so and stop. Autonomous: `needs-human` with the state name in `reason`. |
