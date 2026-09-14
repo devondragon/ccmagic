@@ -6,8 +6,8 @@ All notable changes to ccmagic are documented here. The format follows [Keep a C
 
 ### Added
 
-- `merge_owner: reeve` and `merge_handoff_state` in `ccmagic.local.md`. With `merge_owner: reeve`, `finish-ticket` runs its merge gate as a preflight and then hands the open PR off by moving the ticket to `merge_handoff_state` instead of merging; `auto-ticket` reports the run as **handed-off**. Absent the key, nothing changes.
-- `auto-ticket` run summaries end with a fenced JSON run record (`ccmagic.version` 1): outcome, classification, pass counts, findings counts, and every step's handshake status and reason. Emitted on every outcome and transport, including parked.
+- `merge_owner: reeve` and `merge_handoff_state` in `ccmagic.local.md`. With `merge_owner: reeve`, `finish-ticket` runs its merge gate as a preflight and then hands the open PR off instead of merging (a tracker state move on Linear/JIRA, the `awaiting-merge` label on GitHub Issues, a requested state under prompt-relay); `auto-ticket` reports the run as **handed-off**. Absent the key, nothing changes.
+- `auto-ticket` run summaries end with a fenced JSON run record (`ccmagic.version` 1): outcome, classification, pass counts, findings counts, and every step's handshake status, plus its reason when the sub-skill emitted one. Emitted on every outcome and transport, including parked.
 
 ## [3.6.6] — 2026-08
 
