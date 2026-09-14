@@ -31,9 +31,13 @@ pr: {PR number/url, once known}
 base_branch: {base}
 needs_human_state: {value}
 needs_human_label: {value}
+merge_owner: {self | reeve}
+merge_handoff_state: {value}
 max_feedback_passes: {n}
 review_pass: {n — only on Step 3 re-reviews; absent on the first review pass}
 ```
+
+`merge_owner` and `merge_handoff_state` come from config (§5) with defaults `self` and `Awaiting Merge`; only `finish-ticket` acts on them.
 
 Under the **prompt-relay transport** (§7) the block also carries the ticket content, because no tracker MCP is available to fetch it. The orchestrator appends a `ticket_content:` section:
 
@@ -82,7 +86,7 @@ Which values each sub-skill can emit:
 | `pr-feedback` | `done` \| `needs-human` |
 | `validate` | `done` \| `needs-human` |
 | `push` | `done` \| `needs-human` |
-| `finish-ticket` | `done` \| `needs-human` |
+| `finish-ticket` | `done` \| `needs-human` (with `merge_owner: reeve`, `done` carries `reason: handed off to reeve; ...` and the PR is not merged) |
 
 Parse the **last** such block in the sub-skill's output. If a sub-skill fails to emit one (crash, tool error), treat it as `needs-human` with `reason: "{skill} produced no handshake"`.
 
@@ -135,6 +139,8 @@ When the run is on the **prompt-relay transport** (§7), the park routine change
 | `autonomous` | bool | `false` | Default mode when no `--autonomous` flag and no grounding block is passed. |
 | `needs_human_state` | string | *(none)* | Tracker state a parked ticket is moved to (e.g. `Blocked`, `Needs Human`). |
 | `needs_human_label` | string | `needs-human` | Fallback label applied when `needs_human_state` doesn't exist (and always on GitHub). |
+| `merge_owner` | string | `self` | Who owns merging the PR: `self` merges here, `reeve` hands off to an external merge gate instead of merging. |
+| `merge_handoff_state` | string | `Awaiting Merge` | Tracker state a handed-off ticket moves to when `merge_owner: reeve`. |
 | `max_feedback_passes` | int | `3` | Cap on the `pr-feedback` loop (orchestrator Step 4) before parking. |
 | `max_review_fix_passes` | int | `3` | Cap on the ticket-review fix loop (orchestrator Step 3) before parking. |
 | `max_validate_attempts` | int | `2` | Cap on local `/ccmagic:validate` fix attempts (orchestrator Step 4b) before parking. |
