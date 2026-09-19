@@ -35,6 +35,10 @@ Measured on the 2026-09-18 pilots (1 run, both arms), with-plugin arm:
 
 Pilot cost for 7 cases × 1 run × 2 arms: $1.36 and $1.74. A full suite at `runs: 3` is about $5.
 
+Baseline on main at e87c906 (2026-09-18, 3 runs per arm): mean Δ +0.20, $4.77, 446 s at -j 4.
+
+After the issue #37 fix (3 runs per arm, -j 4), case 05-quick-noise-bait scores with 1.00, without 0.00, Δ +1.00, with `no-noise-findings` passing 3/3 in the with-plugin arm (0/3 at the baseline).
+
 Known conditions of the without-plugin arm: the sandbox still has the built-in `/code-review` skill, and the model used it on several runs. The without arm is therefore "Claude with generic review tooling," not a bare model.
 
 Known findings from the pilots, kept in the suite on purpose:
