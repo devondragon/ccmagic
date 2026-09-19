@@ -35,11 +35,15 @@ Measured on the 2026-09-18 pilots (1 run, both arms), with-plugin arm:
 
 Pilot cost for 7 cases × 1 run × 2 arms: $1.36 and $1.74. A full suite at `runs: 3` is about $5.
 
+Baseline on main at e87c906 (2026-09-18, 3 runs per arm): mean Δ +0.20, $4.77, 446 s at -j 4.
+
+After the issue #37 fix (3 runs per arm, -j 4), case 05-quick-noise-bait scores with 1.00, without 0.00, Δ +1.00, with `no-noise-findings` passing 3/3 in the with-plugin arm (0/3 at the baseline).
+
 Known conditions of the without-plugin arm: the sandbox still has the built-in `/code-review` skill, and the model used it on several runs. The without arm is therefore "Claude with generic review tooling," not a bare model.
 
 Known findings from the pilots, kept in the suite on purpose:
 
-- Natural-language review requests (02, 04) did not trigger the skill in any pilot run; only the explicit slash command did.
-- With the skill, the review reported "PASS WITH WARNINGS" on INFO-only findings in one run of 01, against its own verdict rule.
-- With the skill, a removed JSDoc block was reported as a WARNING in 05, although the skill's finding rules exclude missing comments unless a convention requires them.
+- Natural-language review requests (02, 04) did not trigger the skill in any pilot or baseline run; only the explicit slash command did (issue #35, open).
+- With the skill, the review reported "PASS WITH WARNINGS" on INFO-only findings in one run of 01, against its own verdict rule (issue #36; verdict rule made explicit in PR #38).
+- With the skill, a removed JSDoc block was reported as a WARNING in 05, although the skill's finding rules exclude missing comments unless a convention requires them (issue #37; fixed in PR #38, case 05 with-arm 0.33 to 1.00).
 - In DEEP mode with no repository present, the skill performed the analysis inline and dispatched no Explore agents, and said so in Coverage.

@@ -88,6 +88,8 @@ Routing → QUICK — reason: 1 file, 12 lines, no risk patterns, no new types
 
 If Step 0.5 selected QUICK, walk this checklist line by line against the diff. Don't skip categories. Load full file context when needed.
 
+Before reporting, read `${CLAUDE_SKILL_DIR}/finding-schema.md` and apply its **What NOT to Report** exclusions. Formatting and whitespace, import ordering, TODO/FIXME/HACK markers, and missing or removed comments and JSDoc (absent an explicit documented convention requiring them) are never CRITICAL or WARNING findings, and usually are not findings at all.
+
 ### Correctness
 - Logic errors, edge cases (empty inputs, boundaries, unexpected types), null/undefined handling, off-by-one in loops/slices.
 
@@ -118,10 +120,10 @@ Group findings by severity:
 
 For each finding include: severity, category, file/line(s), description, suggested fix.
 
-Final verdict line:
-- **PASS** — no critical or warning findings.
-- **PASS WITH WARNINGS** — warnings only, merge at reviewer's discretion.
-- **FAIL** — one or more critical findings; address before merge.
+Final verdict line. Only CRITICAL and WARNING findings decide the verdict; INFO findings never do:
+- **PASS** — no CRITICAL and no WARNING findings. INFO-only reports are a PASS.
+- **PASS WITH WARNINGS** — one or more WARNING findings, no CRITICAL; merge at reviewer's discretion.
+- **FAIL** — one or more CRITICAL findings; address before merge.
 
 After producing the report, **stop**. Do not continue into DEEP mode steps.
 
