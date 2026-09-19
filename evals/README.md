@@ -43,7 +43,7 @@ Known conditions of the without-plugin arm: the sandbox still has the built-in `
 
 Known findings from the pilots, kept in the suite on purpose:
 
-- Natural-language review requests (02, 04) did not trigger the skill in any pilot run; only the explicit slash command did.
-- With the skill, the review reported "PASS WITH WARNINGS" on INFO-only findings in one run of 01, against its own verdict rule.
-- With the skill, a removed JSDoc block was reported as a WARNING in 05, although the skill's finding rules exclude missing comments unless a convention requires them.
+- Natural-language review requests (02, 04) did not trigger the skill in any pilot or baseline run; only the explicit slash command did (issue #35, open).
+- With the skill, the review reported "PASS WITH WARNINGS" on INFO-only findings in one run of 01, against its own verdict rule (issue #36; verdict rule made explicit in PR #38).
+- With the skill, a removed JSDoc block was reported as a WARNING in 05, although the skill's finding rules exclude missing comments unless a convention requires them (issue #37; fixed in PR #38, case 05 with-arm 0.33 to 1.00).
 - In DEEP mode with no repository present, the skill performed the analysis inline and dispatched no Explore agents, and said so in Coverage.
