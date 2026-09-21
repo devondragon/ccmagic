@@ -2,6 +2,12 @@
 
 All notable changes to ccmagic are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.7.1] — 2026-09
+
+### Fixed
+
+- `review-ticket`: the report posted to the PR must end with the verdict handshake inside its code fence, verbatim. A run on 2026-09-20 posted the handshake as bare text after a `---`, and Reeve's merge gate, which reads that block from the PR comment, parked the ticket with `review-not-clean`.
+
 ## [3.7.0] — 2026-09
 
 ### Added
