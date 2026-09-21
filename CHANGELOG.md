@@ -6,7 +6,7 @@ All notable changes to ccmagic are documented here. The format follows [Keep a C
 
 ### Fixed
 
-- `review-ticket`: the report posted to the PR must end with the verdict handshake inside its code fence, verbatim. A run on 2026-09-20 posted the handshake as bare text after a `---`, and Reeve's merge gate, which reads that block from the PR comment, parked the ticket with `review-not-clean`.
+- `review-ticket`: every report posted to the PR, full or delta, begins with the `# Ticket-Grounded Review:` heading and, in autonomous mode, ends with the fenced verdict handshake with the actual status filled in. The merge gate (Reeve) selects the comment by that heading and reads only a fenced `status:` line; a run on 2026-09-20 posted the handshake as bare text after a `---` and the ticket parked with `review-not-clean`.
 
 ## [3.7.0] — 2026-09
 
