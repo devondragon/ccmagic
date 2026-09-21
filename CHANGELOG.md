@@ -2,6 +2,12 @@
 
 All notable changes to ccmagic are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.7.1] — 2026-09
+
+### Fixed
+
+- `review-ticket`: every report posted to the PR, full or delta, begins with the `# Ticket-Grounded Review:` heading and, in autonomous mode, ends with the fenced verdict handshake with the actual status filled in. The merge gate (Reeve) selects the comment by that heading and reads only a fenced `status:` line; a run on 2026-09-20 posted the handshake as bare text after a `---` and the ticket parked with `review-not-clean`.
+
 ## [3.7.0] — 2026-09
 
 ### Added

@@ -4,3 +4,6 @@
 # Editor swap/backup files
 *.swp
 *~
+
+# macOS Finder metadata
+.DS_Store
