@@ -247,7 +247,7 @@ ci_watch_returns_call_again_before_deadline() {
   fx pr-checks '[{"name":"test","state":"IN_PROGRESS","bucket":"pending"}]' 8
   run "$BIN/ccm-ci-status" 7 --watch --wait-key run1-pass1 --timeout-minutes 30 --interval 1 --max-call-seconds 0
   check "$(jqval .status),$(jqval .call_again),$RC" "pending,true,2"
-  check "$(cat "$(git rev-parse --git-dir)/ccmagic/ci-wait-run1-pass1" | wc -c | tr -d ' ')" "11"
+  check "$(wc -c <"$(git rev-parse --git-dir)/ccmagic/ci-wait-run1-pass1" | tr -d ' ')" "11"
 }
 
 ci_watch_returns_when_settled() {
@@ -319,7 +319,7 @@ merge_gate_unreadable_pr() {
 guard_ignores_other_commands() {
   hook 'git status && gh pr view 7'
   check "$(denied),$RC" "allow,0"
-  check "$(cat "$GH_FIXTURES/calls.log" 2>/dev/null | wc -l | tr -d ' ')" "0"
+  check "$(test -f "$GH_FIXTURES/calls.log" && echo called || echo none)" "none"
 }
 
 guard_ignores_merge_text_in_strings() {
