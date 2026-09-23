@@ -2,7 +2,7 @@
 name: finish-ticket
 description: Closes out a development ticket end-to-end. Detects the tracker (Linear, GitHub Issues, or JIRA) and the ticket from the current branch, sanity-checks the PR, confirms disposition (Done by default, or QA when configured/requested), merges the PR, and updates the ticket with a comment, PR link, and final status.
 user-invocable: true
-allowed-tools: Read(*), Edit(*), Bash(git:*, gh:*), Glob(*), Grep(*), AskUserQuestion(*), Skill(*)
+allowed-tools: Read(*), Edit(*), Bash(git:*, gh:*), Bash(${CLAUDE_SKILL_DIR}/../../bin/ccm-context *), Bash(${CLAUDE_SKILL_DIR}/../../bin/ccm-merge-gate *), Bash(${CLAUDE_SKILL_DIR}/../../bin/ccm-ci-status *), Glob(*), Grep(*), AskUserQuestion(*), Skill(*)
 argument-hint: "[--qa]"
 model: sonnet
 ---
@@ -59,16 +59,18 @@ Transport resolution depends on how this skill was invoked. **When invoked with 
 
 Run:
 ```bash
-git branch --show-current
+"${CLAUDE_SKILL_DIR}/../../bin/ccm-context"
 ```
 
-Parse the branch name for a ticket ID using `ticket_id_regex` (or an integer segment if the resolved tracker is GitHub). The ticket ID typically sits between the prefix slash and the first slug separator:
+It prints JSON with the current `branch`, the `ticket_id` parsed from it with `ticket_id_regex` (or an integer segment for GitHub), the open `pr`, whether this is a linked `worktree`, and the resolved `config`. Use those values; do not re-parse the branch yourself. Examples of what it extracts:
 
 - `feature/ENG-123-add-search` → `ENG-123` (Linear/JIRA)
 - `bugfix/PROJ-456-fix-cart` → `PROJ-456` (Linear/JIRA)
 - `bugfix/42-fix-cart-total` → `42` (GitHub)
 
-If no ticket ID can be parsed, ask the user:
+The `ccm-*` scripts are also on the Bash `PATH` while the plugin is enabled. If the `${CLAUDE_SKILL_DIR}/../../bin/` path doesn't resolve (for example, the variable wasn't expanded), call them by bare name: `ccm-context`, `ccm-merge-gate`, `ccm-ci-status`.
+
+If `ticket_id` is null, ask the user:
 
 > "I couldn't detect a ticket ID from the current branch (`{branch-name}`). What is the ticket ID?"
 
@@ -76,8 +78,10 @@ If no ticket ID can be parsed, ask the user:
 
 Run:
 ```bash
-gh pr view --json number,title,body,state,url,reviews,statusCheckRollup,mergeable,baseRefName,headRefName
+gh pr view --json number,title,body,state,url,baseRefName,headRefName
 ```
+
+(`statusCheckRollup` is deliberately not requested: a fine-grained PAT gets HTTP 403 on it, which would fail the PR lookup itself. CI is read by the merge gate in Step 3.)
 
 If no PR exists for this branch, stop and tell the user:
 
@@ -117,29 +121,29 @@ Stop. Tell the user:
 
 ## Step 3: Sanity Check
 
-Evaluate these criteria and produce a clear status report:
+### 3a–3c. Merge gate (PR state, CI, reviews)
 
-### 3a. PR State
-- Is the PR open (not already merged or closed)?
-- Is it mergeable? (check `mergeable` field — `MERGEABLE`, `CONFLICTING`, or `UNKNOWN`)
+Run the merge gate. It decides these three criteria in code, so do not re-derive them from `gh` output:
 
-### 3b. CI Checks
-Examine `statusCheckRollup`:
-- Are all required checks passing?
-- Are any checks pending, failing, or erroring?
-- List any failing checks by name.
+```bash
+"${CLAUDE_SKILL_DIR}/../../bin/ccm-merge-gate" {pr_number}
+```
 
-**If `statusCheckRollup` can't be read** — `gh pr view` fails with `Resource not accessible by personal access token` / HTTP 403 — the token is a **fine-grained PAT, which cannot read App-authored check runs** (GitHub Actions, and bot reviewers like Copilot/Claude, are Apps). Do **not** treat this as "CI failing", and do **not** ask anyone to eyeball the checks; read CI from the APIs a fine-grained token *can* see (`Actions: read` + `Commit statuses: read`):
-- `gh run list --commit <headSHA> --json workflowName,status,conclusion` — green only when every run is `completed` with conclusion in {`success`, `skipped`, `neutral`}; block on `queued`/`in_progress` runs with `gh run watch <databaseId>`.
-- `gh api repos/{owner}/{repo}/commits/<headSHA>/status --jq .state` — expect `success`, or no statuses (`total_count: 0`).
+It exits 0 when the PR may merge and 1 when it may not, and prints JSON:
 
-This fallback sees GitHub Actions + legacy statuses only, not third-party-App check runs. Only if **neither** the Checks API nor the Actions/Status APIs are readable is CI genuinely unreadable — a blocker (in autonomous mode: `needs-human`, reason "cannot read CI status").
+- `blockers`: each reason the PR can't merge. It covers: the PR isn't `OPEN`; it is `CONFLICTING`, or GitHub still reports `UNKNOWN` mergeability after a few re-reads; CI isn't green; a reviewer's latest review is `CHANGES_REQUESTED`.
+- `warnings`: currently only "no approving review". A PR can proceed without an approval; show the warning.
+- `ci`: the full `ccm-ci-status` result. `ci.status` is `green`, `no-ci` (no workflows and no required checks), `failed`, `pending`, `not-registered` (CI configured but nothing has reported for this commit yet), or `unreadable`. `ci.checks` lists each check with its bucket, for the report. The script already falls back to the Actions and commit-status APIs when a fine-grained PAT gets HTTP 403 on check runs, so a 403 is never on its own a reason to call CI failed or to ask anyone to look at the checks.
 
-### 3c. Reviews
-Examine `reviews`:
-- Are there any blocking review requests (CHANGES_REQUESTED) that have not been addressed?
-- Is there at least one approving review?
-- A PR can proceed without an approving review, but flag it as a warning.
+If `ci.status` is `pending` or `not-registered`, wait for CI rather than reporting it as a blocker yet:
+
+```bash
+"${CLAUDE_SKILL_DIR}/../../bin/ccm-ci-status" {pr_number} --watch --wait-key finish-{pr_number}
+```
+
+Each call returns within ten minutes. If it returns `"call_again": true`, run the same command again; the total wait is bounded by `ci_timeout_minutes` through the wait-key's deadline file, so you don't count anything. Once it settles, re-run `ccm-merge-gate`. A final `timeout` status is a blocker.
+
+The `PreToolUse` hook enforces the same gate: in an autonomous run, `gh pr merge` is denied while `ccm-merge-gate` fails. Interactively the hook only enforces the gate when `merge_guard: on` is set; see Step 6.
 
 ### 3d. Scope Alignment
 Run:
@@ -266,11 +270,9 @@ Use the merge strategy you determined in Step 5.
 
 ### Attempt merge
 
-First detect whether this checkout is a linked worktree (a worktree-per-ticket setup is normal, not an error):
+Whether this checkout is a linked worktree is the `checkout` field from `ccm-context` in Step 1 (`worktree` or `primary`). A worktree-per-ticket setup is normal, not an error.
 
-```bash
-[ "$(git rev-parse --path-format=absolute --git-dir)" != "$(git rev-parse --path-format=absolute --git-common-dir)" ] && echo worktree || echo primary
-```
+If the user chose at Step 3 to merge past a blocker and the `merge_guard: on` hook denies the merge, rerun the same merge command prefixed with `CCMAGIC_MERGE_OVERRIDE=1`. Only do this after that explicit choice; never in autonomous mode, where the hook ignores the prefix anyway.
 
 **Primary checkout:**
 
@@ -439,7 +441,7 @@ Absent all three, run the interactive path exactly as documented above. Also rea
 
 ### Behavior at each human-gate
 
-- **Step 3 (Sanity check) — this is the merge gate.** Merge **only if all** of: PR is `MERGEABLE`, every required CI check has passed (green) — an **empty** `statusCheckRollup` counts as green only when the repo genuinely has no CI (no workflow files under `.github/workflows/`, no required status checks on the base branch); CI configured but zero checks registered on the PR is **not** green — and there are no unaddressed `CHANGES_REQUESTED` reviews. **If `statusCheckRollup` can't be read at all** (a permissions 403 — a fine-grained PAT cannot read App-authored check runs), determine green via the **Actions + Status API fallback** in §3b; park as "cannot read CI status" only if that is *also* unreadable. **Never ask a human to confirm CI, and never emit a question as the run's result** — an autonomous run ends by merging or by route-and-stop, never by asking. If any gate is not satisfied → `needs-human` (do **not** merge; the `reason` lists the specific blockers). Do not take the interactive "proceed anyway" option.
+- **Step 3 (Sanity check) — this is the merge gate.** Merge **only if** `ccm-merge-gate` exits 0 (after waiting out `pending` / `not-registered` CI with `ccm-ci-status --watch` as Step 3 describes). **Never ask a human to confirm CI, and never emit a question as the run's result** — an autonomous run ends by merging or by route-and-stop, never by asking. If the gate fails → `needs-human` (do **not** merge; the `reason` is the gate's `blockers` joined with `; `). Do not take the interactive "proceed anyway" option. The PreToolUse hook denies `gh pr merge` in autonomous runs while the gate fails, so a merge attempt past a failed gate is refused, and the refusal means `needs-human`.
 - **Step 4 (Disposition):** always take the **Done** path. The QA path needs an interactive hand-off (QA-assignee lookup, status confirmation) that would hang an unattended run, so autonomous mode never enters it — **even if `default_qa_workflow: true`**. If the QA path was explicitly forced (`--qa` passed *together with* an autonomous signal), that's a conflict autonomous mode can't satisfy → `needs-human` (reason: "QA disposition requires a human — re-run without `--qa`, or complete QA manually"); do **not** merge. A project that requires QA on every ticket should not be driven by `/ccmagic:auto-ticket`.
 - **Step 5 (Merge confirmation):** proceed with the determined strategy — squash for `feature/`/`bugfix/`/`hotfix/`/`chore/`, merge commit for `release/` — no pause.
 - **Step 6 (Merge conflicts):** auto-resolve **trivial** conflicts (version bumps, import lists, config values) exactly as Step 6 already describes. A **business-logic** conflict → `needs-human` (do not merge; leave the branch unmerged, `reason` names the conflicting files).

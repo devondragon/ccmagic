@@ -1,7 +1,7 @@
 ---
 name: merge
 user-invocable: true
-allowed-tools: Read(*), Bash(git:*), Bash(gh:*), Bash(glab:*), Bash(curl:*), Glob(*)
+allowed-tools: Read(*), Bash(git:*), Bash(gh:*), Bash(glab:*), Bash(curl:*), Bash(${CLAUDE_SKILL_DIR}/../../bin/ccm-merge-gate *), Bash(${CLAUDE_SKILL_DIR}/../../bin/ccm-ci-status *), Glob(*)
 description: Safely merge approved PRs with strategy-aware branch handling
 argument-hint: "[PR-number] (optional)"
 model: sonnet
@@ -45,24 +45,23 @@ fi
 
 ## Pre-Merge Verification
 
-### Required Checks
-1. PR is approved by required reviewers
-2. All CI/CD checks are passing
-3. No merge conflicts exist
-4. Branch is up-to-date with target branch
+### GitHub: run the merge gate
 
-### Verification Commands
 ```bash
-# Check PR status (GitHub)
-gh pr view --json state,mergeable,reviews
-
-# Fetch latest changes
-git fetch origin
-
-# Verify no conflicts with target branch
-git merge --no-commit --no-ff origin/$BASE_BRANCH
-git merge --abort  # After checking
+"${CLAUDE_SKILL_DIR}/../../bin/ccm-merge-gate" [PR-NUMBER]
 ```
+
+It exits 0 when the PR may merge and prints JSON with `blockers` (not open, conflicting or unknown mergeability, CI not green, a reviewer's latest review is `CHANGES_REQUESTED`), `warnings` (no approving review), and the full CI result under `ci`. Report the blockers and warnings as given; do not re-derive them from `gh pr view`. If `ci.status` is `pending` or `not-registered`, wait with `"${CLAUDE_SKILL_DIR}/../../bin/ccm-ci-status" [PR-NUMBER] --watch --wait-key merge-[PR-NUMBER]` (repeat while it returns `"call_again": true`), then run the gate again.
+
+If the gate fails, show the blockers and stop. Merge anyway only if the user explicitly says to. When `merge_guard: on` is set, the PreToolUse hook denies the merge command while the gate fails; after the user's explicit choice, prefix the merge command with `CCMAGIC_MERGE_OVERRIDE=1`.
+
+Conflicts are reported by the gate from GitHub's own mergeability check. Do not test for conflicts by running `git merge` in the working checkout.
+
+The `ccm-*` scripts are also on the Bash `PATH` while the plugin is enabled. If the `${CLAUDE_SKILL_DIR}/../../bin/` path doesn't resolve (for example, the variable wasn't expanded), call them by bare name: `ccm-merge-gate`, `ccm-ci-status`.
+
+### GitLab / Bitbucket
+
+No gate script covers these yet. Check approval, pipeline status, and conflicts with `glab mr view` or the Bitbucket API before merging.
 
 ## Merge Strategies
 
@@ -80,46 +79,26 @@ TARGET="$BASE_BRANCH"
 ```bash
 # GitHub CLI
 gh pr merge --squash --delete-branch
-
-# Manual squash
-git checkout $TARGET
-git pull origin $TARGET
-git merge --squash $CURRENT_BRANCH
-git commit -m "feat(scope): TICKET-ID short description"
-git push origin $TARGET
 ```
 
 ### 2. Merge Commit (For preserving history)
 ```bash
 # GitHub CLI
 gh pr merge --merge --delete-branch
-
-# Manual merge
-git checkout $TARGET
-git pull origin $TARGET
-git merge --no-ff $CURRENT_BRANCH
-git push origin $TARGET
 ```
 
 ### 3. Rebase and Merge (For linear history)
 ```bash
 # GitHub CLI
 gh pr merge --rebase --delete-branch
-
-# Manual rebase
-git checkout $CURRENT_BRANCH
-git rebase $TARGET
-git checkout $TARGET
-git merge $CURRENT_BRANCH
-git push origin $TARGET
 ```
 
 ## Automated Merge Flow
 
 ```markdown
 1. Detect platform (GitHub/GitLab/Bitbucket)
-2. Check PR approval status
-3. Run final test suite
+2. Run the merge gate (GitHub) or check approval and pipeline status (GitLab/Bitbucket)
+3. Wait for pending CI with `ccm-ci-status --watch`
 4. Select merge strategy based on:
    - Project conventions
    - Branch type (feature/hotfix/release)
@@ -244,8 +223,8 @@ gh pr create --title "HOTFIX: Fix issue from PR #123"
 1. **Dry Run Mode**: Preview merge without executing
 2. **Backup Creation**: Tag current main before merge
 3. **Conflict Detection**: Abort if conflicts found
-4. **Test Verification**: Ensure tests pass before merge
+4. **CI Verification**: `ccm-merge-gate` requires green CI (or a repo with no CI)
 
 ## Execution
 
-Begin merge process immediately if PR number is provided or if current branch has an open PR. Always verify approval status and run tests before actual merge. Provide clear success/failure feedback.
+Begin merge process immediately if PR number is provided or if current branch has an open PR. Always run the merge gate before the merge. Provide clear success/failure feedback.

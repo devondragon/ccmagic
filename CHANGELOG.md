@@ -2,6 +2,20 @@
 
 All notable changes to ccmagic are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.8.0] — 2026-09
+
+### Added
+
+- `bin/ccm-context`, `bin/ccm-ci-status`, and `bin/ccm-merge-gate`: bash scripts that print JSON for the questions skills used to answer from prose (ticket ID from the branch, resolved config, "is CI green", "may this PR merge"). `ccm-ci-status --watch --wait-key` bounds the total CI wait with a deadline file under the git dir, so the caller no longer counts watch cycles.
+- `PreToolUse` guard hook: in autonomous runs, `gh pr merge` is denied while `ccm-merge-gate` fails, and always when `merge_owner: reeve`. Interactive merging is unchanged unless `merge_guard: on` is set.
+- `merge_guard` config key (default `off`).
+- `tests/run.sh` and a GitHub Actions workflow running it with shellcheck.
+
+### Changed
+
+- `finish-ticket` Steps 1 and 3 and the autonomous merge gate call `ccm-context` and `ccm-merge-gate` instead of parsing `gh` output. The PR lookup no longer requests `statusCheckRollup`, which a fine-grained PAT cannot read.
+- `merge` runs `ccm-merge-gate` before merging, and no longer suggests checking for conflicts with `git merge --no-commit` in the working checkout or merging by hand into the target branch.
+
 ## [3.7.1] — 2026-09
 
 ### Fixed

@@ -1,0 +1,239 @@
+#!/usr/bin/env bash
+# ccm-ci-status: decide whether CI is green for a PR (or the current HEAD), as JSON.
+#
+# Usage:
+#   ccm-ci-status [PR]                       one snapshot
+#   ccm-ci-status [PR] --watch [--wait-key KEY] [--timeout-minutes N]
+#                 [--interval S] [--max-call-seconds S]
+#
+# Status values and exit codes:
+#   green           0  every check passed (skipped/neutral count as passed)
+#   no-ci           0  no workflows and no required status checks: nothing to wait for
+#   failed          1  at least one check failed, was cancelled, or timed out
+#   pending         2  checks still running
+#   not-registered  2  CI is configured but no check or run exists for this commit yet
+#   unreadable      3  neither the Checks API nor the Actions/Status APIs could be read
+#   timeout         5  --watch deadline passed while still pending/not-registered
+#   (usage error    4)
+#
+# Reading order: `gh pr checks` first. A fine-grained PAT cannot read
+# App-authored check runs and gets HTTP 403 there, so on 403 (or when the
+# Checks API shows nothing) it reads Actions runs and legacy commit statuses
+# for the head SHA instead. That fallback cannot see third-party App check
+# runs; if it also fails the status is `unreadable`. When check runs are hidden
+# (403) and nothing else is found, `no-ci` needs branch protection to be
+# readable and show no required checks; otherwise the status is `unreadable`.
+#
+# --watch polls until the status leaves pending/not-registered. One call never
+# runs longer than --max-call-seconds (default 540, under the Bash tool's
+# 10-minute limit). --wait-key names a deadline file under the git dir, so the
+# total wait across repeated calls is bounded by --timeout-minutes (default:
+# config ci_timeout_minutes) without the caller counting anything. A call that
+# returns `pending` with "call_again": true should simply be repeated.
+
+set -euo pipefail
+# shellcheck source=bin/ccm-lib.sh
+. "$(dirname "${BASH_SOURCE[0]}")/ccm-lib.sh"
+
+pr="" watch=false wait_key="" timeout_min="" interval="" max_call=540
+while [ $# -gt 0 ]; do
+  case $1 in
+    --watch) watch=true ;;
+    --wait-key) wait_key=${2:?}; shift ;;
+    --timeout-minutes) timeout_min=${2:?}; shift ;;
+    --interval) interval=${2:?}; shift ;;
+    --max-call-seconds) max_call=${2:?}; shift ;;
+    -h|--help) sed -n '2,31p' "$0"; exit 0 ;;
+    -*) echo "ccm-ci-status: unknown flag $1" >&2; exit 4 ;;
+    *) pr=${1#\#} ;;
+  esac
+  shift
+done
+
+[ -n "$timeout_min" ] || timeout_min=$(ccm_config_get ci_timeout_minutes)
+[ -n "$interval" ] || interval=$(ccm_config_get ci_poll_interval_seconds)
+
+slug=$(ccm_repo_slug)
+# Set when `gh pr checks` returned a 403: App-authored check runs (including
+# third-party CI) are invisible to this token, so "nothing found" can't prove
+# there is no CI.
+checks_hidden=false
+errf=$(mktemp)
+trap 'rm -f "$errf"' EXIT
+
+# Resolve PR, head SHA, and base branch once.
+pr_json=$(gh pr view ${pr:+"$pr"} --json number,headRefOid,baseRefName 2>/dev/null || echo null)
+if [ "$pr_json" != null ]; then
+  pr=$(jq -r .number <<<"$pr_json")
+  sha=$(jq -r .headRefOid <<<"$pr_json")
+  base=$(jq -r .baseRefName <<<"$pr_json")
+else
+  if [ -n "$pr" ]; then
+    jq -n --arg pr "$pr" '{status:"unreadable", reason:("cannot read PR " + $pr)}'
+    exit 3
+  fi
+  sha=$(git rev-parse HEAD)
+  base=$(gh repo view --json defaultBranchRef -q .defaultBranchRef.name 2>/dev/null || echo main)
+fi
+
+# Emit a result object. Args: status source reason checks_json
+result() {
+  jq -n --arg status "$1" --arg source "$2" --arg reason "$3" --argjson checks "${4:-[]}" \
+    --arg pr "$pr" --arg sha "$sha" --arg base "$base" \
+    '{status: $status, source: $source, reason: $reason,
+      pr: (if $pr == "" then null else ($pr | tonumber) end), sha: $sha, base: $base,
+      checks: $checks}'
+}
+
+# No check or run for this SHA: is there CI that should have produced one?
+no_checks_verdict() {
+  local root has_workflows=false required=unknown code
+  root=$(git rev-parse --show-toplevel)
+  if compgen -G "$root/.github/workflows/*.yml" >/dev/null || compgen -G "$root/.github/workflows/*.yaml" >/dev/null; then
+    has_workflows=true
+  fi
+  if [ -n "$slug" ]; then
+    if out=$(gh api "repos/$slug/branches/$base/protection/required_status_checks" 2>"$errf"); then
+      if [ "$(jq '(.contexts // []) + (.checks // []) | length' <<<"$out")" -gt 0 ]; then
+        required=true
+      else
+        required=false
+      fi
+    elif grep -q 'HTTP 404' "$errf"; then
+      required=false
+    fi
+  fi
+  if [ "$has_workflows" = false ] && [ "$required" = unknown ] && [ "$checks_hidden" = true ]; then
+    result unreadable none "check runs are not readable with this token (HTTP 403) and branch protection on $base could not be read, so CI can't be ruled out"
+  elif [ "$has_workflows" = false ] && [ "$required" != true ]; then
+    result no-ci none "no workflow files and no required status checks on $base"
+  else
+    code=$([ "$has_workflows" = true ] && echo "workflow files exist" || echo "required status checks exist")
+    result not-registered none "CI is configured ($code) but nothing has registered for $sha yet"
+  fi
+}
+
+# Actions runs + legacy commit statuses for the head SHA.
+actions_verdict() {
+  local runs statuses
+  if ! runs=$(gh run list --commit "$sha" --json databaseId,workflowName,status,conclusion 2>"$errf"); then
+    runs=""
+  fi
+  statuses=""
+  if [ -n "$slug" ]; then
+    statuses=$(gh api "repos/$slug/commits/$sha/status" 2>>"$errf" || true)
+  fi
+  if [ -z "$runs" ] && [ -z "$statuses" ]; then
+    result unreadable actions-fallback "cannot read CI status: $(tr '\n' ' ' <"$errf")"
+    return
+  fi
+  [ -n "$runs" ] || runs='[]'
+  [ -n "$statuses" ] || statuses='{"state":"pending","total_count":0,"statuses":[]}'
+  local checks
+  checks=$(jq -n --argjson runs "$runs" --argjson st "$statuses" '
+    ($runs | map({name: .workflowName, state: (.conclusion // .status),
+      bucket: (if .status != "completed" then "pending"
+               elif (.conclusion | IN("success","skipped","neutral")) then "pass"
+               else "fail" end)}))
+    + ($st.statuses // [] | map({name: .context, state: .state,
+      bucket: (if .state == "success" then "pass" elif .state == "pending" then "pending" else "fail" end)}))
+  ')
+  if [ "$(jq length <<<"$checks")" -eq 0 ]; then
+    no_checks_verdict
+  else
+    verdict_from_buckets actions-fallback "$checks"
+  fi
+}
+
+verdict_from_buckets() {
+  local source=$1 checks=$2
+  if jq -e 'any(.bucket == "fail" or .bucket == "cancel")' <<<"$checks" >/dev/null; then
+    result failed "$source" "failing: $(jq -r '[.[] | select(.bucket == "fail" or .bucket == "cancel") | .name] | join(", ")' <<<"$checks")" "$checks"
+  elif jq -e 'any(.bucket == "pending")' <<<"$checks" >/dev/null; then
+    result pending "$source" "running: $(jq -r '[.[] | select(.bucket == "pending") | .name] | join(", ")' <<<"$checks")" "$checks"
+  else
+    result green "$source" "all checks passed" "$checks"
+  fi
+}
+
+snapshot() {
+  local out _
+  if [ -z "$pr" ]; then
+    actions_verdict
+    return
+  fi
+  for _ in 1 2; do
+    : >"$errf"
+    out=$(gh pr checks "$pr" --json name,state,bucket,workflow 2>"$errf") || true
+    if [ -n "$out" ] && jq -e 'type == "array"' <<<"$out" >/dev/null 2>&1; then
+      if [ "$(jq length <<<"$out")" -gt 0 ]; then
+        verdict_from_buckets checks "$(jq '[.[] | {name, state, bucket}]' <<<"$out")"
+      else
+        actions_verdict
+      fi
+      return
+    fi
+    if grep -qi 'no checks reported' "$errf"; then
+      actions_verdict
+      return
+    fi
+    if grep -qiE 'HTTP 403|Resource not accessible' "$errf"; then
+      checks_hidden=true
+      actions_verdict
+      return
+    fi
+    # Any other failure: one retry, then fall back to the Actions/Status APIs.
+  done
+  actions_verdict
+}
+
+exit_for() {
+  case $1 in
+    green|no-ci) echo 0 ;;
+    failed) echo 1 ;;
+    pending|not-registered) echo 2 ;;
+    unreadable) echo 3 ;;
+    timeout) echo 5 ;;
+    *) echo 3 ;;
+  esac
+}
+
+if [ "$watch" = false ]; then
+  r=$(snapshot)
+  echo "$r"
+  exit "$(exit_for "$(jq -r .status <<<"$r")")"
+fi
+
+now=$(date +%s)
+if [ -n "$wait_key" ]; then
+  dfile="$(ccm_state_dir)/ci-wait-$wait_key"
+  if [ -f "$dfile" ]; then
+    deadline=$(cat "$dfile")
+  else
+    deadline=$((now + timeout_min * 60))
+    echo "$deadline" >"$dfile"
+  fi
+else
+  deadline=$((now + timeout_min * 60))
+fi
+call_end=$((now + max_call))
+
+while :; do
+  r=$(snapshot)
+  status=$(jq -r .status <<<"$r")
+  case $status in
+    pending|not-registered) ;;
+    *) [ -z "$wait_key" ] || rm -f "$dfile"; echo "$r"; exit "$(exit_for "$status")" ;;
+  esac
+  now=$(date +%s)
+  if [ "$now" -ge "$deadline" ]; then
+    [ -z "$wait_key" ] || rm -f "$dfile"
+    jq --arg m "$timeout_min" '.status = "timeout" | .reason = ("still " + .reason + " after " + $m + " minutes")' <<<"$r"
+    exit 5
+  fi
+  if [ $((now + interval)) -ge "$call_end" ]; then
+    jq --argjson left $((deadline - now)) '. + {call_again: true, deadline_remaining_seconds: $left}' <<<"$r"
+    exit 2
+  fi
+  sleep "$interval"
+done

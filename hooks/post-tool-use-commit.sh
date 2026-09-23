@@ -53,7 +53,7 @@ fi
 # helper, not a gate — no point warning on commits the user can't reasonably
 # reformat (merges, reverts, fixup/squash autosquash markers, initial commits).
 case "$COMMIT_MSG" in
-  Merge\ *|Revert\ *|"Revert \""*|fixup!\ *|squash!\ *|amend!\ *|"Initial commit"*) exit 0 ;;
+  Merge\ *|Revert\ *|fixup!\ *|squash!\ *|amend!\ *|"Initial commit"*) exit 0 ;;
 esac
 
 # Canonical pattern: {TYPE}({scope})!?: [TICKET-ID] {description}
