@@ -6,7 +6,7 @@ All notable changes to ccmagic are documented here. The format follows [Keep a C
 
 ### Added
 
-- `bin/ccm-validate`: runs `format`, `lint`, `types`, `test`, and `build`, one command per check, and uses the command's exit code as the verdict, with no `||` fallbacks. Commands come from `validate_<check>` config keys (`none` disables a check) or are detected from `package.json` scripts (with the lockfile's package manager), `Makefile` targets, `go.mod`, `Cargo.toml`, or configured `pyproject.toml` tools. Each check runs under `timeout` (or `gtimeout`) with `validate_timeout_seconds` (default 600). `--only` runs a subset and `--list` prints the plan. Exit 0 pass, 1 fail, 2 nothing to run.
+- `bin/ccm-validate`: runs `format`, `lint`, `types`, `test`, and `build`, one command per check, and uses the command's exit code as the verdict, with no `||` fallbacks. Commands come from `validate_<check>` config keys (`none` disables a check) or are detected from `package.json` scripts (with the lockfile's package manager), `Makefile` targets, `go.mod`, `Cargo.toml`, or configured `pyproject.toml` tools. Each check runs under `timeout` (or `gtimeout`) with `validate_timeout_seconds` (default 540, so a timed-out check still reports before the Bash tool's 10-minute limit). `--only` runs a subset and `--list` prints the plan. Exit 0 pass, 1 fail, 2 nothing to run.
 - Config keys `validate_format`, `validate_lint`, `validate_types`, `validate_test`, `validate_build`, and `validate_timeout_seconds`.
 
 ### Changed

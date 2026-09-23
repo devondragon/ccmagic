@@ -89,7 +89,7 @@ max_feedback_passes: 3
 # validate_types: npm run typecheck
 # validate_test: npm test
 # validate_build: none
-# validate_timeout_seconds: 600
+# validate_timeout_seconds: 540
 
 # --- Per-step execution (used by /ccmagic:auto-ticket) ---
 # Each lifecycle step always runs in its own forked subagent.
@@ -128,7 +128,7 @@ Copy this file to **`.claude/ccmagic.local.md`** in your project root and edit t
 | `ci_timeout_minutes` | Max minutes to wait for CI to settle before parking on timeout. | `30` |
 | `ci_poll_interval_seconds` | Interval for the `gh pr checks --watch` CI wait in an autonomous run. | `60` |
 | `validate_format`, `validate_lint`, `validate_types`, `validate_test`, `validate_build` | Command for that `ccm-validate` check; `none` disables it. | detected from the project manifest |
-| `validate_timeout_seconds` | Per-check time limit for `ccm-validate`; a check that hits it fails as "timed out". | `600` |
+| `validate_timeout_seconds` | Per-check time limit for `ccm-validate`; a check that hits it fails as "timed out". | `540` |
 | `model_<step>` | Per-step model override (`model_work_ticket` … `model_push`). | Balanced mapping |
 
 Every key above also has effect from a **user-level** `~/.claude/ccmagic.local.md` — the project file (this one) takes precedence over the user file, and both override the built-in defaults. Put personal defaults you want in every project (e.g. a longer `ci_timeout_minutes`) in the user file; override them per-repo here.

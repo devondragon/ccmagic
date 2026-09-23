@@ -14,7 +14,7 @@
 # command is skipped as "not configured".
 #
 # Each command runs from the repo root under `timeout` (or `gtimeout`) with
-# validate_timeout_seconds (default 600); a check that hits it fails as
+# validate_timeout_seconds (default 540); a check that hits it fails as
 # "timed out". With neither binary installed, checks run unbounded and the
 # output says so in `note`. Full output goes to a log file under the git dir;
 # a failed check also carries its last 40 lines as `tail`.

@@ -23,7 +23,7 @@ CCM_CONFIG_DEFAULTS='{
   "max_validate_attempts": "2",
   "ci_timeout_minutes": "30",
   "ci_poll_interval_seconds": "60",
-  "validate_timeout_seconds": "600",
+  "validate_timeout_seconds": "540",
   "validate_format": "",
   "validate_lint": "",
   "validate_types": "",

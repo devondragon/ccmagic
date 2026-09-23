@@ -35,7 +35,7 @@ For each check with `status: planned`, in the listed order:
 "${CLAUDE_SKILL_DIR}/../../bin/ccm-validate" --only <check>
 ```
 
-Give each call the maximum Bash tool timeout (600000 ms). One call per check keeps each under the tool's 10-minute limit; the script enforces its own `validate_timeout_seconds` limit (default 600) and reports a check that hits it as `failed` with reason "timed out". If the output has a `note`, no `timeout` binary was found and the checks ran unbounded; repeat the note in the report. If the Bash call itself times out and prints no JSON, count that check as failed with reason "timed out".
+Give each call the maximum Bash tool timeout (600000 ms). One call per check keeps each under the tool's 10-minute limit; the script enforces its own `validate_timeout_seconds` limit (default 540, which leaves room to report before the tool's limit) and reports a check that hits it as `failed` with reason "timed out". If the output has a `note`, no `timeout` binary was found and the checks ran unbounded; repeat the note in the report. If the Bash call itself times out and prints no JSON, count that check as failed with reason "timed out".
 
 Each call prints `{status: pass | fail, checks: [{name, command, source, status, exit_code, duration_s, log, reason?, tail?}]}` and exits 0 on pass, 1 on fail. A failed check carries the last 40 lines of its output as `tail`; the full output is in the `log` file. Keep going after a failure so the report covers every check, unless the user asked to stop at the first failure.
 
@@ -125,7 +125,7 @@ Commands and the time limit come from flat keys in the `ccmagic.local.md` frontm
 ---
 validate_lint: npm run lint:strict   # overrides detection
 validate_types: none                 # disables the check
-validate_timeout_seconds: 900        # per check; default 600
+validate_timeout_seconds: 900        # per check; default 540
 ---
 ```
 
