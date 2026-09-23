@@ -78,15 +78,16 @@ For Linear and JIRA, surface this checklist in the report instead of trying to p
 >
 > **JIRA (Atlassian) MCP:** Verify in Claude Code MCP settings that an Atlassian server is connected. Tool names look like `mcp__claude_ai_Atlassian__*` or `mcp__plugin_atlassian_atlassian__*`.
 
-### 4. Commit hook
+### 4. Hooks and scripts
 
 ```bash
-if [ -n "$CLAUDE_PLUGIN_ROOT" ] && [ -f "$CLAUDE_PLUGIN_ROOT/hooks/post-tool-use-commit.sh" ]; then
-  echo "OK   commit-format hook installed ($CLAUDE_PLUGIN_ROOT/hooks/post-tool-use-commit.sh)"
-elif [ -n "$CLAUDE_PLUGIN_ROOT" ]; then
-  echo "WARN CLAUDE_PLUGIN_ROOT set but hooks/post-tool-use-commit.sh missing — reinstall the ccmagic plugin"
+if [ -n "$CLAUDE_PLUGIN_ROOT" ]; then
+  for f in hooks/pre-tool-use-guard.sh hooks/post-tool-use-commit.sh bin/ccm-context bin/ccm-ci-status bin/ccm-merge-gate; do
+    [ -f "$CLAUDE_PLUGIN_ROOT/$f" ] && echo "OK   $f" || echo "WARN $f missing — reinstall the ccmagic plugin"
+  done
+  command -v jq >/dev/null 2>&1 && echo "OK   jq installed (the hooks and bin/ scripts need it)" || echo "WARN jq not installed — the guard hook allows everything and the bin/ scripts fail without it (brew install jq)"
 else
-  echo "INFO CLAUDE_PLUGIN_ROOT not set — can't locate the plugin dir from here; the hook ships with the plugin and runs automatically on git commits"
+  echo "INFO CLAUDE_PLUGIN_ROOT not set — can't locate the plugin dir from here; the hooks ship with the plugin and run automatically"
 fi
 ```
 
@@ -150,7 +151,7 @@ OK PASS | WARN ISSUES | FAIL CANNOT OPERATE
 - Active tracker: {linear | github | jira | auto}
 - {Per-tracker status from section 3}
 
-## Commit hook
+## Hooks and scripts
 - {OK / INFO from section 4}
 
 ## Git

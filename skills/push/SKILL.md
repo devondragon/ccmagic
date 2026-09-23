@@ -37,7 +37,9 @@ git branch --show-current
 
 ## Step 2: Sensitive File Detection
 
-Check for files that might not belong in version control and should prompt the user:
+ccmagic's PreToolUse hook (`hooks/pre-tool-use-guard.sh`) refuses any `git add` or `git commit` that would stage or commit a secret-shaped file: `.env` and `.env.*` (except `.env.example`, `.env.sample`, `.env.template`, `.env.dist`), `*.pem`, `*.key`, `*.p12`, `*.pfx`, `*.jks`, `*.keystore`, private SSH keys, `.netrc`, `.pgpass`, `*.secret`, `credentials`, `*credentials*.json`, `secrets.{yml,yaml,json,env}`, and `.claude/settings.local.json`. A file listed under `## Always Include` in `context/commit-preferences.md` passes. When the hook denies a command, ask the user about the named files as below; if they say the file belongs in the repo, rerun the command prefixed with `CCMAGIC_ALLOW_SENSITIVE=1` (and offer to record it under `## Always Include`).
+
+The list below is broader than the hook's. Ask about these too, before staging:
 
 ### Always Ask About
 - `.claude/settings*` - Claude Code settings (may contain personal preferences)
@@ -303,7 +305,8 @@ Complete! 4 commits pushed successfully.
 
 - Respect `context/conventions.md` if it specifies commit message conventions.
 - Respect the canonical commit format documented in the plugin's `.claude/CLAUDE.md` (conventional commits with optional scope + optional ticket ID).
-- The **commit-format hook** (`hooks/post-tool-use-commit.sh`) validates every commit's subject line post-commit and prints a non-blocking warning if it doesn't match the conventional format. Pushing is not affected — the hook never aborts commits.
+- The **commit-format hook** (`hooks/post-tool-use-commit.sh`) validates every commit's subject line post-commit and prints a non-blocking warning if it doesn't match the conventional format. In autonomous runs the PreToolUse guard denies such a commit before it is made.
+- The PreToolUse guard also denies force-pushes to `main`, `master`, `develop`, `release/*`, and the default branch (any force push in an autonomous run).
 
 ## Autonomous mode
 
@@ -323,9 +326,10 @@ Absent all three, run the interactive path exactly as documented above.
 
 ### Behavior at each human-gate
 
-- **Step 2 (Sensitive files):** never commit a file that trips the sensitive-file check — **skip it** (exclude it from every commit group) and never prompt to remember the choice. If a flagged file is **genuinely required** for the change to be correct/complete, stop with `needs-human` (do not commit secrets unattended; the `reason` names the file). Commit everything that is *not* flagged as normal.
+- **Step 2 (Sensitive files):** never commit a file that trips the sensitive-file check (the hook denies it in autonomous runs regardless, and ignores `CCMAGIC_ALLOW_SENSITIVE`) — **skip it** (exclude it from every commit group) and never prompt to remember the choice. If a flagged file is **genuinely required** for the change to be correct/complete, stop with `needs-human` (do not commit secrets unattended; the `reason` names the file). Commit everything that is *not* flagged as normal.
 - **Step 5 (No upstream):** create it with `git push -u origin {branch}` — no prompt.
-- **Step 5 (Behind remote):** run `git pull --rebase`. If it rebases cleanly, continue and push. If it hits conflicts, stop with `needs-human` — never force-push.
+- **Step 5 (Behind remote):** run `git pull --rebase`. If it rebases cleanly, continue and push. If it hits conflicts, stop with `needs-human` — never force-push (the hook denies any force push in an autonomous run).
+- **Commit messages:** the hook denies a commit whose subject doesn't match the conventional-commit format in an autonomous run, and says why. Rewrite the subject and commit again.
 - **Push rejected:** retry once with `git pull --rebase` then re-push; if still rejected → `needs-human`.
 
 ### Handshake (emit last, in autonomous mode)

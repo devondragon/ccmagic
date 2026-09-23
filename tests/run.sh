@@ -415,9 +415,164 @@ guard_api_merge_is_gated() {
   check "$(denied)" "deny"
 }
 
+# ---- pre-tool-use-guard: force push ----------------------------------------
+
+guard_force_push_to_main_denied_interactively() {
+  hook 'git push --force origin main'
+  check "$(denied)" "deny"
+}
+
+guard_force_push_plus_refspec_denied() {
+  hook 'git push origin +HEAD:refs/heads/main'
+  check "$(denied)" "deny"
+}
+
+guard_force_push_own_branch_allowed_interactively() {
+  git checkout -q -b feature/ENG-1-x
+  hook 'git push --force-with-lease'
+  check "$(denied)" "allow"
+}
+
+guard_force_push_denied_autonomously() {
+  git checkout -q -b feature/ENG-1-x
+  hook 'git push -fu origin feature/ENG-1-x' ccmagic:auto-push
+  check "$(denied)" "deny"
+}
+
+guard_normal_push_allowed_autonomously() {
+  git checkout -q -b feature/ENG-1-x
+  hook 'git pull --rebase && git push -u origin feature/ENG-1-x' ccmagic:auto-push
+  check "$(denied)" "allow"
+}
+
+# ---- pre-tool-use-guard: sensitive files -----------------------------------
+
+guard_add_env_denied() {
+  echo SECRET=1 >.env
+  hook 'git add .env src/app.ts'
+  check "$(denied)" "deny"
+  [[ $(jq -r .hookSpecificOutput.permissionDecisionReason <<<"$OUT") == *".env"* ]]
+}
+
+guard_add_all_picks_up_untracked_key() {
+  echo k >server.pem
+  echo x >app.ts
+  hook 'git add -A && git commit -m "feat: add server"'
+  check "$(denied)" "deny"
+}
+
+guard_add_all_respects_gitignore() {
+  echo '.env' >.gitignore
+  echo SECRET=1 >.env
+  echo x >app.ts
+  hook 'git add . && git commit -m "feat: x"'
+  check "$(denied)" "allow"
+}
+
+guard_add_after_dashdash_checked() {
+  echo SECRET=1 >-weird.env
+  echo SECRET=1 >.env
+  hook 'git add -- .env'
+  check "$(denied)" "deny"
+  hook 'git add -- -weird.env'
+  check "$(denied)" "allow"
+  mv -- -weird.env x.pem
+  hook 'git add -- x.pem'
+  check "$(denied)" "deny"
+}
+
+guard_env_example_allowed() {
+  echo A= >.env.example
+  hook 'git add .env.example'
+  check "$(denied)" "allow"
+}
+
+guard_staged_secret_blocks_commit() {
+  echo k >id_rsa
+  git add id_rsa
+  hook 'git commit -m "chore: keys"'
+  check "$(denied)" "deny"
+}
+
+guard_sensitive_override_interactive() {
+  echo k >.env
+  hook 'CCMAGIC_ALLOW_SENSITIVE=1 git add .env'
+  check "$(denied)" "allow"
+}
+
+guard_sensitive_override_ignored_autonomously() {
+  echo k >.env
+  hook 'CCMAGIC_ALLOW_SENSITIVE=1 git add .env' ccmagic:auto-push
+  check "$(denied)" "deny"
+}
+
+guard_commit_preferences_always_include() {
+  mkdir -p context
+  printf '# Commit Preferences\n\n## Always Include\n- config/dev.key\n\n## Always Exclude\n- .env\n' >context/commit-preferences.md
+  mkdir -p config
+  echo k >config/dev.key
+  hook 'git add config/dev.key' ccmagic:auto-push
+  check "$(denied)" "allow"
+}
+
+guard_commit_all_flag_sees_modified_tracked() {
+  echo a >creds.secret
+  git add creds.secret
+  CCMAGIC_ALLOW_SENSITIVE=1 git -c user.email=t@t -c user.name=t commit -q -m "chore: seed"
+  echo b >creds.secret
+  hook 'git commit -am "fix: update"'
+  check "$(denied)" "deny"
+}
+
+# ---- pre-tool-use-guard: commit format -------------------------------------
+
+guard_bad_subject_denied_autonomously() {
+  hook 'git commit -m "Added the thing"' ccmagic:auto-push
+  check "$(denied)" "deny"
+  [[ $(jq -r .hookSpecificOutput.permissionDecisionReason <<<"$OUT") == *"Added the thing"* ]]
+}
+
+guard_bad_subject_allowed_interactively() {
+  hook 'git commit -m "Added the thing"'
+  check "$(denied)" "allow"
+}
+
+guard_good_heredoc_subject_allowed_autonomously() {
+  hook "$(printf 'git commit -F - <<%sEOF%s\nfeat(api): ENG-12 add endpoint\n\nBody.\nEOF' "'" "'")" ccmagic:auto-push
+  check "$(denied)" "allow"
+}
+
+guard_merge_subject_exempt() {
+  hook 'git commit -m "Merge branch main into feature/x"' ccmagic:auto-feedback
+  check "$(denied)" "allow"
+}
+
+# ---- post-tool-use-commit ----------------------------------------------------
+
+run_post_hook() {
+  OUT=$(jq -n --arg c "$1" '{tool_input: {command: $c}}' | "${HOOK_BASH:-bash}" "$HOOKS/post-tool-use-commit.sh" 2>"$T/stderr")
+  RC=$?
+}
+
+post_warns_on_bad_subject_in_chain() {
+  run_post_hook 'git add -A && git commit -m "updated stuff"'
+  check "$RC" "0"
+  [[ $OUT == *"WARNING"*"updated stuff"* ]]
+}
+
+post_warns_with_env_prefix() {
+  run_post_hook 'GIT_AUTHOR_DATE=now git commit -m "stuff"'
+  [[ $OUT == *"WARNING"* ]]
+}
+
+post_quiet_on_good_subject() {
+  run_post_hook "git commit -m 'fix(cart): #42 round totals'"
+  check "$OUT,$RC" ",0"
+}
+
 # ---- run -------------------------------------------------------------------
 
-for fn in $(declare -F | awk '{print $3}' | grep -E '^(context|ci|merge_gate|guard)_'); do
+for fn in $(declare -F | awk '{print $3}' | grep -E '^(context|ci|merge_gate|guard|post)_'); do
   t "$fn" "$fn"
 done
 

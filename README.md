@@ -266,8 +266,16 @@ Rules that have one right answer are enforced in code, not left to the skill tex
 
 **Hooks** (`hooks/hooks.json`):
 
-- `PreToolUse` guard (`hooks/pre-tool-use-guard.sh`): denies `gh pr merge` (and `gh api -X PUT .../merge`) while `ccm-merge-gate` fails, in autonomous runs (`ccmagic:auto-*` agents, or `autonomous: true`), and always when `merge_owner: reeve` in an autonomous run. Interactively it applies only with `merge_guard: on`, and the user can still merge past it.
-- `PostToolUse` commit-format check (`hooks/post-tool-use-commit.sh`): validates each commit subject against the conventional-commit format in `.claude/CLAUDE.md`. It warns and never rejects, so it's safe on repos with non-conventional history.
+- `PreToolUse` guard (`hooks/pre-tool-use-guard.sh`). "Autonomous" means a `ccmagic:auto-*` agent or `autonomous: true`.
+
+  | Rule | Autonomous | Interactive |
+  |---|---|---|
+  | `gh pr merge` while `ccm-merge-gate` fails | denied (always denied under `merge_owner: reeve`) | allowed, unless `merge_guard: on`; then denied until the user chooses to merge anyway (`CCMAGIC_MERGE_OVERRIDE=1`) |
+  | Force push (`--force`, `-f`, `--force-with-lease`, `+refspec`) | denied | denied to `main`, `master`, `develop`, `release/*`, or the default branch; allowed to other branches |
+  | Staging or committing a secret-shaped file (`.env`, private keys, credential files) | denied | denied until the user confirms (`CCMAGIC_ALLOW_SENSITIVE=1`); files under `## Always Include` in `context/commit-preferences.md` pass |
+  | Commit subject not in conventional-commit format | denied, with the expected format | allowed; the PostToolUse hook warns |
+
+- `PostToolUse` commit-format check (`hooks/post-tool-use-commit.sh`): warns when a commit subject doesn't match the conventional-commit format in `.claude/CLAUDE.md`. It never rejects, so it's safe on repos with non-conventional history.
 
 Tests: `tests/run.sh` (plain bash, with a `gh` stub fed recorded API output). CI runs it and shellcheck on every PR.
 
@@ -312,6 +320,7 @@ ccmagic/
 ├── hooks/
 │   ├── hooks.json
 │   ├── pre-tool-use-guard.sh
+│   ├── lib-commit.sh
 │   └── post-tool-use-commit.sh
 ├── tests/
 │   └── run.sh                 # tests for bin/ and hooks/
