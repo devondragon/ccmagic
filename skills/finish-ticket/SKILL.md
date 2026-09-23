@@ -68,6 +68,8 @@ It prints JSON with the current `branch`, the `ticket_id` parsed from it with `t
 - `bugfix/PROJ-456-fix-cart` → `PROJ-456` (Linear/JIRA)
 - `bugfix/42-fix-cart-total` → `42` (GitHub)
 
+The `ccm-*` scripts are also on the Bash `PATH` while the plugin is enabled. If the `${CLAUDE_SKILL_DIR}/../../bin/` path doesn't resolve (for example, the variable wasn't expanded), call them by bare name: `ccm-context`, `ccm-merge-gate`, `ccm-ci-status`.
+
 If `ticket_id` is null, ask the user:
 
 > "I couldn't detect a ticket ID from the current branch (`{branch-name}`). What is the ticket ID?"

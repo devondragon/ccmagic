@@ -161,7 +161,7 @@ context: fork                  # For heavy skills (subagent isolation)
 
 Scripts and hooks: `bash tests/run.sh` (add a case there for any change to `bin/` or `hooks/`), and `shellcheck -x bin/ccm-* hooks/*.sh`. CI runs both.
 
-When a rule has exactly one right answer (a CI verdict, a config value, a merge precondition), put it in a `bin/ccm-*` script or a hook, and have the skill call the script and act on its JSON. Keep judgment in the skill. Skills reference scripts as `"${CLAUDE_SKILL_DIR}/../../bin/ccm-<name>"` and grant that path in `allowed-tools`.
+When a rule has exactly one right answer (a CI verdict, a config value, a merge precondition), put it in a `bin/ccm-*` script or a hook, and have the skill call the script and act on its JSON. Keep judgment in the skill. Skills reference scripts as `"${CLAUDE_SKILL_DIR}/../../bin/ccm-<name>"`, grant that path in `allowed-tools`, and say the bare name works too (plugin `bin/` is on `PATH`), for contexts where the variable isn't expanded.
 
 ```bash
 # Test the plugin locally

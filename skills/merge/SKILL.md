@@ -57,6 +57,8 @@ If the gate fails, show the blockers and stop. Merge anyway only if the user exp
 
 Conflicts are reported by the gate from GitHub's own mergeability check. Do not test for conflicts by running `git merge` in the working checkout.
 
+The `ccm-*` scripts are also on the Bash `PATH` while the plugin is enabled. If the `${CLAUDE_SKILL_DIR}/../../bin/` path doesn't resolve (for example, the variable wasn't expanded), call them by bare name: `ccm-merge-gate`, `ccm-ci-status`.
+
 ### GitLab / Bitbucket
 
 No gate script covers these yet. Check approval, pipeline status, and conflicts with `glab mr view` or the Bitbucket API before merging.
