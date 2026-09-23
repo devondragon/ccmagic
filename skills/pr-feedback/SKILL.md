@@ -1,7 +1,7 @@
 ---
 name: pr-feedback
 user-invocable: true
-allowed-tools: Read(*), Bash(git:*, gh:*), Glob(*), Grep(*), Task(*), TodoWrite(*), AskUserQuestion(*), Edit(*), Skill(*)
+allowed-tools: Read(*), Bash(git:*, gh:*), Bash(${CLAUDE_SKILL_DIR}/../../bin/ccm-pr-threads *), Glob(*), Grep(*), Task(*), TodoWrite(*), AskUserQuestion(*), Edit(*), Skill(*)
 description: Review PR comments and plan fixes for valid concerns
 model: sonnet
 argument-hint: "[PR#]"
@@ -37,36 +37,27 @@ Collect into `{PROJECT_CONVENTIONS}`. These are used in Step 4 to evaluate wheth
 
 ## Step 2: Fetch PR Comments and Threads
 
-Retrieve all feedback in three categories:
+Retrieve all feedback with one call:
 
 ```bash
-# Review comments (line-level) — includes thread structure via in_reply_to_id
-gh api repos/{owner}/{repo}/pulls/{PR_NUMBER}/comments \
-  --jq '.[] | {id, body, path, line, original_line, diff_hunk, user: .user.login, created_at, updated_at, in_reply_to_id}'
-
-# PR conversation comments (general discussion)
-gh api repos/{owner}/{repo}/issues/{PR_NUMBER}/comments \
-  --jq '.[] | {id, body, user: .user.login, created_at}'
-
-# Reviews with state (APPROVED, CHANGES_REQUESTED, COMMENTED)
-gh pr view {PR_NUMBER} --json reviews \
-  --jq '.reviews[] | {author: .author.login, state, body}'
+"${CLAUDE_SKILL_DIR}/../../bin/ccm-pr-threads" {PR_NUMBER}
 ```
 
-### Thread Reconstruction
+(The script is also on the Bash `PATH` as `ccm-pr-threads` while the plugin is enabled; use the bare name if the `${CLAUDE_SKILL_DIR}` path doesn't resolve.)
 
-Group line-level comments into threads using `in_reply_to_id`:
-- A root comment (no `in_reply_to_id`) starts a thread
-- Replies chain onto the root
-- Read the **full thread** before evaluating any comment in it — earlier replies may already address the concern or provide context that changes the meaning
+It prints JSON with:
 
-### Identify the PR Author
+- `author`: the PR author's login.
+- `threads[]`: line-level review threads, already grouped, each with `id`, `path`, `line`, `is_resolved`, `is_outdated`, `open`, and `comments[]` in order (`id`, `author`, `by_author`, `created_at`, `url`, `body`). A thread is `open` when it is unresolved and its last comment is not the PR author's.
+- `reviews[]`: review submissions with `state` (`APPROVED`, `CHANGES_REQUESTED`, `COMMENTED`) and `body`.
+- `issue_comments[]`: general PR conversation comments.
+- `truncated`: true if a page limit was hit (100 threads, 50 comments per thread). Say so in the report if it happens.
 
-```bash
-gh pr view {PR_NUMBER} --json author --jq '.author.login'
-```
+Read the **full thread** before evaluating any comment in it. Earlier replies may already address the concern or add context that changes its meaning.
 
-Filter out the PR author's own comments from the triage list (they are context, not feedback to address). Keep them visible in threads for context.
+Triage the reviewer comments, not the PR author's own (`by_author: true`). Keep the author's comments in view as thread context. Resolved threads (`is_resolved: true`) and threads the author already answered (`open: false`) need no new action unless a reviewer replied after the answer, and that case shows up as `open: true`.
+
+When replying in autonomous mode, the thread's first comment `id` is the one to reply to (`gh api repos/{owner}/{repo}/pulls/{PR}/comments/{id}/replies`).
 
 ## Step 3: Classify Comment Severity
 
@@ -261,7 +252,7 @@ Begin immediately when invoked:
 
 1. **Fetch** — Get the PR, all comments, and review state
 2. **Load conventions** — Read project convention files
-3. **Reconstruct threads** — Group comments into conversation threads
+3. **Read threads** — `ccm-pr-threads` returns them already grouped
 4. **Classify** — Assign severity to each comment (must-fix / should-fix / style / question)
 5. **Verify** — Read actual code for every actionable comment. Check if the concern is valid, already handled, or contradicts conventions
 6. **Detect conflicts** — Flag contradictory reviewer feedback and ask user to decide

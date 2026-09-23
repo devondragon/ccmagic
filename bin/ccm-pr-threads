@@ -1,0 +1,110 @@
+#!/usr/bin/env bash
+# ccm-pr-threads: a PR's review threads, reviews, and conversation comments, as JSON.
+#
+# Usage: ccm-pr-threads [PR] [--since-id N]
+#
+#   PR           defaults to the current branch's PR
+#   --since-id N mark review comments with an id above N as new (N is a
+#                max_review_comment_id from an earlier call)
+#
+# Output:
+#   pr, author                 PR number and author login
+#   max_review_comment_id      highest review-comment id; pass it back as --since-id
+#   threads[]                  {id, is_resolved, is_outdated, path, line, open, has_new,
+#                               comments[{id, author, by_author, created_at, url, body}]}
+#   open_thread_count          threads that are unresolved and whose last comment is
+#                              not by the PR author, i.e. still waiting on a response
+#   new_comment_count          review comments above --since-id not by the PR author
+#   reviews[]                  {id, author, state, submitted_at, body}
+#   issue_comments[]           {id, author, by_author, created_at, body}
+#   truncated                  true if a page limit was hit (100 threads, 50 comments
+#                              per thread, 100 reviews, 100 issue comments)
+#
+# A thread the author replied to last counts as handled even if nobody
+# resolved it: that is how pr-feedback leaves declined and answered threads.
+#
+# Exit codes: 0 ok, 3 cannot read the PR, 4 usage error.
+
+set -euo pipefail
+# shellcheck source=bin/ccm-lib.sh
+. "$(dirname "${BASH_SOURCE[0]}")/ccm-lib.sh"
+
+pr="" since=0
+while [ $# -gt 0 ]; do
+  case $1 in
+    --since-id) since=${2:?}; shift ;;
+    -h|--help) sed -n '2,27p' "$0"; exit 0 ;;
+    -*) echo "ccm-pr-threads: unknown flag $1" >&2; exit 4 ;;
+    *) pr=${1#\#} ;;
+  esac
+  shift
+done
+
+if [ -z "$pr" ]; then
+  pr=$(gh pr view --json number -q .number 2>/dev/null || true)
+fi
+slug=$(ccm_repo_slug)
+if [ -z "$pr" ] || [ -z "$slug" ]; then
+  jq -n '{error: "cannot determine the PR or the repository"}'
+  exit 3
+fi
+
+# shellcheck disable=SC2016  # GraphQL variables, not shell
+query='query($owner: String!, $name: String!, $number: Int!) {
+  repository(owner: $owner, name: $name) {
+    pullRequest(number: $number) {
+      number
+      author { login }
+      reviewThreads(first: 100) {
+        pageInfo { hasNextPage }
+        nodes {
+          id isResolved isOutdated path line
+          comments(first: 50) {
+            pageInfo { hasNextPage }
+            nodes { databaseId author { login } body createdAt url }
+          }
+        }
+      }
+      reviews(first: 100) {
+        pageInfo { hasNextPage }
+        nodes { databaseId author { login } state submittedAt body }
+      }
+      comments(first: 100) {
+        pageInfo { hasNextPage }
+        nodes { databaseId author { login } body createdAt }
+      }
+    }
+  }
+}'
+
+if ! raw=$(gh api graphql -f query="$query" -F owner="${slug%%/*}" -F name="${slug##*/}" -F number="$pr" 2>&1); then
+  jq -n --arg e "$raw" --arg pr "$pr" '{error: ("cannot read PR " + $pr + ": " + $e)}'
+  exit 3
+fi
+
+jq --argjson since "$since" '
+  .data.repository.pullRequest as $p
+  | ($p.author.login // "") as $author
+  | def login: (.author.login // "ghost");
+    ($p.reviewThreads.nodes | map(
+      (.comments.nodes | map({id: .databaseId, author: login, by_author: (login == $author),
+                              created_at: .createdAt, url, body})) as $c
+      | {id, is_resolved: .isResolved, is_outdated: .isOutdated, path, line,
+         open: ((.isResolved | not) and ($c | length > 0) and (($c | last).by_author | not)),
+         has_new: any($c[]; .id > $since and (.by_author | not)),
+         comments: $c})) as $threads
+  | {
+      pr: $p.number,
+      author: $author,
+      max_review_comment_id: ([$threads[].comments[].id] | max // 0),
+      threads: $threads,
+      open_thread_count: ($threads | map(select(.open)) | length),
+      new_comment_count: ([$threads[].comments[] | select(.id > $since and (.by_author | not))] | length),
+      reviews: ($p.reviews.nodes | map({id: .databaseId, author: login, state, submitted_at: .submittedAt, body})),
+      issue_comments: ($p.comments.nodes | map({id: .databaseId, author: login, by_author: (login == $author),
+                                               created_at: .createdAt, body})),
+      truncated: ($p.reviewThreads.pageInfo.hasNextPage or $p.reviews.pageInfo.hasNextPage
+                  or $p.comments.pageInfo.hasNextPage
+                  or any($p.reviewThreads.nodes[]; .comments.pageInfo.hasNextPage))
+    }
+' <<<"$raw"

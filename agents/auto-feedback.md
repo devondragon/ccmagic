@@ -24,4 +24,8 @@ reason: applied {A} / declined {D} / deferred {F}   (or the blocking tie on need
 follow_ups: [<follow-up ticket ids filed — or short descriptions under prompt-relay>]
 ```
 
+A SubagentStop hook checks that your final message ends with this block (a `status:` line with an allowed value, then `reason:` and `follow_ups:`, and nothing after it). If it doesn't, you are sent back once to add it; restate the outcome, don't redo the work.
+
+The `ccm-*` scripts the skill calls are also on the Bash `PATH`; if a `${CLAUDE_SKILL_DIR}/../../bin/` path doesn't resolve here, call them by bare name.
+
 The grounding block arrives as your task prompt — read the tracker / ticket / PR context and the needs-human config from it.

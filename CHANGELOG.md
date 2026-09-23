@@ -2,6 +2,18 @@
 
 All notable changes to ccmagic are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.10.0] — 2026-09
+
+### Added
+
+- `bin/ccm-pr-threads`: review threads (grouped, with resolved/outdated state and an `open` flag for threads still waiting on the author), reviews, and conversation comments from one GraphQL call. `--since-id H` marks reviewer comments above a high-water mark.
+- SubagentStop hook (`hooks/subagent-stop-handshake.sh`): a `ccmagic:auto-*` step agent whose final message doesn't end with a valid status handshake is sent back once to add it, instead of the run parking with "produced no handshake". Plugin agents ignore `hooks:` in their own frontmatter, so it runs from `hooks/hooks.json` and filters on `agent_type`.
+
+### Changed
+
+- `auto-ticket` Step 4 reads the high-water mark and new/open threads with `ccm-pr-threads`, and waits for CI with `ccm-ci-status --watch --wait-key {run_id}-pass{n}`. The wait's total is bounded by a deadline file, which replaces the instruction to count 10-minute watch cycles in working notes. "Clean" is now `open_thread_count == 0` plus a `green` or `no-ci` CI status.
+- `pr-feedback` Step 2 uses `ccm-pr-threads` instead of three REST calls plus thread reconstruction by `in_reply_to_id`.
+
 ## [3.9.0] — 2026-09
 
 ### Added

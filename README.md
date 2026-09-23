@@ -263,6 +263,7 @@ Rules that have one right answer are enforced in code, not left to the skill tex
 | `ccm-context` | Current branch, ticket ID parsed from it, open PR, worktree or primary checkout, base branch, and the resolved `ccmagic.local.md` config (project over user over defaults) |
 | `ccm-ci-status` | Is CI green for this PR: `green`, `no-ci`, `failed`, `pending`, `not-registered`, `unreadable`. Falls back to the Actions and commit-status APIs when a fine-grained PAT gets HTTP 403 on check runs. `--watch --wait-key K` waits with a deadline that holds across repeated calls |
 | `ccm-merge-gate` | May this PR merge: open, mergeable, CI green (or no CI), no reviewer whose latest review requests changes |
+| `ccm-pr-threads` | A PR's review threads (grouped, with `open` = unresolved and last word not the author's), reviews, and conversation comments; `--since-id H` marks reviewer comments newer than a high-water mark |
 
 **Hooks** (`hooks/hooks.json`):
 
@@ -275,6 +276,7 @@ Rules that have one right answer are enforced in code, not left to the skill tex
   | Staging or committing a secret-shaped file (`.env`, private keys, credential files) | denied | denied until the user confirms (`CCMAGIC_ALLOW_SENSITIVE=1`); files under `## Always Include` in `context/commit-preferences.md` pass |
   | Commit subject not in conventional-commit format | denied, with the expected format | allowed; the PostToolUse hook warns |
 
+- `SubagentStop` handshake check (`hooks/subagent-stop-handshake.sh`): a `ccmagic:auto-*` step agent whose final message doesn't end with a valid status handshake is sent back once to add it.
 - `PostToolUse` commit-format check (`hooks/post-tool-use-commit.sh`): warns when a commit subject doesn't match the conventional-commit format in `.claude/CLAUDE.md`. It never rejects, so it's safe on repos with non-conventional history.
 
 Tests: `tests/run.sh` (plain bash, with a `gh` stub fed recorded API output). CI runs it and shellcheck on every PR.
@@ -321,6 +323,7 @@ ccmagic/
 │   ├── hooks.json
 │   ├── pre-tool-use-guard.sh
 │   ├── lib-commit.sh
+│   ├── subagent-stop-handshake.sh
 │   └── post-tool-use-commit.sh
 ├── tests/
 │   └── run.sh                 # tests for bin/ and hooks/

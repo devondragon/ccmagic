@@ -90,6 +90,8 @@ Which values each sub-skill can emit:
 
 Parse the **last** such block in the sub-skill's output. If a sub-skill fails to emit one (crash, tool error), treat it as `needs-human` with `reason: "{skill} produced no handshake"`.
 
+The plugin's SubagentStop hook (`hooks/subagent-stop-handshake.sh`) enforces this on the `ccmagic:auto-*` step agents: a final message without a valid block (a `status:` value allowed for that step, then `reason:` and `follow_ups:`, with nothing after) sends the agent back once to add it. A second miss is let through, and the rule above applies.
+
 Under the prompt-relay transport, a sub-skill that would have transitioned ticket state reports the intended state in `requested_state:` (per §7 `set_state`); the orchestrator folds it into its final relayed summary as an intent line `Requested state: {X}`.
 
 ## 4. Route-and-stop (park the ticket)

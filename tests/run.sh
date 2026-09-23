@@ -570,9 +570,97 @@ post_quiet_on_good_subject() {
   check "$OUT,$RC" ",0"
 }
 
+# ---- subagent-stop-handshake -------------------------------------------------
+
+run_stop_hook() {
+  OUT=$(jq -n --arg m "$1" --arg a "$2" --argjson active "${3:-false}" \
+    '{hook_event_name: "SubagentStop", agent_type: $a, last_assistant_message: $m, stop_hook_active: $active}' |
+    ${HOOK_BASH:-bash} "$HOOKS/subagent-stop-handshake.sh" 2>"$T/stderr")
+  RC=$?
+}
+blocked() { [ "$(jq -r '.decision // "allow"' <<<"${OUT:-{\}}")" = block ] && echo block || echo allow; }
+
+stop_valid_handshake_passes() {
+  run_stop_hook $'Pushed 2 commits.\n\n```\nstatus: done\nreason: pushed 2 commits\nfollow_ups: []\n```' ccmagic:auto-push
+  check "$(blocked)" "allow"
+}
+
+stop_review_verdict_values() {
+  run_stop_hook $'# Ticket-Grounded Review: ENG-1\n...\nstatus: fixable-findings\nreason: 1 CRITICAL\nfollow_ups:\n  - ENG-9\n' ccmagic:auto-review
+  check "$(blocked)" "allow"
+}
+
+stop_missing_handshake_blocked() {
+  run_stop_hook 'All done, the PR is merged.' ccmagic:auto-finish
+  check "$(blocked)" "block"
+  [[ $(jq -r .reason <<<"$OUT") == *"status: done | needs-human"* ]]
+}
+
+stop_wrong_status_for_agent_blocked() {
+  run_stop_hook $'status: clean\nreason: ok\nfollow_ups: []' ccmagic:auto-push
+  check "$(blocked)" "block"
+}
+
+stop_trailing_text_blocked() {
+  run_stop_hook $'status: done\nreason: ok\nfollow_ups: []\n\nLet me know if you need anything else.' ccmagic:auto-work
+  check "$(blocked)" "block"
+}
+
+stop_missing_follow_ups_blocked() {
+  run_stop_hook $'status: needs-human\nreason: tie between reviewers' ccmagic:auto-feedback
+  check "$(blocked)" "block"
+}
+
+stop_second_attempt_released() {
+  run_stop_hook 'still no handshake' ccmagic:auto-finish true
+  check "$(blocked)" "allow"
+}
+
+stop_other_agents_ignored() {
+  run_stop_hook 'no handshake here' Explore
+  check "$(blocked)" "allow"
+}
+
+# ---- ccm-pr-threads ------------------------------------------------------------
+
+seed_threads() {
+  fx graphql '{"data":{"repository":{"pullRequest":{"number":7,"author":{"login":"me"},
+    "reviewThreads":{"pageInfo":{"hasNextPage":false},"nodes":[
+      {"id":"T1","isResolved":false,"isOutdated":false,"path":"a.ts","line":3,"comments":{"pageInfo":{"hasNextPage":false},"nodes":[
+        {"databaseId":100,"author":{"login":"bot"},"body":"fix this","createdAt":"2026-09-01T00:00:00Z","url":"u1"}]}},
+      {"id":"T2","isResolved":false,"isOutdated":false,"path":"b.ts","line":9,"comments":{"pageInfo":{"hasNextPage":false},"nodes":[
+        {"databaseId":101,"author":{"login":"bot"},"body":"why?","createdAt":"2026-09-01T00:00:00Z","url":"u2"},
+        {"databaseId":102,"author":{"login":"me"},"body":"because","createdAt":"2026-09-02T00:00:00Z","url":"u3"}]}},
+      {"id":"T3","isResolved":true,"isOutdated":false,"path":"c.ts","line":1,"comments":{"pageInfo":{"hasNextPage":false},"nodes":[
+        {"databaseId":150,"author":{"login":"alice"},"body":"nit","createdAt":"2026-09-03T00:00:00Z","url":"u4"}]}},
+      {"id":"T4","isResolved":false,"isOutdated":false,"path":"d.ts","line":2,"comments":{"pageInfo":{"hasNextPage":false},"nodes":[
+        {"databaseId":160,"author":null,"body":"from a deleted user","createdAt":"2026-09-04T00:00:00Z","url":"u5"}]}}]},
+    "reviews":{"pageInfo":{"hasNextPage":false},"nodes":[{"databaseId":9,"author":{"login":"alice"},"state":"COMMENTED","submittedAt":"2026-09-03T00:00:00Z","body":""}]},
+    "comments":{"pageInfo":{"hasNextPage":false},"nodes":[]}}}}}'
+}
+
+threads_open_counts_unanswered_only() {
+  seed_threads
+  run "$BIN/ccm-pr-threads" 7
+  check "$(jqval .open_thread_count),$(jqval '[.threads[] | select(.open) | .id] | join(",")')" "2,T1,T4"
+  check "$(jqval .max_review_comment_id),$(jqval .new_comment_count),$(jqval .truncated)" "160,4,false"
+}
+
+threads_since_id_marks_new() {
+  seed_threads
+  run "$BIN/ccm-pr-threads" 7 --since-id 120
+  check "$(jqval .new_comment_count),$(jqval '[.threads[] | select(.has_new) | .id] | join(",")')" "2,T3,T4"
+}
+
+threads_graphql_error() {
+  fx_err graphql 'HTTP 502' 1
+  run "$BIN/ccm-pr-threads" 7
+  check "$RC" "3"
+}
+
 # ---- run -------------------------------------------------------------------
 
-for fn in $(declare -F | awk '{print $3}' | grep -E '^(context|ci|merge_gate|guard|post)_'); do
+for fn in $(declare -F | awk '{print $3}' | grep -E '^(context|ci|merge_gate|guard|post|stop|threads)_'); do
   t "$fn" "$fn"
 done
 
