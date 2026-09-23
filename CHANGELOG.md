@@ -2,6 +2,24 @@
 
 All notable changes to ccmagic are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.11.0] — 2026-09
+
+### Added
+
+- `bin/ccm-validate`: runs `format`, `lint`, `types`, `test`, and `build`, one command per check, and uses the command's exit code as the verdict, with no `||` fallbacks. Commands come from `validate_<check>` config keys (`none` disables a check) or are detected from `package.json` scripts (with the lockfile's package manager), `Makefile` targets, `go.mod`, `Cargo.toml`, or configured `pyproject.toml` tools. Each check runs under `timeout` (or `gtimeout`) with `validate_timeout_seconds` (default 600). `--only` runs a subset and `--list` prints the plan. Exit 0 pass, 1 fail, 2 nothing to run.
+- Config keys `validate_format`, `validate_lint`, `validate_types`, `validate_test`, `validate_build`, and `validate_timeout_seconds`.
+
+### Changed
+
+- `/ccmagic:validate` runs `ccm-validate --list`, then one `ccm-validate --only <check>` call per check, and fills its report from the JSON. The autonomous handshake is `done` exactly when every check that ran passed (or nothing was configured) and otherwise names the failed checks. Coverage, security, and docs checks stay optional and interactive and never affect the verdict. The unimplemented `.validation.json` file is gone in favor of the `validate_*` keys.
+- `/ccmagic:test` runs the full suite with `ccm-validate --only test`; pattern, `--affected`, and coverage runs still use `framework-commands.md`.
+- `work-ticket`, `review-ticket`, `pr`, `pr-feedback`, and `auto-ticket` Step 0 read config, ticket ID, and base branch from `ccm-context` instead of copies of that logic in prose. MCP probing and prompt-relay transport detection stay in the skills. `pr` now diffs against the target branch instead of a hard-coded `main`.
+- `doctor` checks for `bin/ccm-validate` and reports whether a `timeout` binary is available.
+
+### Fixed
+
+- `tests/run.sh` ran each test inside an `if` condition, where bash ignores `set -e`, so a test passed whenever its last command did, even if an earlier `check` failed. Tests now run with `set -e` in effect, and the output capture in `run` and the hook helpers no longer aborts on a non-zero exit.
+
 ## [3.10.0] — 2026-09
 
 ### Added

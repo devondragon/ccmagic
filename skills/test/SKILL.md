@@ -1,7 +1,7 @@
 ---
 name: test
 user-invocable: true
-allowed-tools: Read(*), Bash(*), Glob(*), Grep(*), Task(*), TodoWrite(*)
+allowed-tools: Read(*), Bash(*), Bash(${CLAUDE_SKILL_DIR}/../../bin/ccm-validate *), Glob(*), Grep(*), Task(*), TodoWrite(*)
 description: Run tests with framework auto-detection, smart selection, coverage analysis, and failure diagnosis
 argument-hint: "[test-pattern] [--coverage] [--watch] [--affected]"
 model: sonnet
@@ -27,30 +27,22 @@ Parse `$ARGUMENTS` to determine test mode and options:
 
 Multiple flags can be combined: `--affected --coverage src/auth`
 
-## Step 1: Detect Testing Framework
+## Step 1: Resolve the Test Command
 
-Load `${CLAUDE_SKILL_DIR}/framework-commands.md` for comprehensive command reference.
-
-Check for framework configuration files:
+The full-suite command comes from `ccm-validate`, the same script `/ccmagic:validate` uses:
 
 ```bash
-ls -la package.json vitest.config.* jest.config.* playwright.config.* cypress.config.* \
-  pytest.ini pyproject.toml setup.cfg tox.ini \
-  Cargo.toml go.mod Makefile Rakefile Gemfile \
-  pom.xml build.gradle build.gradle.kts 2>/dev/null
+"${CLAUDE_SKILL_DIR}/../../bin/ccm-validate" --list --only test
 ```
 
-### Detection priority:
-1. **package.json** `scripts` section — look for `test`, `test:unit`, `test:integration`, `test:e2e`, `test:coverage`
-2. **Dedicated config files** — `vitest.config.*`, `jest.config.*`, `playwright.config.*`, `pytest.ini`, etc.
-3. **Build tool configs** — `Cargo.toml`, `go.mod`, `pom.xml`, `build.gradle`
-4. **Makefile** — `test`, `test-unit`, `test-integration` targets
-5. **CI workflows** — `.github/workflows/*.yml` for test commands as last resort
+The `test` entry has the `command` and its `source`: `config` (the `validate_test` key in `ccmagic.local.md`) or `detected` (the `package.json` `test` script with the lockfile's package manager, a `Makefile` `test` target, `go test ./...`, `cargo test`, or `pytest` when it is configured in `pyproject.toml` or `pytest.ini`). Do not pick a different full-suite command yourself. The script is also on the Bash `PATH` as `ccm-validate`; use the bare name if the `${CLAUDE_SKILL_DIR}` path doesn't resolve.
 
-Record the detected framework, available test types (unit/integration/e2e), and coverage tool.
+If the check is `skipped` with reason "not configured":
+> "No test command detected. What command runs your tests? I can save it as `validate_test:` in `.claude/ccmagic.local.md` so `/ccmagic:test` and `/ccmagic:validate` both use it."
 
-If no framework is detected:
-> "No test framework detected. What command runs your tests? I can save it to CLAUDE.md for future use."
+If it is `skipped` with reason "disabled in config" (`validate_test: none`), say so and stop unless the user gives a pattern.
+
+For pattern, `--affected`, `--coverage`, and watch runs, which the script does not cover, load `${CLAUDE_SKILL_DIR}/framework-commands.md` and identify the framework from the resolved command and the config files (`vitest.config.*`, `jest.config.*`, `playwright.config.*`, `pytest.ini`, and so on). Record the framework, the available test types (unit/integration/e2e), and the coverage tool.
 
 ## Step 2: Determine Test Scope
 
@@ -105,18 +97,19 @@ Run test suites in parallel when they are independent:
 
 ### Running the tests
 
-Use the framework-specific commands from `${CLAUDE_SKILL_DIR}/framework-commands.md`.
+**Full suite** (no pattern, no `--affected`, no `--coverage`):
 
-For each test suite, capture:
-1. Exit code
-2. Full stdout/stderr output
-3. Timing information
+```bash
+"${CLAUDE_SKILL_DIR}/../../bin/ccm-validate" --only test
+```
 
-If `--coverage` is set, add the coverage flag from the framework reference.
+Give the call the maximum Bash tool timeout (600000 ms). The JSON's check `status` is the verdict (`passed` or `failed`, exit 0 or 1). A failed check carries `exit_code`, `duration_s`, the last 40 lines as `tail`, and the full output in the `log` file; read `log` for Step 4. A check that hit `validate_timeout_seconds` (default 600) fails with reason "timed out"; report it as a hang or a slow suite and suggest raising the key or adding a framework timeout flag.
+
+**Pattern, `--affected`, or `--coverage` runs:** use the framework-specific commands from `${CLAUDE_SKILL_DIR}/framework-commands.md`, one command per run, and read its exit code directly. Never chain commands with `||`. For each run, capture the exit code, full stdout/stderr, and timing.
 
 ### Timeout handling
 
-If a test suite runs longer than 120 seconds with no output, check if it is hung. Do not kill long-running e2e tests prematurely — check if the framework has a timeout flag and suggest adding one.
+If a suite run outside the script goes longer than 120 seconds with no output, check whether it is hung. Do not kill long-running e2e tests prematurely; check whether the framework has a timeout flag and suggest adding one.
 
 ## Step 4: Parse Results
 

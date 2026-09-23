@@ -82,10 +82,11 @@ For Linear and JIRA, surface this checklist in the report instead of trying to p
 
 ```bash
 if [ -n "$CLAUDE_PLUGIN_ROOT" ]; then
-  for f in hooks/pre-tool-use-guard.sh hooks/subagent-stop-handshake.sh hooks/post-tool-use-commit.sh bin/ccm-context bin/ccm-ci-status bin/ccm-merge-gate bin/ccm-pr-threads bin/ccm-pr-reply; do
+  for f in hooks/pre-tool-use-guard.sh hooks/subagent-stop-handshake.sh hooks/post-tool-use-commit.sh bin/ccm-context bin/ccm-ci-status bin/ccm-merge-gate bin/ccm-pr-threads bin/ccm-pr-reply bin/ccm-validate; do
     [ -f "$CLAUDE_PLUGIN_ROOT/$f" ] && echo "OK   $f" || echo "WARN $f missing — reinstall the ccmagic plugin"
   done
   command -v jq >/dev/null 2>&1 && echo "OK   jq installed (the hooks and bin/ scripts need it)" || echo "WARN jq not installed — the guard hook allows everything and the bin/ scripts fail without it (brew install jq)"
+  { command -v timeout || command -v gtimeout; } >/dev/null 2>&1 && echo "OK   timeout available (ccm-validate bounds each check)" || echo "INFO no timeout or gtimeout: ccm-validate runs checks without a time limit (brew install coreutils)"
 else
   echo "INFO CLAUDE_PLUGIN_ROOT not set — can't locate the plugin dir from here; the hooks ship with the plugin and run automatically"
 fi

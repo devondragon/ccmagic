@@ -11,13 +11,13 @@ You are running the **validate** step of an autonomous ticket run driven by `/cc
 
 Follow the **preloaded `validate` procedure** to run the project's checks. Use the grounding block in your task prompt for context.
 
-Report the outcome as a handshake: `done` when validation passes; `needs-human` when it fails with a one-line summary of the failing checks (the orchestrator decides whether to fix-and-retry or park). Follow the preloaded procedure directly; do not re-invoke `/ccmagic:validate` as a skill.
+Report the outcome as a handshake, following `ccm-validate`'s JSON: `done` when every check that ran passed or there was nothing to run; `needs-human` when any check failed, naming the failed checks (the orchestrator decides whether to fix-and-retry or park). Follow the preloaded procedure directly; do not re-invoke `/ccmagic:validate` as a skill.
 
 Return **only** this handshake as the last thing in your output, verbatim:
 
 ```
 status: done | needs-human
-reason: <one line — "validation passed" on done; the failing checks on needs-human>
+reason: <one line: "validation passed" or "no checks configured" on done; the failed check names on needs-human>
 follow_ups: []
 ```
 

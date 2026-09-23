@@ -1,7 +1,7 @@
 ---
 name: pr
 user-invocable: true
-allowed-tools: Read(*), Bash(git:*), Bash(gh:*), Bash(glab:*), Glob(*), Task(*)
+allowed-tools: Read(*), Bash(git:*), Bash(gh:*), Bash(glab:*), Bash(${CLAUDE_SKILL_DIR}/../../bin/ccm-context *), Glob(*), Task(*)
 description: Create pull request with platform detection and smart description generation
 argument-hint: "[--draft] (optional)"
 model: sonnet
@@ -21,15 +21,14 @@ This command uses built-in git tools and does not require MCP tools. All functio
 
 ## Reading Branching Configuration
 
+Run:
 ```bash
-# Load branching configuration
-if [ -f "context/branching.md" ]; then
-    echo "Loading branching configuration..."
-    # Parse strategy and base branch from branching.md
-else
-    echo "No branching configuration found. Using defaults (main branch)."
-fi
+"${CLAUDE_SKILL_DIR}/../../bin/ccm-context"
 ```
+
+It prints JSON with the current `branch`, the `ticket_id` parsed from it, the open `pr` for this branch (or null), and `base_branch`: the repo's default branch from `gh`, or `develop` (local or `origin/develop`) when `gh` can't answer, otherwise `main`. Use `base_branch` as `$BASE_BRANCH`; do not re-derive it. The script is also on the Bash `PATH` as `ccm-context` while the plugin is enabled; use the bare name if the `${CLAUDE_SKILL_DIR}` path doesn't resolve.
+
+`ccm-context` does not read the branching strategy. If `context/branching.md` exists, read the strategy (A, B, or C) from it as `$STRATEGY`, and if it names a base branch, that name overrides `base_branch`. Without the file, use Strategy B (direct to `$BASE_BRANCH`).
 
 ## PR Target Branch Determination
 
@@ -61,12 +60,12 @@ Run these checks before creating PR:
 
 1. **Extract from Commits**:
    ```bash
-   git log main..HEAD --oneline
+   git log $TARGET_BRANCH..HEAD --oneline
    ```
 
 2. **Analyze Changed Files**:
    ```bash
-   git diff main...HEAD --name-status
+   git diff $TARGET_BRANCH...HEAD --name-status
    ```
 
 3. **Check for Breaking Changes**:
@@ -124,8 +123,10 @@ Related to #[issue number]
 
 ### Determining Target Branch
 ```bash
-# Determine target branch based on current branch and strategy
-CURRENT_BRANCH=$(git branch --show-current)
+# Determine target branch based on current branch and strategy.
+# CURRENT_BRANCH is `branch` and BASE_BRANCH is `base_branch` from ccm-context
+# (or the base branch context/branching.md names).
+CURRENT_BRANCH={branch}
 
 if [[ "$STRATEGY" == *"A"* ]]; then
     # Hierarchical: task->feature or feature->base
@@ -190,7 +191,7 @@ If project uses conventional commits, parse them:
 - `perf:` -> Performance label
 
 ### 3. Task/Issue Linking
-Extract task IDs from branch name or commits:
+Take the task ID from `ticket_id` in the `ccm-context` output (parsed from the branch name), or from commits:
 - Branch: `feature/TASK-123-user-auth`
 - Commit: `[TASK-123] Add login functionality`
 

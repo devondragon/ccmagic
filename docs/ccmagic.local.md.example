@@ -78,6 +78,19 @@ max_feedback_passes: 3
 # ci_timeout_minutes: 30
 # ci_poll_interval_seconds: 60
 
+# --- Validation (/ccmagic:validate, /ccmagic:test, and the autonomous validate step) ---
+# bin/ccm-validate runs format, lint, types, test, and build checks, one command
+# each, and the command's exit code is the verdict. A validate_<check> key sets
+# the command; `none` disables the check; an absent key means detect it from
+# package.json scripts, Makefile targets, go.mod, Cargo.toml, or pyproject.toml.
+# validate_timeout_seconds bounds each check (a check that hits it fails).
+# validate_format: npm run format:check
+# validate_lint: npm run lint
+# validate_types: npm run typecheck
+# validate_test: npm test
+# validate_build: none
+# validate_timeout_seconds: 600
+
 # --- Per-step execution (used by /ccmagic:auto-ticket) ---
 # Each lifecycle step always runs in its own forked subagent.
 # Per-step model (defaults shown = the Balanced mapping; set only to override):
@@ -114,6 +127,8 @@ Copy this file to **`.claude/ccmagic.local.md`** in your project root and edit t
 | `max_validate_attempts` | Cap on local `/ccmagic:validate` fix attempts in an autonomous run before parking. | `2` |
 | `ci_timeout_minutes` | Max minutes to wait for CI to settle before parking on timeout. | `30` |
 | `ci_poll_interval_seconds` | Interval for the `gh pr checks --watch` CI wait in an autonomous run. | `60` |
+| `validate_format`, `validate_lint`, `validate_types`, `validate_test`, `validate_build` | Command for that `ccm-validate` check; `none` disables it. | detected from the project manifest |
+| `validate_timeout_seconds` | Per-check time limit for `ccm-validate`; a check that hits it fails as "timed out". | `600` |
 | `model_<step>` | Per-step model override (`model_work_ticket` … `model_push`). | Balanced mapping |
 
 Every key above also has effect from a **user-level** `~/.claude/ccmagic.local.md` — the project file (this one) takes precedence over the user file, and both override the built-in defaults. Put personal defaults you want in every project (e.g. a longer `ci_timeout_minutes`) in the user file; override them per-repo here.

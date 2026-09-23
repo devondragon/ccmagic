@@ -125,6 +125,8 @@ ccmagic/
 ├── bin/
 │   ├── ccm-lib.sh             # shared helpers (sourced; config parsing)
 │   └── ccm-*                  # deterministic helpers skills call; print JSON
+│                              # (context, ci-status, merge-gate, pr-threads,
+│                              #  pr-reply, validate)
 ├── hooks/
 │   ├── hooks.json             # PreToolUse guard, SubagentStop handshake, PostToolUse commit format
 │   ├── pre-tool-use-guard.sh  # merge gate, force push, secrets, commit format

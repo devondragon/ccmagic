@@ -22,7 +22,13 @@ CCM_CONFIG_DEFAULTS='{
   "max_review_fix_passes": "3",
   "max_validate_attempts": "2",
   "ci_timeout_minutes": "30",
-  "ci_poll_interval_seconds": "60"
+  "ci_poll_interval_seconds": "60",
+  "validate_timeout_seconds": "600",
+  "validate_format": "",
+  "validate_lint": "",
+  "validate_types": "",
+  "validate_test": "",
+  "validate_build": ""
 }'
 
 # Print the frontmatter of a markdown file as a JSON object of string values.

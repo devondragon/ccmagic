@@ -1,0 +1,225 @@
+#!/usr/bin/env bash
+# ccm-validate: run the project's format, lint, types, test, and build checks, as JSON.
+#
+# Usage: ccm-validate [--only CHECK[,CHECK...]] [--list]
+#
+#   --only   run only these checks (format, lint, types, test, build)
+#   --list   print the resolved commands without running them
+#
+# Each check has at most one command, and its exit code is the verdict. The
+# command comes from config key validate_<check> (a value of `none` disables
+# the check), or, when the key is absent, from detection: package.json scripts
+# (run with pnpm, yarn, or npm by lockfile), Makefile targets, go.mod,
+# Cargo.toml, or pyproject.toml tools that are configured. A check with no
+# command is skipped as "not configured".
+#
+# Each command runs from the repo root under `timeout` (or `gtimeout`) with
+# validate_timeout_seconds (default 600); a check that hits it fails as
+# "timed out". With neither binary installed, checks run unbounded and the
+# output says so in `note`. Full output goes to a log file under the git dir;
+# a failed check also carries its last 40 lines as `tail`.
+#
+# Output: {status, checks: [{name, command, source, status, exit_code,
+# duration_s, log, reason?, tail?}]}
+#
+# Status values and exit codes:
+#   pass            0  every check that ran passed
+#   fail            1  at least one check failed or timed out
+#   nothing-to-run  2  every check was skipped
+#   listed          0  (--list) at least one check would run
+#   (not a git repository 3, usage error 4)
+
+set -euo pipefail
+# shellcheck source=bin/ccm-lib.sh
+. "$(dirname "${BASH_SOURCE[0]}")/ccm-lib.sh"
+
+ALL_CHECKS="format lint types test build"
+
+only="" list=false
+while [ $# -gt 0 ]; do
+  case $1 in
+    --only) only=${2:-}; [ -n "$only" ] || { echo "ccm-validate: --only needs a value" >&2; exit 4; }; shift ;;
+    --list) list=true ;;
+    -h|--help) sed -n '2,30p' "$0"; exit 0 ;;
+    *) echo "ccm-validate: unknown argument $1" >&2; exit 4 ;;
+  esac
+  shift
+done
+
+checks=$ALL_CHECKS
+if [ -n "$only" ]; then
+  checks=""
+  for c in ${only//,/ }; do
+    case " $ALL_CHECKS " in
+      *" $c "*) checks="$checks $c" ;;
+      *) echo "ccm-validate: unknown check '$c' (expected one of: $ALL_CHECKS)" >&2; exit 4 ;;
+    esac
+  done
+fi
+
+if ! root=$(git rev-parse --show-toplevel 2>/dev/null); then
+  echo '{"error":"not a git repository"}'
+  exit 3
+fi
+cd "$root"
+
+config=$(ccm_config_json)
+timeout_s=$(jq -r '.validate_timeout_seconds' <<<"$config")
+case $timeout_s in
+  ''|*[!0-9]*) echo "ccm-validate: validate_timeout_seconds must be a whole number, got '$timeout_s'" >&2; exit 4 ;;
+esac
+
+# ---- detection -------------------------------------------------------------
+
+pm=npm
+if [ -f pnpm-lock.yaml ]; then pm=pnpm; elif [ -f yarn.lock ]; then pm=yarn; fi
+
+pkg_script() {
+  [ -f package.json ] || return 1
+  jq -e --arg s "$1" '.scripts[$s] // empty' package.json >/dev/null 2>&1
+}
+
+make_target() {
+  [ -f Makefile ] || return 1
+  grep -Eq "^$1[[:space:]]*:" Makefile
+}
+
+# pyproject.toml tool is configured: a [tool.NAME] table or one of its files.
+py_tool() {
+  local name=$1; shift
+  [ -f pyproject.toml ] || return 1
+  grep -Eq "^\[tool\.$name([].])" pyproject.toml && return 0
+  local f
+  for f in "$@"; do [ -f "$f" ] && return 0; done
+  return 1
+}
+
+# Print the detected command for a check, or nothing.
+detect() {
+  local check=$1 s
+  case $check in
+    format) pkg_script format:check && { echo "$pm run format:check"; return; } ;;
+    lint) pkg_script lint && { echo "$pm run lint"; return; } ;;
+    types) for s in typecheck type-check; do pkg_script "$s" && { echo "$pm run $s"; return; }; done ;;
+    test) pkg_script test && { echo "$pm run test"; return; } ;;
+    build) pkg_script build && { echo "$pm run build"; return; } ;;
+  esac
+  case $check in
+    format) make_target format-check && { echo "make format-check"; return; } ;;
+    types) for s in typecheck type-check; do make_target "$s" && { echo "make $s"; return; }; done ;;
+    *) make_target "$check" && { echo "make $check"; return; } ;;
+  esac
+  if [ -f go.mod ]; then
+    # shellcheck disable=SC2016 # $out is expanded by the bash -c that runs it
+    case $check in
+      format) echo 'out=$(gofmt -l .) && printf "%s" "$out" && test -z "$out"'; return ;;
+      lint) echo 'go vet ./...'; return ;;
+      test) echo 'go test ./...'; return ;;
+      build) echo 'go build ./...'; return ;;
+    esac
+  fi
+  if [ -f Cargo.toml ]; then
+    case $check in
+      format) echo 'cargo fmt -- --check'; return ;;
+      lint) echo 'cargo clippy -- -D warnings'; return ;;
+      test) echo 'cargo test'; return ;;
+      build) echo 'cargo build'; return ;;
+    esac
+  fi
+  case $check in
+    format) py_tool ruff ruff.toml .ruff.toml && { echo 'ruff format --check'; return; } ;;
+    lint) py_tool ruff ruff.toml .ruff.toml && { echo 'ruff check'; return; } ;;
+    types) py_tool mypy mypy.ini .mypy.ini && { echo 'mypy .'; return; } ;;
+    test) py_tool 'pytest' pytest.ini && { echo 'pytest'; return; } ;;
+  esac
+  return 0
+}
+
+# ---- resolve and run -------------------------------------------------------
+
+timeout_bin=""
+if command -v timeout >/dev/null 2>&1; then
+  timeout_bin=timeout
+elif command -v gtimeout >/dev/null 2>&1; then
+  timeout_bin=gtimeout
+fi
+
+logdir=""
+results=()
+ran=0 failed=0
+
+for check in $checks; do
+  cmd=$(jq -r --arg k "validate_$check" '.[$k] // ""' <<<"$config")
+  source=config
+  if [ -z "$cmd" ]; then
+    cmd=$(detect "$check")
+    source=detected
+  fi
+
+  if [ "$cmd" = none ]; then
+    results+=("$(jq -n --arg n "$check" \
+      '{name: $n, command: null, source: "config", status: "skipped", reason: "disabled in config"}')")
+    continue
+  fi
+  if [ -z "$cmd" ]; then
+    results+=("$(jq -n --arg n "$check" \
+      '{name: $n, command: null, source: null, status: "skipped", reason: "not configured"}')")
+    continue
+  fi
+
+  ran=$((ran + 1))
+  if [ "$list" = true ]; then
+    results+=("$(jq -n --arg n "$check" --arg c "$cmd" --arg s "$source" \
+      '{name: $n, command: $c, source: $s, status: "planned"}')")
+    continue
+  fi
+
+  [ -n "$logdir" ] || { logdir="$(ccm_state_dir)/validate"; mkdir -p "$logdir"; }
+  log="$logdir/$check.log"
+  start=$(date +%s)
+  set +e
+  if [ -n "$timeout_bin" ]; then
+    "$timeout_bin" --kill-after=10 "$timeout_s" bash -c "$cmd" >"$log" 2>&1 </dev/null
+  else
+    bash -c "$cmd" >"$log" 2>&1 </dev/null
+  fi
+  rc=$?
+  set -e
+  duration=$(($(date +%s) - start))
+
+  if [ "$rc" -eq 0 ]; then
+    results+=("$(jq -n --arg n "$check" --arg c "$cmd" --arg s "$source" --arg l "$log" \
+      --argjson d "$duration" \
+      '{name: $n, command: $c, source: $s, status: "passed", exit_code: 0, duration_s: $d, log: $l}')")
+  else
+    failed=$((failed + 1))
+    reason=""
+    # timeout exits 124 on SIGTERM and 137 when --kill-after had to SIGKILL.
+    if [ -n "$timeout_bin" ] && { [ "$rc" -eq 124 ] || [ "$rc" -eq 137 ]; }; then
+      reason="timed out after ${timeout_s}s"
+    fi
+    results+=("$(jq -n --arg n "$check" --arg c "$cmd" --arg s "$source" --arg l "$log" \
+      --argjson rc "$rc" --argjson d "$duration" --arg r "$reason" --arg tail "$(tail -n 40 "$log")" \
+      '{name: $n, command: $c, source: $s, status: "failed", exit_code: $rc, duration_s: $d, log: $l}
+       + (if $r == "" then {} else {reason: $r} end) + {tail: $tail}')")
+  fi
+done
+
+if [ "$ran" -eq 0 ]; then
+  status=nothing-to-run rc=2
+elif [ "$list" = true ]; then
+  status=listed rc=0
+elif [ "$failed" -gt 0 ]; then
+  status=fail rc=1
+else
+  status=pass rc=0
+fi
+
+note=""
+if [ -z "$timeout_bin" ] && [ "$ran" -gt 0 ]; then
+  note="neither timeout nor gtimeout is installed (brew install coreutils), so checks run without a time limit"
+fi
+
+printf '%s\n' "${results[@]}" | jq -s --arg status "$status" --arg note "$note" --argjson t "$timeout_s" \
+  '{status: $status, timeout_seconds: $t, checks: .} + (if $note == "" then {} else {note: $note} end)'
+exit "$rc"
