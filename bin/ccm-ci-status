@@ -20,7 +20,9 @@
 # App-authored check runs and gets HTTP 403 there, so on 403 (or when the
 # Checks API shows nothing) it reads Actions runs and legacy commit statuses
 # for the head SHA instead. That fallback cannot see third-party App check
-# runs; if it also fails the status is `unreadable`.
+# runs; if it also fails the status is `unreadable`. When check runs are hidden
+# (403) and nothing else is found, `no-ci` needs branch protection to be
+# readable and show no required checks; otherwise the status is `unreadable`.
 #
 # --watch polls until the status leaves pending/not-registered. One call never
 # runs longer than --max-call-seconds (default 540, under the Bash tool's
@@ -52,6 +54,10 @@ done
 [ -n "$interval" ] || interval=$(ccm_config_get ci_poll_interval_seconds)
 
 slug=$(ccm_repo_slug)
+# Set when `gh pr checks` returned a 403: App-authored check runs (including
+# third-party CI) are invisible to this token, so "nothing found" can't prove
+# there is no CI.
+checks_hidden=false
 errf=$(mktemp)
 trap 'rm -f "$errf"' EXIT
 
@@ -97,7 +103,9 @@ no_checks_verdict() {
       required=false
     fi
   fi
-  if [ "$has_workflows" = false ] && [ "$required" != true ]; then
+  if [ "$has_workflows" = false ] && [ "$required" = unknown ] && [ "$checks_hidden" = true ]; then
+    result unreadable none "check runs are not readable with this token (HTTP 403) and branch protection on $base could not be read, so CI can't be ruled out"
+  elif [ "$has_workflows" = false ] && [ "$required" != true ]; then
     result no-ci none "no workflow files and no required status checks on $base"
   else
     code=$([ "$has_workflows" = true ] && echo "workflow files exist" || echo "required status checks exist")
@@ -170,6 +178,7 @@ snapshot() {
       return
     fi
     if grep -qiE 'HTTP 403|Resource not accessible' "$errf"; then
+      checks_hidden=true
       actions_verdict
       return
     fi

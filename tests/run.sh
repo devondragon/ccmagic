@@ -75,7 +75,7 @@ hook() {
   local input
   input=$(jq -n --arg c "$1" --arg a "${2:-}" --arg cwd "$PWD" \
     '{tool_name: "Bash", tool_input: {command: $c}, cwd: $cwd} + (if $a == "" then {} else {agent_type: $a} end)')
-  OUT=$(printf '%s' "$input" | bash "$HOOKS/pre-tool-use-guard.sh" 2>"$T/stderr")
+  OUT=$(printf '%s' "$input" | "${HOOK_BASH:-bash}" "$HOOKS/pre-tool-use-guard.sh" 2>"$T/stderr")
   RC=$?
 }
 
@@ -210,6 +210,26 @@ ci_no_ci_when_no_workflows_and_unprotected() {
   fx_err protection 'gh: Branch not protected (HTTP 404)' 1
   run "$BIN/ccm-ci-status" 7
   check "$(jqval .status),$RC" "no-ci,0"
+}
+
+ci_hidden_checks_and_unreadable_protection_fail_closed() {
+  pr_open
+  fx_err pr-checks 'Resource not accessible by personal access token (HTTP 403)' 1
+  fx run-list '[]'
+  fx status '{"state":"pending","total_count":0,"statuses":[]}'
+  fx_err protection 'Resource not accessible by personal access token (HTTP 403)' 1
+  run "$BIN/ccm-ci-status" 7
+  check "$(jqval .status),$RC" "unreadable,3"
+}
+
+ci_hidden_checks_but_unprotected_branch_is_no_ci() {
+  pr_open
+  fx_err pr-checks 'HTTP 403' 1
+  fx run-list '[]'
+  fx status '{"state":"pending","total_count":0,"statuses":[]}'
+  fx_err protection 'gh: Branch not protected (HTTP 404)' 1
+  run "$BIN/ccm-ci-status" 7
+  check "$(jqval .status)" "no-ci"
 }
 
 ci_not_registered_when_workflows_exist() {
