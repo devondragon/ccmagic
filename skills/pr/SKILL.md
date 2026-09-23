@@ -58,6 +58,8 @@ Run these checks before creating PR:
 
 ### Automatic Description Building
 
+`$TARGET_BRANCH` is set under *Determining Target Branch* below; determine it before running these commands.
+
 1. **Extract from Commits**:
    ```bash
    git log $TARGET_BRANCH..HEAD --oneline

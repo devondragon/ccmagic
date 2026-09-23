@@ -103,7 +103,7 @@ Run test suites in parallel when they are independent:
 "${CLAUDE_SKILL_DIR}/../../bin/ccm-validate" --only test
 ```
 
-Give the call the maximum Bash tool timeout (600000 ms). The JSON's check `status` is the verdict (`passed` or `failed`, exit 0 or 1). A failed check carries `exit_code`, `duration_s`, the last 40 lines as `tail`, and the full output in the `log` file; read `log` for Step 4. A check that hit `validate_timeout_seconds` (default 600) fails with reason "timed out"; report it as a hang or a slow suite and suggest raising the key or adding a framework timeout flag.
+Give the call the maximum Bash tool timeout (600000 ms). The JSON's check `status` is the verdict: `passed` (exit 0) or `failed` (exit 1). Exit 2 with top-level `status: nothing-to-run` means the test check was `skipped`; handle it as in Step 1 by its `reason` ("not configured": ask for the command; "disabled in config": say so and stop), and do not report it as a pass. A failed check carries `exit_code`, `duration_s`, the last 40 lines as `tail`, and the full output in the `log` file; read `log` for Step 4. A check that hit `validate_timeout_seconds` (default 600) fails with reason "timed out"; report it as a hang or a slow suite and suggest raising the key or adding a framework timeout flag.
 
 **Pattern, `--affected`, or `--coverage` runs:** use the framework-specific commands from `${CLAUDE_SKILL_DIR}/framework-commands.md`, one command per run, and read its exit code directly. Never chain commands with `||`. For each run, capture the exit code, full stdout/stderr, and timing.
 
