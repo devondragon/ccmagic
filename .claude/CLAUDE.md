@@ -122,9 +122,16 @@ ccmagic/
 │   └── <name>/SKILL.md        # Skill directories, each with SKILL.md
 ├── agents/
 │   └── auto-*.md              # per-step wrapper agents for auto-ticket
+├── bin/
+│   ├── ccm-lib.sh             # shared helpers (sourced; config parsing)
+│   └── ccm-*                  # deterministic helpers skills call; print JSON
 ├── hooks/
-│   ├── hooks.json             # Hook manifest (PostToolUse → commit format check)
+│   ├── hooks.json             # PreToolUse guard + PostToolUse commit-format check
+│   ├── pre-tool-use-guard.sh
 │   └── post-tool-use-commit.sh
+├── tests/
+│   ├── run.sh                 # plain-bash tests for bin/ and hooks/
+│   └── stubs/gh               # gh stub fed recorded API output
 ├── docs/
 │   └── ccmagic.local.md.example  # Template for per-project config
 ├── .claude/CLAUDE.md          # ← you are here (dev notes + conventions)
@@ -151,6 +158,10 @@ context: fork                  # For heavy skills (subagent isolation)
 - Do **not** use `disable-model-invocation: true` — it's broken for plugin skills (see [#22345](https://github.com/anthropics/claude-code/issues/22345), [#24042](https://github.com/anthropics/claude-code/issues/24042)). Re-evaluate when fixed upstream.
 
 ## Testing locally
+
+Scripts and hooks: `bash tests/run.sh` (add a case there for any change to `bin/` or `hooks/`), and `shellcheck -x bin/ccm-* hooks/*.sh`. CI runs both.
+
+When a rule has exactly one right answer (a CI verdict, a config value, a merge precondition), put it in a `bin/ccm-*` script or a hook, and have the skill call the script and act on its JSON. Keep judgment in the skill. Skills reference scripts as `"${CLAUDE_SKILL_DIR}/../../bin/ccm-<name>"` and grant that path in `allowed-tools`.
 
 ```bash
 # Test the plugin locally

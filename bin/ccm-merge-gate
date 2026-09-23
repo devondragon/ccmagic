@@ -1,0 +1,75 @@
+#!/usr/bin/env bash
+# ccm-merge-gate: decide whether a PR may be merged, as JSON.
+#
+# Usage: ccm-merge-gate [PR]    (defaults to the current branch's PR)
+#
+# The gate passes only when all of these hold:
+#   - the PR is OPEN
+#   - GitHub reports it MERGEABLE (UNKNOWN is re-read a few times, then blocks)
+#   - ccm-ci-status reports green or no-ci
+#   - no reviewer's latest review is CHANGES_REQUESTED
+# A missing approval is a warning, not a blocker.
+#
+# Exit codes: 0 pass, 1 blocked, 3 cannot read the PR, 4 usage error.
+# Output: {pass, pr, url, base, head, blockers: [..], warnings: [..], ci: {..}}
+
+set -euo pipefail
+here=$(dirname "${BASH_SOURCE[0]}")
+
+pr=""
+for a in "$@"; do
+  case $a in
+    -h|--help) sed -n '2,14p' "$0"; exit 0 ;;
+    -*) echo "ccm-merge-gate: unknown flag $a" >&2; exit 4 ;;
+    *) pr=${a#\#} ;;
+  esac
+done
+
+fields=number,url,state,mergeable,baseRefName,headRefName,reviews
+view=""
+for _ in 1 2 3 4; do
+  view=$(gh pr view ${pr:+"$pr"} --json "$fields" 2>/dev/null) || view=""
+  [ -n "$view" ] || break
+  [ "$(jq -r .state <<<"$view")" = OPEN ] || break
+  [ "$(jq -r .mergeable <<<"$view")" = UNKNOWN ] || break
+  sleep "${CCM_MERGEABLE_RETRY_SECONDS:-3}"
+done
+if [ -z "$view" ]; then
+  jq -n --arg pr "${pr:-current branch}" '{pass: false, blockers: ["cannot read PR " + $pr]}'
+  exit 3
+fi
+pr=$(jq -r .number <<<"$view")
+
+ci=$("$here/ccm-ci-status" "$pr") || true
+
+result=$(jq -n --argjson v "$view" --argjson ci "$ci" '
+  # Latest review per reviewer. COMMENTED reviews do not change a stance.
+  ($v.reviews
+    | map(select(.state != "COMMENTED" and .state != "PENDING"))
+    | group_by(.author.login)
+    | map(sort_by(.submittedAt) | last)) as $latest
+  | ($latest | map(select(.state == "CHANGES_REQUESTED") | .author.login)) as $changes
+  | ($latest | map(select(.state == "APPROVED")) | length) as $approvals
+  | [
+      (if $v.state != "OPEN" then "PR is " + $v.state else empty end),
+      (if $v.mergeable == "CONFLICTING" then "merge conflicts with " + $v.baseRefName
+       elif $v.mergeable != "MERGEABLE" then "mergeability is " + $v.mergeable + " (GitHub has not computed it)"
+       else empty end),
+      (if ($ci.status | IN("green", "no-ci")) then empty
+       else "CI " + $ci.status + ": " + $ci.reason end),
+      (if ($changes | length) > 0 then "changes requested by " + ($changes | join(", ")) else empty end)
+    ] as $blockers
+  | {
+      pass: ($blockers | length == 0),
+      pr: $v.number, url: $v.url, base: $v.baseRefName, head: $v.headRefName,
+      blockers: $blockers,
+      warnings: (if $approvals == 0 then ["no approving review"] else [] end),
+      ci: $ci
+    }
+')
+
+echo "$result"
+if [ "$(jq -r .pass <<<"$result")" = true ]; then
+  exit 0
+fi
+exit 1

@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+# Test stub for gh. Answers from files in $GH_FIXTURES, named after the
+# subcommand: pr-view, pr-checks, run-list, repo-view, protection, status.
+# For each name: NAME.json is printed to stdout, NAME.err to stderr, and
+# NAME.rc (default 0) is the exit code. -q/--jq is applied with jq -r.
+# Every call is appended to $GH_FIXTURES/calls.log.
+set -u
+echo "$*" >>"$GH_FIXTURES/calls.log"
+name=""
+case "$1 ${2:-}" in
+  "pr view") name=pr-view ;;
+  "pr checks") name=pr-checks ;;
+  "run list") name=run-list ;;
+  "repo view") name=repo-view ;;
+  "api "*)
+    case $2 in
+      */protection/required_status_checks) name=protection ;;
+      */commits/*/status) name=status ;;
+    esac
+    ;;
+esac
+jqexpr=""
+prev=""
+for a in "$@"; do
+  if [ "$prev" = "-q" ] || [ "$prev" = "--jq" ]; then jqexpr=$a; fi
+  prev=$a
+done
+f="$GH_FIXTURES/$name"
+if [ -z "$name" ] || { [ ! -f "$f.json" ] && [ ! -f "$f.err" ]; }; then
+  echo "gh stub: no fixture for: $*" >&2
+  exit 1
+fi
+[ -f "$f.err" ] && cat "$f.err" >&2
+if [ -f "$f.json" ]; then
+  if [ -n "$jqexpr" ]; then jq -r "$jqexpr" "$f.json"; else cat "$f.json"; fi
+fi
+exit "$(cat "$f.rc" 2>/dev/null || echo 0)"

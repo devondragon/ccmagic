@@ -1,0 +1,128 @@
+#!/usr/bin/env bash
+# ccm-context: print the facts every ccmagic ticket skill starts from, as JSON.
+#
+# Usage: ccm-context [--offline] [TICKET-ID]
+#
+#   --offline   skip gh calls (no PR lookup, base branch from local refs only)
+#   TICKET-ID   use this ticket instead of parsing the current branch
+#
+# Output keys: repo_root, branch, checkout (primary|worktree), ticket_id,
+# ticket_source (arg|branch|null), ticket_kind (key|integer|null),
+# tracker_hint (linear|jira|github|linear-or-jira|null), gh_available,
+# base_branch, pr (object or null), config (resolved settings).
+#
+# MCP servers (Linear, Atlassian) are visible to the model, not to a shell, so
+# this script never decides the tracker on its own; tracker_hint only reports
+# what the config, the ticket ID shape, and ticket_url_base suggest.
+
+set -euo pipefail
+# shellcheck source=bin/ccm-lib.sh
+. "$(dirname "${BASH_SOURCE[0]}")/ccm-lib.sh"
+
+offline=false
+arg_ticket=""
+for a in "$@"; do
+  case $a in
+    --offline) offline=true ;;
+    -h|--help) sed -n '2,17p' "$0"; exit 0 ;;
+    -*) echo "ccm-context: unknown flag $a" >&2; exit 4 ;;
+    *) arg_ticket=$a ;;
+  esac
+done
+
+if ! repo_root=$(git rev-parse --show-toplevel 2>/dev/null); then
+  echo '{"error":"not a git repository"}'
+  exit 3
+fi
+
+config=$(ccm_config_json)
+regex=$(jq -r '.ticket_id_regex' <<<"$config")
+url_base=$(jq -r '.ticket_url_base' <<<"$config")
+tracker_cfg=$(jq -r '.tracker' <<<"$config")
+
+branch=$(git branch --show-current 2>/dev/null || true)
+
+checkout=primary
+if [ "$(git rev-parse --path-format=absolute --git-dir)" != "$(git rev-parse --path-format=absolute --git-common-dir)" ]; then
+  checkout=worktree
+fi
+
+# Ticket ID: explicit argument first, then the branch segment after the
+# prefix (feature/ENG-123-slug -> ENG-123, bugfix/42-slug -> 42).
+ticket_id="" ticket_source="" ticket_kind=""
+if [ -n "$arg_ticket" ]; then
+  ticket_id=${arg_ticket#\#}
+  ticket_source=arg
+elif [ -n "$branch" ]; then
+  rest=${branch#*/}
+  if [[ $rest =~ ^($regex) ]]; then
+    ticket_id=${BASH_REMATCH[1]}
+    ticket_source=branch
+  elif [[ $rest =~ ^([0-9]+)(-|$) ]]; then
+    ticket_id=${BASH_REMATCH[1]}
+    ticket_source=branch
+  fi
+fi
+if [ -n "$ticket_id" ]; then
+  if [[ $ticket_id =~ ^[0-9]+$ ]]; then
+    ticket_kind=integer
+  else
+    ticket_kind=key
+  fi
+fi
+
+tracker_hint=""
+case $tracker_cfg in
+  linear|github|jira) tracker_hint=$tracker_cfg ;;
+  *)
+    case $ticket_kind in
+      integer) tracker_hint=github ;;
+      key)
+        case $url_base in
+          *atlassian.net*) tracker_hint=jira ;;
+          *linear.app*) tracker_hint=linear ;;
+          *) tracker_hint=linear-or-jira ;;
+        esac
+        ;;
+    esac
+    ;;
+esac
+
+gh_available=false
+if [ "$offline" = false ] && command -v gh >/dev/null 2>&1; then
+  gh_available=true
+fi
+
+pr=null
+base_branch=""
+if [ "$gh_available" = true ]; then
+  if [ -n "$branch" ]; then
+    pr=$(gh pr view --json number,url,state,title,baseRefName,headRefName,headRefOid 2>/dev/null || echo null)
+  fi
+  base_branch=$(gh repo view --json defaultBranchRef -q .defaultBranchRef.name 2>/dev/null || true)
+fi
+if [ -z "$base_branch" ]; then
+  if git show-ref --verify --quiet refs/heads/develop || git show-ref --verify --quiet refs/remotes/origin/develop; then
+    base_branch=develop
+  else
+    base_branch=main
+  fi
+fi
+
+jq -n \
+  --arg repo_root "$repo_root" \
+  --arg branch "$branch" \
+  --arg checkout "$checkout" \
+  --arg ticket_id "$ticket_id" \
+  --arg ticket_source "$ticket_source" \
+  --arg ticket_kind "$ticket_kind" \
+  --arg tracker_hint "$tracker_hint" \
+  --argjson gh_available "$gh_available" \
+  --arg base_branch "$base_branch" \
+  --argjson pr "$pr" \
+  --argjson config "$config" \
+  'def nul: if . == "" then null else . end;
+   {$repo_root, branch: ($branch | nul), $checkout,
+    ticket_id: ($ticket_id | nul), ticket_source: ($ticket_source | nul),
+    ticket_kind: ($ticket_kind | nul), tracker_hint: ($tracker_hint | nul),
+    $gh_available, $base_branch, $pr, $config}'

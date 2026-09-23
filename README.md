@@ -252,9 +252,24 @@ The tracker-aware skills (`work-ticket`, `finish-ticket`, `review-ticket`, `auto
 
 Linear is reachable over two transports: its MCP server (the default — including inside Cyrus, above), or **prompt-relay**, the automatic fallback for the session-start connect window and for headless harnesses that inject the ticket with no Linear MCP at all — see [Headless runners (Cyrus)](#headless-runners-cyrus).
 
-## Commit-format hook
+## Hooks and scripts
 
-ccmagic ships a `PostToolUse` hook (`hooks/post-tool-use-commit.sh`) that validates every commit's subject line against the conventional-commit format documented in `.claude/CLAUDE.md`. It's **non-blocking** — it warns but never rejects, so it's safe to install even on repos with non-conventional commit history.
+Rules that have one right answer are enforced in code, not left to the skill text.
+
+**Scripts** (`bin/`, on the Bash `PATH` while the plugin is enabled; skills call them by path). Each prints JSON and exits non-zero when the answer is "no":
+
+| Script | Answers |
+|---|---|
+| `ccm-context` | Current branch, ticket ID parsed from it, open PR, worktree or primary checkout, base branch, and the resolved `ccmagic.local.md` config (project over user over defaults) |
+| `ccm-ci-status` | Is CI green for this PR: `green`, `no-ci`, `failed`, `pending`, `not-registered`, `unreadable`. Falls back to the Actions and commit-status APIs when a fine-grained PAT gets HTTP 403 on check runs. `--watch --wait-key K` waits with a deadline that holds across repeated calls |
+| `ccm-merge-gate` | May this PR merge: open, mergeable, CI green (or no CI), no reviewer whose latest review requests changes |
+
+**Hooks** (`hooks/hooks.json`):
+
+- `PreToolUse` guard (`hooks/pre-tool-use-guard.sh`): denies `gh pr merge` (and `gh api -X PUT .../merge`) while `ccm-merge-gate` fails, in autonomous runs (`ccmagic:auto-*` agents, or `autonomous: true`), and always when `merge_owner: reeve` in an autonomous run. Interactively it applies only with `merge_guard: on`, and the user can still merge past it.
+- `PostToolUse` commit-format check (`hooks/post-tool-use-commit.sh`): validates each commit subject against the conventional-commit format in `.claude/CLAUDE.md`. It warns and never rejects, so it's safe on repos with non-conventional history.
+
+Tests: `tests/run.sh` (plain bash, with a `gh` stub fed recorded API output). CI runs it and shellcheck on every PR.
 
 ## Migration from v2.x
 
@@ -292,9 +307,14 @@ ccmagic/
 │   └── <name>/SKILL.md
 ├── agents/
 │   └── auto-*.md              # per-step wrapper agents for auto-ticket
+├── bin/
+│   └── ccm-*                  # deterministic helpers the skills call
 ├── hooks/
 │   ├── hooks.json
+│   ├── pre-tool-use-guard.sh
 │   └── post-tool-use-commit.sh
+├── tests/
+│   └── run.sh                 # tests for bin/ and hooks/
 ├── docs/
 │   └── ccmagic.local.md.example
 ├── .claude/

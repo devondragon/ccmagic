@@ -57,6 +57,13 @@ needs_human_label: needs-human
 # merge_owner: self
 # merge_handoff_state: Awaiting Merge
 
+# Interactive merge guard. ccmagic's PreToolUse hook always enforces the merge
+# gate (bin/ccm-merge-gate: PR open, mergeable, CI green, no outstanding change
+# requests) on `gh pr merge` during autonomous runs. With `merge_guard: on` it
+# also enforces it interactively; you can still merge past it after saying so,
+# and the command is then prefixed with CCMAGIC_MERGE_OVERRIDE=1. Default: off.
+# merge_guard: off
+
 # Cap on /ccmagic:pr-feedback loop iterations during an autonomous run before the
 # ticket is parked for a human.
 max_feedback_passes: 3
