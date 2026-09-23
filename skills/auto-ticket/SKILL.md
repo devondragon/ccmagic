@@ -141,7 +141,7 @@ Everything this pass pushes is measured against `H`, so bot reviews triggered *b
     ```bash
     "${CLAUDE_SKILL_DIR}/../../bin/ccm-pr-threads" {PR_NUMBER} --since-id {H}
     ```
-    `new_comment_count` counts reviewer comments above `H` (for example Copilot or Claude bot reviews posted in response to this pass's push). `open_thread_count` counts unresolved threads whose last comment is not the PR author's. Threads that `pr-feedback` answered or declined end with the author's reply, so they don't count as open. Capturing `H` before the push is what lets a bot review posted in response to this push count as new rather than being mistaken for an already-handled thread. If `truncated` is true, say so in the run summary.
+    `new_comment_count` counts reviewer comments above `H` (for example Copilot or Claude bot reviews posted in response to this pass's push). `open_thread_count` counts threads that aren't handled. A thread is handled when it is resolved, or when its last comment is the author's `ccm-pr-reply` reply with a disposition marker (`fixed` counts only once the cited commit is verified on the branch and touches the thread's file). Autonomous `pr-feedback` replies that way, so the threads it fixed, declined, answered, or deferred don't count. A bare "will fix" reply does. Capturing `H` before the push is what lets a bot review posted in response to this push count as new rather than being mistaken for an already-handled thread. If `truncated` is true, say so in the run summary.
 
 **4d. Recompute "clean".** The pass is **clean** when **both** hold:
   - `open_thread_count` is 0, and

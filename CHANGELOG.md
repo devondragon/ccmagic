@@ -6,13 +6,14 @@ All notable changes to ccmagic are documented here. The format follows [Keep a C
 
 ### Added
 
-- `bin/ccm-pr-threads`: review threads (grouped, with resolved/outdated state and an `open` flag for threads still waiting on the author), reviews, and conversation comments from one GraphQL call. `--since-id H` marks reviewer comments above a high-water mark.
+- `bin/ccm-pr-threads`: review threads (grouped, with resolved/outdated state and an `open` flag), reviews, and conversation comments from one GraphQL call. `--since-id H` marks reviewer comments above a high-water mark. A thread is handled when resolved, or when the author's last reply carries a disposition marker; a `fixed` marker counts only when its commit is on the branch, newer than the review comment, and touches the thread's file. A bare "will fix" reply leaves the thread open.
+- `bin/ccm-pr-reply`: posts a thread reply with a disposition marker (`fixed`, `declined`, `answered`, `deferred`), refuses a `fixed` reply citing an unpushed commit, and resolves the thread for `fixed`.
 - SubagentStop hook (`hooks/subagent-stop-handshake.sh`): a `ccmagic:auto-*` step agent whose final message doesn't end with a valid status handshake is sent back once to add it, instead of the run parking with "produced no handshake". Plugin agents ignore `hooks:` in their own frontmatter, so it runs from `hooks/hooks.json` and filters on `agent_type`.
 
 ### Changed
 
 - `auto-ticket` Step 4 reads the high-water mark and new/open threads with `ccm-pr-threads`, and waits for CI with `ccm-ci-status --watch --wait-key {run_id}-pass{n}`. The wait's total is bounded by a deadline file, which replaces the instruction to count 10-minute watch cycles in working notes. "Clean" is now `open_thread_count == 0` plus a `green` or `no-ci` CI status.
-- `pr-feedback` Step 2 uses `ccm-pr-threads` instead of three REST calls plus thread reconstruction by `in_reply_to_id`.
+- `pr-feedback` Step 2 uses `ccm-pr-threads` instead of three REST calls plus thread reconstruction by `in_reply_to_id`. Autonomous `pr-feedback` now pushes before replying, and replies through `ccm-pr-reply`.
 
 ## [3.9.0] — 2026-09
 

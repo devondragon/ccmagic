@@ -1,0 +1,98 @@
+#!/usr/bin/env bash
+# ccm-pr-reply: reply to a PR review thread with a disposition marker, as JSON.
+#
+# Usage:
+#   ccm-pr-reply PR COMMENT_ID --disposition fixed --commit SHA --body TEXT
+#   ccm-pr-reply PR COMMENT_ID --disposition declined|answered --body TEXT
+#   ccm-pr-reply PR COMMENT_ID --disposition deferred --ticket ID --body TEXT
+#
+#   COMMENT_ID   any review comment in the thread; the reply goes to the thread
+#   --body -     read the body from stdin
+#
+# The reply ends with <!-- ccmagic:disposition=... -->, which ccm-pr-threads
+# reads to decide the thread is handled. For `fixed`, the commit must exist
+# locally and already be pushed (an ancestor of the branch's upstream), and
+# the thread is then resolved on GitHub. If resolving fails (for example a
+# token without pull-request write access) the reply still stands and
+# "resolved" is false; ccm-pr-threads still counts the verified marker.
+#
+# Output: {reply_id, thread_id, disposition, resolved}
+# Exit codes: 0 posted, 1 refused (bad commit, thread not found), 3 GitHub
+# error, 4 usage error.
+
+set -euo pipefail
+here=$(dirname "${BASH_SOURCE[0]}")
+# shellcheck source=bin/ccm-lib.sh
+. "$here/ccm-lib.sh"
+
+usage() { echo "ccm-pr-reply: $1" >&2; exit 4; }
+
+pr="" comment="" disposition="" commit="" ticket="" body="" have_body=false
+while [ $# -gt 0 ]; do
+  case $1 in
+    --disposition) disposition=${2:-}; shift ;;
+    --commit) commit=${2:-}; shift ;;
+    --ticket) ticket=${2:-}; shift ;;
+    --body) body=${2:-}; have_body=true; shift ;;
+    -h|--help) sed -n '2,21p' "$0"; exit 0 ;;
+    -*) usage "unknown flag $1" ;;
+    *) if [ -z "$pr" ]; then pr=${1#\#}; elif [ -z "$comment" ]; then comment=$1; else usage "unexpected argument $1"; fi ;;
+  esac
+  shift
+done
+
+[ -n "$pr" ] && [ -n "$comment" ] || usage "PR and COMMENT_ID are required"
+case $comment in ''|*[!0-9]*) usage "COMMENT_ID must be a number" ;; esac
+[ "$have_body" = true ] || usage "--body is required"
+[ "$body" = - ] && body=$(cat)
+
+marker=""
+case $disposition in
+  fixed)
+    [ -n "$commit" ] || usage "--disposition fixed needs --commit"
+    if ! full=$(git rev-parse --verify --quiet "$commit^{commit}"); then
+      jq -n --arg c "$commit" '{error: ("commit " + $c + " does not exist locally")}'; exit 1
+    fi
+    if ! git merge-base --is-ancestor "$full" "@{upstream}" 2>/dev/null; then
+      jq -n --arg c "$commit" '{error: ("commit " + $c + " is not pushed yet (not in the upstream branch); push before replying")}'; exit 1
+    fi
+    marker="<!-- ccmagic:disposition=fixed commit=$full -->"
+    ;;
+  declined|answered) marker="<!-- ccmagic:disposition=$disposition -->" ;;
+  deferred)
+    [ -n "$ticket" ] || usage "--disposition deferred needs --ticket"
+    case $ticket in *[!A-Za-z0-9#_-]*) usage "--ticket must be a ticket id like ENG-12 or 42" ;; esac
+    marker="<!-- ccmagic:disposition=deferred ticket=$ticket -->"
+    ;;
+  *) usage "--disposition must be fixed, declined, answered, or deferred" ;;
+esac
+
+threads=$("$here/ccm-pr-threads" "$pr") || { echo "$threads"; exit 3; }
+thread=$(jq --argjson c "$comment" '[.threads[] | select(any(.comments[]; .id == $c))] | first // empty' <<<"$threads")
+if [ -z "$thread" ]; then
+  jq -n --argjson c "$comment" '{error: ("no review thread on this PR contains comment " + ($c | tostring))}'
+  exit 1
+fi
+root=$(jq -r '.comments[0].id' <<<"$thread")
+thread_id=$(jq -r '.id' <<<"$thread")
+slug=$(ccm_repo_slug)
+
+if ! reply=$(gh api "repos/$slug/pulls/$pr/comments/$root/replies" -f body="$body
+
+$marker" 2>&1); then
+  jq -n --arg e "$reply" '{error: ("posting the reply failed: " + $e)}'
+  exit 3
+fi
+reply_id=$(jq -r '.id // empty' <<<"$reply" 2>/dev/null || true)
+
+resolved=false
+if [ "$disposition" = fixed ]; then
+  # shellcheck disable=SC2016  # GraphQL variable, not shell
+  if gh api graphql -f query='mutation($id: ID!) { resolveReviewThread(input: {threadId: $id}) { thread { isResolved } } }' \
+       -F id="$thread_id" --jq '.data.resolveReviewThread.thread.isResolved' 2>/dev/null | grep -qx true; then
+    resolved=true
+  fi
+fi
+
+jq -n --arg r "$reply_id" --arg t "$thread_id" --arg d "$disposition" --argjson resolved "$resolved" \
+  '{reply_id: ($r | tonumber? // null), thread_id: $t, disposition: $d, resolved: $resolved}'

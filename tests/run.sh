@@ -644,10 +644,11 @@ seed_threads() {
     "comments":{"pageInfo":{"hasNextPage":false},"nodes":[]}}}}}'
 }
 
-threads_open_counts_unanswered_only() {
+threads_open_counts_unhandled_threads() {
   seed_threads
   run "$BIN/ccm-pr-threads" 7
-  check "$(jqval .open_thread_count),$(jqval '[.threads[] | select(.open) | .id] | join(",")')" "2,T1,T4"
+  # T2 ends with an author reply but no disposition marker, so it stays open.
+  check "$(jqval .open_thread_count),$(jqval '[.threads[] | select(.open) | .id] | join(",")')" "3,T1,T2,T4"
   check "$(jqval .max_review_comment_id),$(jqval .new_comment_count),$(jqval .truncated)" "160,4,false"
 }
 
@@ -663,6 +664,106 @@ threads_since_id_must_be_numeric() {
   check "$RC" "4"
 }
 
+# Repo with base -> fix(a.ts) -> other(b.ts), pushed to a bare remote, and a
+# PR whose threads end with author replies carrying the given markers.
+# Usage: seed_marked_threads MARKER_T1 MARKER_T2
+seed_marked_threads() {
+  local g=(git -c user.email=t@t -c user.name=t)
+  echo 1 >a.ts; echo 1 >b.ts; git add a.ts b.ts; "${g[@]}" commit -qm "feat: base"
+  BASE=$(git rev-parse HEAD)
+  echo 2 >a.ts; "${g[@]}" commit -qam "fix: a"
+  FIX=$(git rev-parse HEAD)
+  echo 2 >b.ts; "${g[@]}" commit -qam "fix: b"
+  OTHER=$(git rev-parse HEAD)
+  git init -q --bare "$T/remote.git"
+  git remote add origin "$T/remote.git"
+  git push -q -u origin main
+  local m1=$1 m2=$2
+  fx graphql "$(jq -n --arg base "$BASE" --arg head "$OTHER" --arg m1 "$m1" --arg m2 "$m2" '
+    def c(id; who; body): {databaseId: id, author: {login: who}, body: body, createdAt: "2026-09-01T00:00:00Z", url: "u", originalCommit: {oid: $base}};
+    def th(id; path; comments): {id: id, isResolved: false, isOutdated: false, path: path, line: 1,
+      comments: {pageInfo: {hasNextPage: false}, nodes: comments}};
+    {data: {repository: {pullRequest: {number: 7, headRefOid: $head, author: {login: "me"},
+      reviewThreads: {pageInfo: {hasNextPage: false}, nodes: [
+        th("T1"; "a.ts"; [c(100; "bot"; "bug here"), c(101; "me"; "Done.\n\n" + $m1)]),
+        th("T2"; "a.ts"; [c(200; "bot"; "and here"), c(201; "me"; "Reply.\n\n" + $m2)])]},
+      reviews: {pageInfo: {hasNextPage: false}, nodes: []},
+      comments: {pageInfo: {hasNextPage: false}, nodes: []}}}}}')"
+}
+
+threads_unmarked_author_reply_stays_open() {
+  seed_marked_threads "will fix" "<!-- ccmagic:disposition=answered -->"
+  run "$BIN/ccm-pr-threads" 7
+  check "$(jqval '[.threads[] | .open] | join(",")'),$(jqval .open_thread_count)" "true,false,1"
+  check "$(jqval '.threads[1].disposition')" "answered"
+}
+
+threads_verified_fix_is_handled() {
+  seed_marked_threads "PLACEHOLDER" "<!-- ccmagic:disposition=deferred ticket=ENG-4 -->"
+  fx graphql "$(sed "s/PLACEHOLDER/<!-- ccmagic:disposition=fixed commit=$FIX -->/" "$GH_FIXTURES/graphql.json")"
+  run "$BIN/ccm-pr-threads" 7
+  check "$(jqval '.threads[0].fix_verified'),$(jqval '.threads[0].open'),$(jqval .open_thread_count)" "true,false,0"
+}
+
+threads_fix_touching_other_file_stays_open() {
+  seed_marked_threads "PLACEHOLDER" "<!-- ccmagic:disposition=declined -->"
+  fx graphql "$(sed "s/PLACEHOLDER/<!-- ccmagic:disposition=fixed commit=$OTHER -->/" "$GH_FIXTURES/graphql.json")"
+  run "$BIN/ccm-pr-threads" 7
+  check "$(jqval '.threads[0].fix_verified'),$(jqval '.threads[0].open')" "false,true"
+}
+
+threads_fix_older_than_comment_stays_open() {
+  seed_marked_threads "PLACEHOLDER" "<!-- ccmagic:disposition=declined -->"
+  fx graphql "$(sed "s/PLACEHOLDER/<!-- ccmagic:disposition=fixed commit=$BASE -->/" "$GH_FIXTURES/graphql.json")"
+  run "$BIN/ccm-pr-threads" 7
+  check "$(jqval '.threads[0].open')" "true"
+}
+
+threads_unknown_fix_commit_stays_open() {
+  seed_marked_threads "<!-- ccmagic:disposition=fixed commit=deadbeefdeadbeef -->" "<!-- ccmagic:disposition=declined -->"
+  run "$BIN/ccm-pr-threads" 7
+  check "$(jqval '.threads[0].fix_verified'),$(jqval '.threads[0].open')" "false,true"
+}
+
+threads_reviewer_reply_after_marker_reopens() {
+  seed_marked_threads "<!-- ccmagic:disposition=declined -->" "<!-- ccmagic:disposition=declined -->"
+  fx graphql "$(jq '.data.repository.pullRequest.reviewThreads.nodes[0].comments.nodes += [{databaseId: 102, author: {login: "bot"}, body: "I disagree", createdAt: "2026-09-02T00:00:00Z", url: "u", originalCommit: null}]' "$GH_FIXTURES/graphql.json")"
+  run "$BIN/ccm-pr-threads" 7
+  check "$(jqval '.threads[0].open'),$(jqval '.threads[0].disposition')" "true,null"
+}
+
+reply_fixed_posts_marker_and_resolves() {
+  seed_marked_threads "x" "y"
+  fx reply '{"id":555}'
+  fx graphql-resolve '{"data":{"resolveReviewThread":{"thread":{"isResolved":true}}}}'
+  run "$BIN/ccm-pr-reply" 7 101 --disposition fixed --commit "$FIX" --body "Fixed in this commit."
+  check "$(jqval .reply_id),$(jqval .thread_id),$(jqval .resolved),$RC" "555,T1,true,0"
+  grep -q "comments/100/replies" "$GH_FIXTURES/calls.log"
+  grep -q "ccmagic:disposition=fixed commit=$FIX" "$GH_FIXTURES/calls.log"
+}
+
+reply_fixed_refuses_unpushed_commit() {
+  seed_marked_threads "x" "y"
+  echo 3 >a.ts; git -c user.email=t@t -c user.name=t commit -qam "fix: local only"
+  run "$BIN/ccm-pr-reply" 7 100 --disposition fixed --commit "$(git rev-parse HEAD)" --body "Fixed."
+  check "$RC" "1"
+  [[ $(jqval .error) == *"not pushed"* ]]
+}
+
+reply_deferred_needs_ticket() {
+  seed_marked_threads "x" "y"
+  run "$BIN/ccm-pr-reply" 7 100 --disposition deferred --body "Later."
+  check "$RC" "4"
+}
+
+reply_declined_does_not_resolve() {
+  seed_marked_threads "x" "y"
+  fx reply '{"id":556}'
+  run "$BIN/ccm-pr-reply" 7 200 --disposition declined --body "Convention says otherwise."
+  check "$(jqval .resolved),$RC" "false,0"
+  ! grep -q resolveReviewThread "$GH_FIXTURES/calls.log"
+}
+
 threads_graphql_error() {
   fx_err graphql 'HTTP 502' 1
   run "$BIN/ccm-pr-threads" 7
@@ -671,7 +772,7 @@ threads_graphql_error() {
 
 # ---- run -------------------------------------------------------------------
 
-for fn in $(declare -F | awk '{print $3}' | grep -E '^(context|ci|merge_gate|guard|post|stop|threads)_'); do
+for fn in $(declare -F | awk '{print $3}' | grep -E '^(context|ci|merge_gate|guard|post|stop|threads|reply)_'); do
   t "$fn" "$fn"
 done
 

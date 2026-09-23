@@ -263,7 +263,8 @@ Rules that have one right answer are enforced in code, not left to the skill tex
 | `ccm-context` | Current branch, ticket ID parsed from it, open PR, worktree or primary checkout, base branch, and the resolved `ccmagic.local.md` config (project over user over defaults) |
 | `ccm-ci-status` | Is CI green for this PR: `green`, `no-ci`, `failed`, `pending`, `not-registered`, `unreadable`. Falls back to the Actions and commit-status APIs when a fine-grained PAT gets HTTP 403 on check runs. `--watch --wait-key K` waits with a deadline that holds across repeated calls |
 | `ccm-merge-gate` | May this PR merge: open, mergeable, CI green (or no CI), no reviewer whose latest review requests changes |
-| `ccm-pr-threads` | A PR's review threads (grouped, with `open` = unresolved and last word not the author's), reviews, and conversation comments; `--since-id H` marks reviewer comments newer than a high-water mark |
+| `ccm-pr-threads` | A PR's review threads (grouped, with an `open` flag), reviews, and conversation comments; `--since-id H` marks reviewer comments newer than a high-water mark. A thread is handled when resolved, or when the author's last reply carries a `ccm-pr-reply` disposition marker; a `fixed` marker counts only once its commit is verified on the branch and touches the thread's file |
+| `ccm-pr-reply` | Reply to a review thread with a disposition (`fixed --commit`, `declined`, `answered`, `deferred --ticket`); appends the marker, refuses an unpushed fix commit, and resolves the thread for `fixed` |
 
 **Hooks** (`hooks/hooks.json`):
 
