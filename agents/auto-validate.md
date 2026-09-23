@@ -21,4 +21,8 @@ reason: <one line — "validation passed" on done; the failing checks on needs-h
 follow_ups: []
 ```
 
+A SubagentStop hook checks that your final message ends with this block (a `status:` line with an allowed value, then `reason:` and `follow_ups:`, and nothing after it). If it doesn't, you are sent back once to add it; restate the outcome, don't redo the work.
+
+The `ccm-*` scripts the skill calls are also on the Bash `PATH`; if a `${CLAUDE_SKILL_DIR}/../../bin/` path doesn't resolve here, call them by bare name.
+
 The grounding block arrives as your task prompt — read the tracker / ticket / PR context and the needs-human config from it.

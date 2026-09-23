@@ -1,7 +1,7 @@
 ---
 name: pr-feedback
 user-invocable: true
-allowed-tools: Read(*), Bash(git:*, gh:*), Glob(*), Grep(*), Task(*), TodoWrite(*), AskUserQuestion(*), Edit(*), Skill(*)
+allowed-tools: Read(*), Bash(git:*, gh:*), Bash(${CLAUDE_SKILL_DIR}/../../bin/ccm-pr-threads *), Bash(${CLAUDE_SKILL_DIR}/../../bin/ccm-pr-reply *), Glob(*), Grep(*), Task(*), TodoWrite(*), AskUserQuestion(*), Edit(*), Skill(*)
 description: Review PR comments and plan fixes for valid concerns
 model: sonnet
 argument-hint: "[PR#]"
@@ -37,36 +37,27 @@ Collect into `{PROJECT_CONVENTIONS}`. These are used in Step 4 to evaluate wheth
 
 ## Step 2: Fetch PR Comments and Threads
 
-Retrieve all feedback in three categories:
+Retrieve all feedback with one call:
 
 ```bash
-# Review comments (line-level) — includes thread structure via in_reply_to_id
-gh api repos/{owner}/{repo}/pulls/{PR_NUMBER}/comments \
-  --jq '.[] | {id, body, path, line, original_line, diff_hunk, user: .user.login, created_at, updated_at, in_reply_to_id}'
-
-# PR conversation comments (general discussion)
-gh api repos/{owner}/{repo}/issues/{PR_NUMBER}/comments \
-  --jq '.[] | {id, body, user: .user.login, created_at}'
-
-# Reviews with state (APPROVED, CHANGES_REQUESTED, COMMENTED)
-gh pr view {PR_NUMBER} --json reviews \
-  --jq '.reviews[] | {author: .author.login, state, body}'
+"${CLAUDE_SKILL_DIR}/../../bin/ccm-pr-threads" {PR_NUMBER}
 ```
 
-### Thread Reconstruction
+(The script is also on the Bash `PATH` as `ccm-pr-threads` while the plugin is enabled; use the bare name if the `${CLAUDE_SKILL_DIR}` path doesn't resolve.)
 
-Group line-level comments into threads using `in_reply_to_id`:
-- A root comment (no `in_reply_to_id`) starts a thread
-- Replies chain onto the root
-- Read the **full thread** before evaluating any comment in it — earlier replies may already address the concern or provide context that changes the meaning
+It prints JSON with:
 
-### Identify the PR Author
+- `author`: the PR author's login.
+- `threads[]`: line-level review threads, already grouped, each with `id`, `path`, `line`, `is_resolved`, `is_outdated`, `open`, `disposition`, `fix_verified`, and `comments[]` in order (`id`, `author`, `by_author`, `created_at`, `url`, `body`). A thread is handled (`open: false`) when it is resolved, or when its last comment is the PR author's reply carrying a disposition marker from `ccm-pr-reply` (for `fixed`, only once the cited commit is verified on the branch). An author reply without a marker, such as "will fix", leaves the thread open.
+- `reviews[]`: review submissions with `state` (`APPROVED`, `CHANGES_REQUESTED`, `COMMENTED`) and `body`.
+- `issue_comments[]`: general PR conversation comments.
+- `truncated`: true if a page limit was hit (100 threads, 50 comments per thread). Say so in the report if it happens.
 
-```bash
-gh pr view {PR_NUMBER} --json author --jq '.author.login'
-```
+Read the **full thread** before evaluating any comment in it. Earlier replies may already address the concern or add context that changes its meaning.
 
-Filter out the PR author's own comments from the triage list (they are context, not feedback to address). Keep them visible in threads for context.
+Triage the reviewer comments, not the PR author's own (`by_author: true`). Keep the author's comments in view as thread context. Threads with `open: false` need no new action. A reviewer reply after the author's answer, or an unverified `fixed` marker, shows up as `open: true` and gets triaged again.
+
+When replying in autonomous mode, the thread's first comment `id` is the one to reply to (`gh api repos/{owner}/{repo}/pulls/{PR}/comments/{id}/replies`).
 
 ## Step 3: Classify Comment Severity
 
@@ -214,6 +205,8 @@ After presenting the plan, suggest validation steps:
 > 1. `/ccmagic:validate` — Run pre-commit checks to catch regressions
 > 2. `/ccmagic:test` — Run tests to verify fixes don't break existing behavior
 > 3. `gh pr view {PR_NUMBER} --comments` — Review to confirm all threads addressed
+>
+> When replying to review threads, use `ccm-pr-reply {PR} {comment_id} --disposition fixed|declined|answered|deferred ...` (see *Autonomous mode*, step 4). A plain reply leaves the thread counted as open by `/ccmagic:auto-ticket`.
 
 ## Autonomous mode
 
@@ -233,12 +226,22 @@ Absent all three, run the interactive plan-only path exactly as documented above
 
 ### What changes: triage → execute
 
-Run Steps 1–5 exactly as written (load conventions, fetch + reconstruct threads, classify, verify, detect conflicts, group). Then, instead of building a plan and stopping (Steps 6–7):
+Run Steps 1–5 exactly as written (load conventions, fetch threads, classify, verify, detect conflicts, group). Then, instead of building a plan and stopping (Steps 6–7), do these in order:
 
-- **address-now** → apply the fix with `Edit`, grouped by file per Steps 5–6.
-- **respond / decline / question** → post a reply on the thread (`gh api repos/{owner}/{repo}/pulls/{PR}/comments/{id}/replies -f body=...`, or an issue comment referencing the thread), using the response templates in `${CLAUDE_SKILL_DIR}/triage-guide.md`.
-- **defer / out-of-scope** → file **one follow-up ticket per item** in the active tracker (Linear via `mcp__*Linear*__save_issue`, GitHub via `gh issue create`, JIRA via the Atlassian MCP), link it back in a reply to the thread, and record its ID in `follow_ups`. **Under prompt-relay** (contract §7 `file_followup`): there is no ticket-creation API — instead, record a short description of the item in `follow_ups` (contract §3's handshake accepts "ticket ids or short descriptions") and reply on the thread noting that a follow-up was requested for a human to file. The orchestrator lists these under "Follow-ups to file" in its final summary.
-- Then **push**: invoke `/ccmagic:push` with the autonomous grounding block prepended (it commits the grouped fixes and pushes; if push returns `needs-human`, propagate that).
+1. **address-now** → apply the fix with `Edit`, grouped by file per Steps 5–6.
+2. **defer / out-of-scope** → file **one follow-up ticket per item** in the active tracker (Linear via `mcp__*Linear*__save_issue`, GitHub via `gh issue create`, JIRA via the Atlassian MCP) and record its ID in `follow_ups`. **Under prompt-relay** (contract §7 `file_followup`): there is no ticket-creation API — instead, record a short description of the item in `follow_ups` (contract §3's handshake accepts "ticket ids or short descriptions"); the reply in step 4 uses `--ticket requested`. The orchestrator lists these under "Follow-ups to file" in its final summary.
+3. **Push**: invoke `/ccmagic:push` with the autonomous grounding block prepended (it commits the grouped fixes and pushes; if push returns `needs-human`, propagate that and skip step 4). Replies come after the push because a `fixed` reply must cite a pushed commit.
+4. **Reply on every triaged thread with `ccm-pr-reply`**, using the response templates in `${CLAUDE_SKILL_DIR}/triage-guide.md` for the body. The script appends the disposition marker that `ccm-pr-threads` reads, replies to the thread's root comment, and resolves the thread for `fixed`:
+   ```bash
+   R="${CLAUDE_SKILL_DIR}/../../bin/ccm-pr-reply"   # or bare `ccm-pr-reply` on PATH
+   "$R" {PR} {comment_id} --disposition fixed    --commit {sha that fixed it} --body "..."
+   "$R" {PR} {comment_id} --disposition declined --body "..."
+   "$R" {PR} {comment_id} --disposition answered --body "..."
+   "$R" {PR} {comment_id} --disposition deferred --ticket {TICKET-ID} --body "..."
+   ```
+   Find the fixing commit with `git log --format=%H -1 -- {path}` after the push. The `--commit` must touch the thread's file; if the fix landed only in another file, cite a commit that touches the thread's file too, or reply `answered` and explain where the fix is. The thread then stays open for the orchestrator to see, which is the honest state. A non-zero exit means the reply was refused or failed; the thread stays open, and the orchestrator's next pass sees it. Never hand-write the marker or reply with plain `gh api` in autonomous mode: a reply without a marker leaves the thread open by design.
+
+   Questions and comments in the general PR conversation (not line threads) get a normal `gh pr comment` reply; they don't count toward open threads.
 
 ### Behavior at each human-gate
 
@@ -261,7 +264,7 @@ Begin immediately when invoked:
 
 1. **Fetch** — Get the PR, all comments, and review state
 2. **Load conventions** — Read project convention files
-3. **Reconstruct threads** — Group comments into conversation threads
+3. **Read threads** — `ccm-pr-threads` returns them already grouped
 4. **Classify** — Assign severity to each comment (must-fix / should-fix / style / question)
 5. **Verify** — Read actual code for every actionable comment. Check if the concern is valid, already handled, or contradicts conventions
 6. **Detect conflicts** — Flag contradictory reviewer feedback and ask user to decide

@@ -23,6 +23,17 @@
           }
         ]
       }
+    ],
+    "SubagentStop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/subagent-stop-handshake.sh\"",
+            "timeout": 10
+          }
+        ]
+      }
     ]
   }
 }

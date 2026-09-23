@@ -2,7 +2,7 @@
 name: auto-ticket
 description: Autonomous end-to-end ticket driver. Runs the full work → review → PR-feedback → finish cycle unattended, merging when the work is clean and CI is green, or parking the ticket (needs-human) with a clear note when a decision genuinely requires a human. Detects the tracker (Linear, GitHub Issues, JIRA) and ticket from the argument or current branch.
 user-invocable: true
-allowed-tools: Read(*), Edit(*), Bash(git:*, gh:*), Glob(*), Grep(*), Task(*), TodoWrite(*), Skill(*)
+allowed-tools: Read(*), Edit(*), Bash(git:*, gh:*), Bash(${CLAUDE_SKILL_DIR}/../../bin/ccm-context *), Bash(${CLAUDE_SKILL_DIR}/../../bin/ccm-ci-status *), Bash(${CLAUDE_SKILL_DIR}/../../bin/ccm-pr-threads *), Glob(*), Grep(*), Task(*), TodoWrite(*), Skill(*)
 argument-hint: "[TICKET-ID] (detects from the current branch if omitted)"
 model: sonnet
 context: fork
@@ -111,8 +111,12 @@ Only CRITICAL findings and closable missing-AC items gate here. Out-of-scope cha
 Loop up to `max_feedback_passes` (default 3). **At the very start of each pass — before applying any fix and before anything is pushed — record the current highest PR review-comment id as this pass's high-water mark `H`:**
 
 ```bash
-gh api repos/{owner}/{repo}/pulls/{PR_NUMBER}/comments --jq '[.[].id] | max // 0'
+"${CLAUDE_SKILL_DIR}/../../bin/ccm-pr-threads" {PR_NUMBER}
 ```
+
+`H` is the `max_review_comment_id` field of the output.
+
+(The `ccm-*` scripts are also on the Bash `PATH` while the plugin is enabled; if the `${CLAUDE_SKILL_DIR}/../../bin/` path doesn't resolve, call them by bare name.)
 
 Everything this pass pushes is measured against `H`, so bot reviews triggered *by* this pass's push are counted as new (4c). Then:
 
@@ -122,27 +126,26 @@ Everything this pass pushes is measured against `H`, so bot reviews triggered *b
 **4b. Validate locally before trusting CI.** Run the validate step via `run_step` — `/ccmagic:validate`. If it fails, fix the regressions (bounded: `max_validate_attempts` attempts, default **2**, editing + re-validating), then commit/push via `/ccmagic:push` (run this via `run_step`). If it still fails after the attempts → **route-and-stop** (reason: "local validation fails: {summary}"). Doing this locally keeps CI + bot-review round-trips rare.
 
 **4c. Wait for CI and new reviews.** This pass's push(es) already happened (in 4a via `pr-feedback`, and possibly again in 4b); `H` was captured before them at the top of the pass. Now that they've landed:
-  - **Wait for CI to settle** — no check `pending`/`in_progress` — using a **bounded blocking watch**. (A sleep-based poll loop is not executable in this context: the orchestrator has no wait primitive. The blocking watch below is.)
-    1. Compute the watch budget: `CYCLES = ceil(ci_timeout_minutes / 10)` (default 30 min → 3 watch invocations). The budget quantizes up to whole 10-minute cycles — `12` waits up to 20 min, and values under 10 still get one full cycle.
-    2. Run the watch as a single Bash call **with the maximum tool timeout (600000 ms)**:
-       ```bash
-       gh pr checks {PR_NUMBER} --watch --interval {ci_poll_interval_seconds}
-       ```
-       `--watch` blocks until no check is pending, so each call either returns with CI settled or is cut off by the 10-minute tool timeout. A non-zero exit with output showing completed checks means **settled with failures** — that is a settled state; carry the per-check pass/fail breakdown into 4d and do not re-invoke the watch ("settled" is never shorthand for "green").
-    3. If the call was cut off by the tool timeout, it consumed a full 10 minutes by construction — count it. Fewer than `CYCLES` cut-off calls so far → re-invoke the watch (step 2). `CYCLES` reached → **route-and-stop** (reason: "CI did not complete within the timeout"). Track the count in your own working notes — never in shell variables, which do not persist between Bash calls. A call that fails **quickly** with no check output (auth, network, or `gh` error) is not a cut-off and consumes no budget: retry it once. A **permissions error** — `Resource not accessible by personal access token` / HTTP 403 — is not transient: a **fine-grained PAT cannot read App-authored check runs** (GitHub Actions, and bot reviewers like Copilot/Claude, are Apps), so `gh pr checks` keeps failing however many times it retries. On that error, switch to the **Actions + Status API fallback (item 5)** for the rest of this wait instead of parking. Any *other* quick failure that still fails on retry → **route-and-stop** (reason: "cannot read CI status: {error}").
-    4. **No-checks guard:** if `gh pr checks` reports no checks at all (immediate exit / "no checks reported"), never conclude from timing — back-to-back re-checks cannot outlast GitHub's post-push registration window. Decide on evidence:
-       - **No CI configured** — no workflow files exist (`.github/workflows/` absent or empty) **and** no required status checks are configured on the base branch (probe `gh api repos/{owner}/{repo}/branches/{base}/protection/required_status_checks`; a 404 means none; any other error — e.g. a 403 on a token without admin read — means *unknown*, so decide on the workflow-files evidence alone). Treat CI as settled ("no CI configured") and record that in the run summary.
-       - **CI configured but checks not yet registered** — workflow files exist. Look up the run for this head SHA: `gh run list --commit $(git rev-parse HEAD) --limit 1 --json databaseId,status`. If a run appears, block on it with `gh run watch {databaseId}` under the same max tool timeout (a cut-off counts against `CYCLES`), then re-run the step-2 watch to read the check results. If no run appears after a handful of list retries → **route-and-stop** (reason: "CI is configured but no run appeared for {sha}") — park, never a false green.
-    5. **Checks API unreadable (fine-grained PAT) — read CI via the Actions + Status APIs.** When `gh pr checks` fails with a permissions 403 (item 3), don't park as unreadable yet — read CI from the two APIs a fine-grained token *can* see (`Actions: read` + `Commit statuses: read`):
-       - Actions runs for the head SHA: `gh run list --commit $(git rev-parse HEAD) --json databaseId,workflowName,status,conclusion`. Block on any `queued`/`in_progress` run with `gh run watch {databaseId}` (same max tool timeout; a cut-off counts against `CYCLES`), then re-list.
-       - Legacy commit statuses: `gh api repos/{owner}/{repo}/commits/$(git rev-parse HEAD)/status --jq .state`.
+  - **Wait for CI to settle** with one command, repeated only while it says so:
+    ```bash
+    "${CLAUDE_SKILL_DIR}/../../bin/ccm-ci-status" {PR_NUMBER} --watch --wait-key {run_id}-pass{n}
+    ```
+    Run it as a single Bash call with the maximum tool timeout (600000 ms). Each call returns within ten minutes. If the output has `"call_again": true`, run the identical command again. The wait-key's deadline file bounds the total wait at `ci_timeout_minutes`, so do not count calls yourself. Act on the final `status`:
+    - `green` or `no-ci` → CI is settled and green (record "no CI configured" in the run summary for `no-ci`).
+    - `failed` → settled, not green. Carry `reason` and `checks` into 4d.
+    - `timeout` → **route-and-stop** (reason: "CI did not complete within the timeout", plus the script's `reason`; a `not-registered` timeout means CI is configured but no run appeared for the head SHA).
+    - `unreadable` → **route-and-stop** (reason: "cannot read CI status: {reason}").
 
-       CI is **green** only when every Actions run is `completed` with conclusion in {`success`, `skipped`, `neutral`} **and** the status state is `success` or there are no statuses (`total_count: 0`). A run still `queued`/`in_progress` → keep waiting; any conclusion in {`failure`, `timed_out`, `cancelled`, `action_required`, `startup_failure`} or a `failure`/`error` status state is **settled, not green** (carry into 4d). This fallback sees GitHub Actions runs and legacy commit statuses only — it cannot see check runs authored by third-party CI Apps, so on a repo whose required checks are external-App check runs (unreadable by *any* fine-grained token), treat CI as unreadable → **route-and-stop** (reason: "cannot read CI status").
-  - Then re-fetch review comments (`gh api repos/{owner}/{repo}/pulls/{PR_NUMBER}/comments`) and PR reviews. New reviewer comments — **id above `H`**, not authored by the PR author (e.g. Copilot/Claude bot reviews) — are **new actionable threads** for the next pass. Capturing `H` before the push is what lets a bot review posted in response to this push count as new rather than being mistaken for an already-handled thread.
+    The script handles what this step used to spell out: the fine-grained-PAT 403 fallback to the Actions and commit-status APIs, the "no checks at all" case (no workflows and no required checks means `no-ci`; otherwise it keeps waiting for a run to register), and quick transient `gh` failures. Don't re-derive CI state from `gh pr checks` output.
+  - Then read the review threads against `H`:
+    ```bash
+    "${CLAUDE_SKILL_DIR}/../../bin/ccm-pr-threads" {PR_NUMBER} --since-id {H}
+    ```
+    `new_comment_count` counts reviewer comments above `H` (for example Copilot or Claude bot reviews posted in response to this pass's push). `open_thread_count` counts threads that aren't handled. A thread is handled when it is resolved, or when its last comment is the author's `ccm-pr-reply` reply with a disposition marker (`fixed` counts only once the cited commit is verified on the branch and touches the thread's file). Autonomous `pr-feedback` replies that way, so the threads it fixed, declined, answered, or deferred don't count. A bare "will fix" reply does. Capturing `H` before the push is what lets a bot review posted in response to this push count as new rather than being mistaken for an already-handled thread. If `truncated` is true, say so in the run summary.
 
 **4d. Recompute "clean".** The pass is **clean** when **both** hold:
-  - zero unresolved actionable reviewer threads (nothing new and nothing still open from before), **and**
-  - CI is green (every required check passed).
+  - `open_thread_count` is 0, and
+  - the final `ccm-ci-status` status was `green` or `no-ci`.
 
 **4e. Decide.**
   - **clean** → break out of the loop; continue to Step 5.

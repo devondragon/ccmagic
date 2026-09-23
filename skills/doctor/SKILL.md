@@ -82,7 +82,7 @@ For Linear and JIRA, surface this checklist in the report instead of trying to p
 
 ```bash
 if [ -n "$CLAUDE_PLUGIN_ROOT" ]; then
-  for f in hooks/pre-tool-use-guard.sh hooks/post-tool-use-commit.sh bin/ccm-context bin/ccm-ci-status bin/ccm-merge-gate; do
+  for f in hooks/pre-tool-use-guard.sh hooks/subagent-stop-handshake.sh hooks/post-tool-use-commit.sh bin/ccm-context bin/ccm-ci-status bin/ccm-merge-gate bin/ccm-pr-threads bin/ccm-pr-reply; do
     [ -f "$CLAUDE_PLUGIN_ROOT/$f" ] && echo "OK   $f" || echo "WARN $f missing — reinstall the ccmagic plugin"
   done
   command -v jq >/dev/null 2>&1 && echo "OK   jq installed (the hooks and bin/ scripts need it)" || echo "WARN jq not installed — the guard hook allows everything and the bin/ scripts fail without it (brew install jq)"
