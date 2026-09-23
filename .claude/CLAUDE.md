@@ -161,7 +161,7 @@ context: fork                  # For heavy skills (subagent isolation)
 
 ## Testing locally
 
-Scripts and hooks: `bash tests/run.sh` (add a case there for any change to `bin/` or `hooks/`), and `shellcheck -x bin/ccm-* hooks/*.sh tests/run.sh tests/stubs/gh`. CI runs both, with Ubuntu's shellcheck 0.9.0, which flags some rules newer versions don't; to match it locally: `docker run --rm -v "$PWD:/mnt" -w /mnt koalaman/shellcheck:v0.9.0 -x bin/ccm-* hooks/*.sh tests/run.sh tests/stubs/gh`.
+Scripts and hooks: `bash tests/run.sh` (add a case there for any change to `bin/` or `hooks/`), and `shellcheck -x bin/ccm-* hooks/*.sh tests/run.sh tests/stubs/gh`. CI runs both, with Ubuntu's shellcheck 0.9.0, which flags some rules newer versions don't; to match it locally: `docker run --rm -v "$PWD:/mnt" -w /mnt koalaman/shellcheck:v0.9.0 -x bin/ccm-* hooks/*.sh tests/run.sh tests/stubs/gh`. CI's jq is 1.7; to run the tests as CI does: `docker run --rm -v "$PWD:/src:ro" ubuntu:24.04 bash -c 'apt-get update -qq && apt-get install -y -qq jq git perl >/dev/null && cp -r /src /w && cd /w && git config --global --add safe.directory "*" && bash tests/run.sh'`.
 
 When a rule has exactly one right answer (a CI verdict, a config value, a merge precondition), put it in a `bin/ccm-*` script or a hook, and have the skill call the script and act on its JSON. Keep judgment in the skill. Skills reference scripts as `"${CLAUDE_SKILL_DIR}/../../bin/ccm-<name>"`, grant that path in `allowed-tools`, and say the bare name works too (plugin `bin/` is on `PATH`), for contexts where the variable isn't expanded.
 

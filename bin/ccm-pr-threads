@@ -110,7 +110,7 @@ markers=$(jq '
      | ($last.body | capture("<!-- ccmagic:disposition=(?<d>fixed|declined|answered|deferred)(?<rest>[^>]*)-->")?) as $m
      | select($m != null)
      | {id: $t.id, disposition: $m.d,
-        commit: ([$m.rest | capture("commit=(?<c>[0-9a-fA-F]{7,40})")?.c] | first),
+        commit: ([$m.rest | capture("commit=(?<c>[0-9a-fA-F]{7,40})")? | .c] | first),
         path: $t.path,
         base: ($t.comments.nodes[0].originalCommit.oid // null)}]
 ' <<<"$raw")
