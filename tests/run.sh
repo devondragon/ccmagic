@@ -606,6 +606,11 @@ stop_trailing_text_blocked() {
   check "$(blocked)" "block"
 }
 
+stop_indented_prose_after_handshake_blocked() {
+  run_stop_hook $'status: done\nreason: ok\nfollow_ups: []\n  Anything else I can help with?' ccmagic:auto-work
+  check "$(blocked)" "block"
+}
+
 stop_missing_follow_ups_blocked() {
   run_stop_hook $'status: needs-human\nreason: tie between reviewers' ccmagic:auto-feedback
   check "$(blocked)" "block"
@@ -650,6 +655,12 @@ threads_since_id_marks_new() {
   seed_threads
   run "$BIN/ccm-pr-threads" 7 --since-id 120
   check "$(jqval .new_comment_count),$(jqval '[.threads[] | select(.has_new) | .id] | join(",")')" "2,T3,T4"
+}
+
+threads_since_id_must_be_numeric() {
+  seed_threads
+  run "$BIN/ccm-pr-threads" 7 --since-id abc
+  check "$RC" "4"
 }
 
 threads_graphql_error() {

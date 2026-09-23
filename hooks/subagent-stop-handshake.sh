@@ -49,8 +49,7 @@ problem=$(printf '%s\n' "$msg" | awk -v allowed="$allowed" '
       if (l ~ /^[[:space:]]*reason:/) { reason = 1; continue }
       if (l ~ /^[[:space:]]*follow_ups:/) { follow = 1; continue }
       if (l ~ /^[[:space:]]*requested_state:/) continue
-      if (l ~ /^[[:space:]]*(-|```|$)/) continue
-      if (l ~ /^[[:space:]]+[^[:space:]]/) continue
+      if (l ~ /^[[:space:]]*(- |-$|```|$)/) continue
       print "text after the handshake (`" substr(l, 1, 60) "`); the handshake must be the last thing"; exit
     }
     if (!reason) { print "no `reason:` line after `status:`"; exit }
