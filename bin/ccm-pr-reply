@@ -41,7 +41,7 @@ while [ $# -gt 0 ]; do
   shift
 done
 
-[ -n "$pr" ] && [ -n "$comment" ] || usage "PR and COMMENT_ID are required"
+if [ -z "$pr" ] || [ -z "$comment" ]; then usage "PR and COMMENT_ID are required"; fi
 case $comment in ''|*[!0-9]*) usage "COMMENT_ID must be a number" ;; esac
 [ "$have_body" = true ] || usage "--body is required"
 [ "$body" = - ] && body=$(cat)
