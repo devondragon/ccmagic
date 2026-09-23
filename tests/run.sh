@@ -469,6 +469,18 @@ guard_add_all_respects_gitignore() {
   check "$(denied)" "allow"
 }
 
+guard_add_after_dashdash_checked() {
+  echo SECRET=1 >-weird.env
+  echo SECRET=1 >.env
+  hook 'git add -- .env'
+  check "$(denied)" "deny"
+  hook 'git add -- -weird.env'
+  check "$(denied)" "allow"
+  mv -- -weird.env x.pem
+  hook 'git add -- x.pem'
+  check "$(denied)" "deny"
+}
+
 guard_env_example_allowed() {
   echo A= >.env.example
   hook 'git add .env.example'
@@ -546,6 +558,11 @@ post_warns_on_bad_subject_in_chain() {
   run_post_hook 'git add -A && git commit -m "updated stuff"'
   check "$RC" "0"
   [[ $OUT == *"WARNING"*"updated stuff"* ]]
+}
+
+post_warns_with_env_prefix() {
+  run_post_hook 'GIT_AUTHOR_DATE=now git commit -m "stuff"'
+  [[ $OUT == *"WARNING"* ]]
 }
 
 post_quiet_on_good_subject() {

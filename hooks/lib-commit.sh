@@ -17,9 +17,10 @@ CCM_COMMIT_FORMAT_HELP='Expected format: {TYPE}({scope})!?: [TICKET-ID] {descrip
   Example: docs(api): add endpoint documentation for returns'
 
 # True when the command runs `git commit` as a command (at the start of a
-# line or after ; & | ( ), not merely mentions it inside a string.
+# line or after ; & | ( ), not merely mentions it inside a string. Leading
+# VAR=value assignments and `git -C dir` are allowed, as in the PreToolUse guard.
 ccm_is_git_commit() {
-  printf '%s' "$1" | grep -qE '(^|[;&|(])[[:space:]]*git([[:space:]]+-[cC][[:space:]]+[^[:space:]]+)*[[:space:]]+commit([[:space:]]|$)'
+  printf '%s' "$1" | grep -qE '(^|[;&|(])[[:space:]]*([A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*[[:space:]]+)*git([[:space:]]+-[cC][[:space:]]+[^[:space:]]+)*[[:space:]]+commit([[:space:]]|$)'
 }
 
 # Print the subject line of the commit message in a `git commit` command, or

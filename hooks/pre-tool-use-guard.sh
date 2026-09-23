@@ -189,13 +189,21 @@ always_included() {
 
 # Files the command would add to the index or commit.
 candidate_files() {
-  local s a p all tracked_only words paths
+  local s a p all tracked_only words paths after_dashdash
   while IFS= read -r s; do
     [ -n "$s" ] || continue
     read -ra words <<<"$s"
-    all=false tracked_only=false paths=()
+    all=false tracked_only=false paths=() after_dashdash=false
     for a in "${words[@]:1}"; do
+      if [ "$after_dashdash" = true ]; then
+        case $a in
+          .|./|:/) all=true ;;
+          *) paths+=("$a") ;;
+        esac
+        continue
+      fi
       case $a in
+        --) after_dashdash=true ;;
         -A|--all|--no-ignore-removal) all=true ;;
         -u|--update) all=true; tracked_only=true ;;
         -*) ;;
