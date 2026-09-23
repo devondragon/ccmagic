@@ -2,6 +2,17 @@
 
 All notable changes to ccmagic are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.9.0] — 2026-09
+
+### Added
+
+- The PreToolUse guard now also denies force pushes (any in autonomous runs; to `main`, `master`, `develop`, `release/*`, or the default branch interactively), `git add`/`git commit` of secret-shaped files (`.env`, private keys, credential files; interactively the user can confirm with `CCMAGIC_ALLOW_SENSITIVE=1`, and `## Always Include` in `context/commit-preferences.md` is honored), and, in autonomous runs, commits whose subject isn't in conventional-commit format.
+
+### Changed
+
+- **Interactive behavior change:** staging or committing a secret-shaped file is now refused until the user confirms, and force-pushing to a shared branch is refused. Previously only `/ccmagic:push` asked about sensitive files, and nothing stopped a force push.
+- The commit-subject parser and pattern moved to `hooks/lib-commit.sh`, shared by both commit hooks. The PostToolUse warning now also fires for `git commit` inside a chained command (`git add -A && git commit -m ...`), `-m '...'`, `--message=`, and `-F -` heredocs.
+
 ## [3.8.0] — 2026-09
 
 ### Added

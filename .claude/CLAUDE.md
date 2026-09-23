@@ -23,7 +23,7 @@ The valid `{TYPE}` values used in commit messages, PR titles, and the format hoo
 feat, fix, docs, style, refactor, test, chore, perf, ci
 ```
 
-If you add or remove a type, also update `hooks/post-tool-use-commit.sh` (the regex is hardcoded there).
+If you add or remove a type, also update `CCM_COMMIT_PATTERN` in `hooks/lib-commit.sh` (the regex is hardcoded there; both commit hooks use it).
 
 ## Ticket-ID format
 
@@ -82,7 +82,7 @@ refactor(auth): extract token validation into shared service
 chore: bump minor deps
 ```
 
-The commit-format hook (`hooks/post-tool-use-commit.sh`) validates the subject line post-commit. It's non-blocking — it warns but never rejects. Git-generated subjects (merge, revert, fixup!/squash! autosquash markers, initial commit) are skipped silently.
+The commit-format hook (`hooks/post-tool-use-commit.sh`) validates the subject line post-commit. It's non-blocking — it warns but never rejects. In autonomous runs (`ccmagic:auto-*` agents or `autonomous: true`) the PreToolUse guard (`hooks/pre-tool-use-guard.sh`) denies a non-conforming commit before it is made. Git-generated subjects (merge, revert, fixup!/squash! autosquash markers, initial commit) are skipped silently.
 
 ## PR standards
 
@@ -127,7 +127,8 @@ ccmagic/
 │   └── ccm-*                  # deterministic helpers skills call; print JSON
 ├── hooks/
 │   ├── hooks.json             # PreToolUse guard + PostToolUse commit-format check
-│   ├── pre-tool-use-guard.sh
+│   ├── pre-tool-use-guard.sh  # merge gate, force push, secrets, commit format
+│   ├── lib-commit.sh          # commit-subject parsing and pattern (sourced)
 │   └── post-tool-use-commit.sh
 ├── tests/
 │   ├── run.sh                 # plain-bash tests for bin/ and hooks/
