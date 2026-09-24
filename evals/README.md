@@ -2,18 +2,26 @@
 
 Covers the `/ccmagic:review` skill only. Every case pastes a unified diff inline and states that no git checkout exists, so the skill has to review the supplied diff. Each case runs in two arms (with the plugin, without it) and the headline number is Δ = with-plugin score minus without-plugin score.
 
-Run the full suite (3 runs per case, both arms, opus judge):
+Run the full suite (3 runs per case, both arms, opus judge) with the wrapper described below:
 
 ```
-claude plugin eval . --ablation with-without --judge-model opus
+evals/run.sh
 ```
 
 Add `--no-publish` to keep the report local.
 
-Cases 01 to 05 grant `Bash` so the skill can run `bin/ccm-review-route`. The eval tool refuses a run that grants Bash while `~/.docker` contains a symlink (Docker Desktop's `~/.docker/bin/*` links are enough), so move those out of the way first. `--case` takes a name glob, but bracket and brace patterns such as `0[24]*` match nothing and a repeated `--case` keeps only the last, so run a subset one case at a time:
+Cases 01 to 05 grant `Bash` so the skill can run `bin/ccm-review-route`, and the eval tool refuses a Bash-granting run while `~/.docker` holds a symlink, which Docker Desktop's `~/.docker/bin` and `~/.docker/cli-plugins` always do. Use `evals/run.sh` instead of calling `claude plugin eval` directly: it runs the tool with `HOME` set to an empty temporary directory, so the check passes without any change to `~/.docker`, and it adds `--ablation with-without --judge-model opus --trust-plugin --allow-tools Bash`.
+
+A throwaway `HOME` can't read Claude Code's keychain login, so the script needs a token. One-time setup: run `claude setup-token`, then store the token in the macOS keychain (the command prompts for it, so it never lands in shell history):
 
 ```
-claude plugin eval . --ablation with-without --judge-model opus --no-publish --trust-plugin --allow-tools Bash --runs 3 --case 02-quick-off-by-one
+security add-generic-password -a "$USER" -s ccmagic-eval-oauth-token -w
+```
+
+The script also accepts an exported `CLAUDE_CODE_OAUTH_TOKEN`, or `ANTHROPIC_API_KEY` (billed per use). `--case` takes a name glob, but bracket and brace patterns such as `0[24]*` match nothing and a repeated `--case` keeps only the last, so run a subset one case at a time:
+
+```
+evals/run.sh --no-publish --runs 3 --case 02-quick-off-by-one
 ```
 
 ## Cases
