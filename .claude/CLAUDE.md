@@ -138,6 +138,9 @@ ccmagic/
 ├── tests/
 │   ├── run.sh                 # plain-bash tests for bin/ and hooks/
 │   └── stubs/gh               # gh stub fed recorded API output
+├── evals/
+│   ├── NN-*/                  # review eval cases (prompt, graders)
+│   └── run.sh                 # runs the suite under a temp HOME (see evals/README.md)
 ├── docs/
 │   └── ccmagic.local.md.example  # Template for per-project config
 ├── .claude/CLAUDE.md          # ← you are here (dev notes + conventions)
