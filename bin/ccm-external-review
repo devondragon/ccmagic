@@ -1,0 +1,543 @@
+#!/usr/bin/env bash
+# ccm-external-review: run Codex and Gemini review passes in parallel, as JSON.
+#
+# Usage: ccm-external-review --dimensions DIM[,DIM...] [--tools codex,gemini]
+#          [--base BRANCH | --pr N | --module NAME=FILE ...]
+#          [--conventions FILE] [--model M] [--fallback-model M]
+#          [--gemini-model M] [--timeout SECONDS] [--max-parallel N]
+#        ccm-external-review --check [--tools codex,gemini]
+#        ccm-external-review --print-prompt DIM [--base BRANCH]
+#
+#   --dimensions    passes to run: adversarial (the /ccmagic:review Step 3.5
+#                   pass), or any of security, architecture, correctness,
+#                   errors, tests, deps (the /ccmagic:codex-review passes)
+#   --tools         which CLIs to run each dimension through (default
+#                   codex,gemini)
+#   --base          base branch for the diff (default main)
+#   --pr            review this PR's diff (gh pr diff N) instead of BASE...HEAD
+#   --module        full mode: NAME=FILE, where FILE lists the module's files
+#                   one per line. Repeat for each module; each dimension then
+#                   runs once per module, fed the file list instead of a diff.
+#   --conventions   file of project conventions, appended to dimension prompts
+#   --model         Codex model for dimension passes (default gpt-5.3-codex)
+#   --fallback-model  retried once when the primary model is refused (default
+#                   gpt-5-codex)
+#   --gemini-model  Gemini model (default gemini-2.5-pro)
+#   --timeout       per-pass deadline in seconds (default 300)
+#   --max-parallel  concurrent CLI calls (default 4)
+#   --check         run nothing; print {tools: [{tool, available, reason?}]},
+#                   exit 0 if any tool can run and 2 if none can
+#   --print-prompt  print the prompt for DIM and exit
+#
+# Invocations, one per (tool, dimension[, module]) pass, each under
+# `timeout --kill-after=30 SECONDS` (gtimeout when timeout is missing):
+#   codex, adversarial:  codex exec "<prompt>" -C <repo root> -s read-only
+#   codex, dimension:    codex --model M --full-auto exec - < <prompt + diff>
+#                        (full mode: <prompt, "Files to review:", file list>)
+#   gemini:              gemini --model M -p "<prompt>"  (the prompt alone,
+#                        no diff; full mode: the same text codex gets)
+# At most --max-parallel passes run at once, so a run with more passes than
+# that can take longer than one deadline.
+# The adversarial prompt has the base branch substituted into its
+# `git diff BASE...HEAD` line. Dimension prompts end with the shared finding
+# table format. Every prompt opens with the "do not load any installed skill"
+# line; Codex otherwise auto-loads a matching review skill from
+# ~/.codex/skills and follows it instead of the prompt.
+#
+# With neither timeout nor gtimeout installed (stock macOS; brew install
+# coreutils), no pass runs: every pass is `unavailable`, because an unbounded
+# CLI call is the hang the deadline exists to prevent. CCM_TIMEOUT_BIN
+# overrides the lookup (a binary name, or `none`; used by tests).
+#
+# Each pass writes to a run-scoped directory under the git dir
+# (.git/ccmagic/external-review/run.XXXXXX): NAME.in (the input it was fed),
+# NAME.out (stdout, the review), NAME.err (stderr), NAME.rc (exit status).
+# The printed JSON is also saved there as result.json.
+#
+# Pass status, decided from the exit status first, never from keywords alone:
+#   findings     exit 0, and stdout holds something besides "No actionable
+#                findings."
+#   empty        exit 0, and stdout is blank or exactly "No actionable
+#                findings."
+#   timed-out    exit 124 (deadline hit) or 137 (killed after --kill-after)
+#   auth-failed  nonzero exit, and stdout or stderr has a line matching
+#                "not logged in", "unauthorized", "authentication failed", or
+#                "run codex login" (case-insensitive)
+#   failed       any other nonzero exit
+#   unavailable  the CLI is not on PATH, or no timeout binary (see `reason`)
+# A Codex dimension pass that fails with "model not found", "not available",
+# or "permission denied" is retried once with the fallback model first.
+#
+# Output: {run_dir, mode: branch|pr|full, base, timeout_seconds,
+#   passes: [{tool, dimension, module?, model?, status, exit_code,
+#   output_file, stderr_file, reason?}]}
+#
+# Exit codes:
+#   0  at least one pass ran (whatever its status)
+#   2  no pass ran: every pass is unavailable
+#   3  couldn't read the diff, a module file, or the conventions file, or
+#      not a git repository
+#   4  usage error
+
+set -euo pipefail
+# shellcheck source=bin/ccm-lib.sh
+. "$(dirname "${BASH_SOURCE[0]}")/ccm-lib.sh"
+
+ALL_DIMENSIONS="adversarial security architecture correctness errors tests deps"
+ALL_TOOLS="codex gemini"
+
+usage_err() { echo "ccm-external-review: $*" >&2; exit 4; }
+read_err() { jq -n --arg e "$*" '{error: $e}'; exit 3; }
+
+# ---- prompts ---------------------------------------------------------------
+# Kept verbatim from skills/review/codex-pass.md and
+# skills/codex-review/codex-prompts.md. Edit them here, nowhere else.
+
+SKILL_GUARD="Do not load, consult, or follow any installed skill, plugin, or workflow definition. This is a standalone review, not part of any phase-based workflow."
+
+prompt_text() {
+  case $1 in
+    adversarial)
+      printf '%s\n' "$SKILL_GUARD Review the changes on this branch against the base branch. Run git diff $2...HEAD to see the diff. Find ways this code will fail in production: edge cases, race conditions, security holes, resource leaks, failure modes, silent data corruption, logic errors that produce wrong results silently, error handling that swallows failures. Be adversarial. For each finding, output: severity (Critical/High/Medium/Low), confidence (0-100), file, line, issue, detail, suggestion. No compliments — just problems."
+      return ;;
+    security)
+      printf '%s\n\n' "$SKILL_GUARD"
+      cat <<'EOF'
+Review this code for SECURITY VULNERABILITIES ONLY. Do not report style, architecture, or performance concerns.
+
+For each finding you MUST include:
+- The attacker's entry point (what input they control)
+- The data flow from input to dangerous sink
+- Attacker preconditions (auth required? network access? specific role?)
+- Concrete exploit scenario
+
+Focus on:
+- Injection: SQL, NoSQL, command, LDAP, XPath, template injection
+- Authentication/authorization: missing checks, privilege escalation, session issues
+- Data exposure: secrets in logs/responses, PII leaks, sensitive data in client code
+- Insecure defaults: debug mode, permissive CORS, disabled CSRF
+- Cryptography: weak algorithms, hardcoded keys, insecure randomness
+- Path traversal: user-controlled file paths
+- Deserialization: unsafe deserialization of user data
+
+Do NOT report:
+- Theoretical vulnerabilities requiring server-level access
+- Missing rate limiting (unless on auth endpoints)
+- Dependency CVEs (separate scanning concern)
+- Internal code paths with no user input
+EOF
+      ;;
+    architecture)
+      printf '%s\n\n' "$SKILL_GUARD"
+      cat <<'EOF'
+Review this code for ARCHITECTURE AND DESIGN issues ONLY. Do not report security vulnerabilities, style nits, or individual bugs.
+
+Focus on:
+- Coupling: inappropriate dependencies, business logic in wrong layer, cross-cutting concerns leaking
+- Dependency direction: lower layers importing from upper layers, circular dependencies
+- API design: inconsistent contracts, breaking changes, missing versioning
+- Error boundaries: errors leaking across module boundaries, missing error handling at entry points
+- Dead code/unused exports that create maintenance burden or false API surface
+- Missing abstractions: same pattern duplicated 3+ times across modules
+- Configuration: hardcoded values that should be configurable, environment-specific code in shared paths
+
+Do NOT report:
+- Single-function logic bugs (correctness pass handles those)
+- Naming style preferences
+- File organization opinions without concrete coupling evidence
+- "This could be refactored" without demonstrating a defect or fragility
+
+For each finding, identify which modules/files are affected and the dependency direction.
+EOF
+      ;;
+    correctness)
+      printf '%s\n\n' "$SKILL_GUARD"
+      cat <<'EOF'
+Review this code for CORRECTNESS AND RELIABILITY issues ONLY. Do not report security, style, or architecture concerns.
+
+Focus on:
+- Logic errors: wrong operators, off-by-one, inverted conditions, swapped arguments
+- Null/undefined/nil access on reachable code paths
+- Race conditions under realistic concurrency
+- Resource leaks: unclosed handles, missing cleanup in error paths, leaked goroutines/promises
+- Error handling gaps: swallowed errors, incorrect error propagation, missing retry/fallback
+- Type errors or unsafe coercion
+- Broken control flow: unreachable code, missing break, fallthrough bugs
+- Incorrect API usage: wrong argument order, deprecated methods, contract violations
+- Edge cases: empty collections, zero values, boundary conditions
+
+For each finding you MUST include a concrete triggering scenario: what input or state causes the bug, and what wrong behavior results.
+
+Do NOT report:
+- Code that works but could be "cleaner"
+- Performance (separate pass)
+- Style or formatting
+- TODO comments
+EOF
+      ;;
+    errors)
+      printf '%s\n\n' "$SKILL_GUARD"
+      cat <<'EOF'
+Review this code for ERROR HANDLING AND RESILIENCE issues ONLY.
+
+Focus on:
+- Swallowed errors: catch blocks that log but don't propagate, ignored return errors
+- Missing error handling: operations that can fail but have no error path
+- Incorrect error propagation: wrapping that loses context, wrong error types, status code mismatches
+- Retry logic: missing retries on transient failures, retries without backoff, retries on non-idempotent operations
+- Timeout handling: missing timeouts on network/IO operations, timeout too long/short
+- Graceful degradation: missing fallbacks, cascade failure risks
+- Resource cleanup: missing finally/defer blocks, cleanup that doesn't run on error paths
+- Panic/crash paths: unhandled exceptions that kill the process instead of the request
+
+For each finding, describe what happens when the failure occurs and what the user/system experiences.
+
+Do NOT report:
+- Error handling style preferences
+- Logging format issues
+- Missing error types that don't affect behavior
+EOF
+      ;;
+    tests)
+      printf '%s\n\n' "$SKILL_GUARD"
+      cat <<'EOF'
+Review this code for SIGNIFICANT TEST COVERAGE GAPS ONLY. Do not report style or test organization preferences.
+
+Focus on:
+- Untested critical paths: auth flows, payment/billing, data mutations, API endpoints
+- Untested error paths: what happens when dependencies fail, invalid input, timeouts
+- Untested edge cases: empty inputs, boundary values, concurrent access
+- Missing integration tests: components that interact but are only unit-tested in isolation
+- Tests that don't assert: tests that run code but don't verify outcomes
+- Brittle tests: tests coupled to implementation details that break on refactor
+- Missing regression tests for recent bug fixes (check git log for fix commits without tests)
+
+Do NOT report:
+- Missing tests for trivial getters/setters
+- Test naming conventions
+- Test file organization
+- Missing tests for generated code
+
+For each finding, describe what specific test should be added and what scenario it covers.
+EOF
+      ;;
+    deps)
+      printf '%s\n\n' "$SKILL_GUARD"
+      cat <<'EOF'
+Review the project's dependency configuration for HEALTH AND RISK issues.
+
+Examine: package.json/package-lock.json, go.mod/go.sum, Cargo.toml/Cargo.lock, pyproject.toml/requirements.txt, pom.xml, build.gradle, Gemfile/Gemfile.lock
+
+Focus on:
+- Unpinned dependencies that could break on update (^ or ~ ranges for critical deps)
+- Known deprecated packages still in use
+- Overly broad dependency versions allowing major version bumps
+- Duplicate dependencies at different versions
+- Dev dependencies in production bundles
+- Missing lockfile when one is expected
+- Dependency on unmaintained packages (check for abandonment signals in config)
+- Misconfigured build tools: wrong source/target versions, missing plugins, conflicting settings
+
+Do NOT report:
+- Specific CVEs (separate scanning tool)
+- Minor version behind for non-critical deps
+- Dependency count opinions
+EOF
+      ;;
+  esac
+  # Shared tail of every dimension prompt, then the finding table format.
+  printf '\n%s\n%s\n' "Return at most 10 findings, sorted by severity then confidence." \
+    "If there are no actionable findings, output exactly: No actionable findings."
+  if [ -n "${3:-}" ]; then
+    printf '\nProject conventions:\n\n%s\n' "$(command cat "$3")"
+  fi
+  cat <<'EOF'
+
+All passes must use this exact markdown table format:
+
+| Severity | Confidence | Location | Issue | Trigger | Fix | Test |
+|---|---:|---|---|---|---|---|
+| Critical | 95 | src/auth.ts:42 | SQL injection via unsanitized email param | POST /login with email='; DROP TABLE-- | Use parameterized query | Test login with SQL metacharacters |
+
+Severity: Critical, High, Medium, Low
+Confidence: 0-100 (do not report below 50)
+Location: file:line or "multiple" for cross-cutting issues
+Trigger: concrete scenario that exposes the issue
+Fix: minimal safe change (not a rewrite)
+Test: specific test to add or update
+EOF
+}
+
+# ---- arguments -------------------------------------------------------------
+
+dimensions="" tools="codex,gemini" base=main pr="" conventions=""
+model=gpt-5.3-codex fallback_model=gpt-5-codex gemini_model=gemini-2.5-pro
+timeout_s=300 max_parallel=4 print_prompt="" check=false
+modules=()
+
+need() { [ -n "${2:-}" ] || usage_err "$1 needs a value"; }
+while [ $# -gt 0 ]; do
+  case $1 in
+    --dimensions) need "$1" "${2:-}"; dimensions=$2; shift ;;
+    --tools) need "$1" "${2:-}"; tools=$2; shift ;;
+    --base) need "$1" "${2:-}"; base=$2; shift ;;
+    --pr) need "$1" "${2:-}"; pr=${2#\#}; shift ;;
+    --module) need "$1" "${2:-}"; modules+=("$2"); shift ;;
+    --conventions) need "$1" "${2:-}"; conventions=$2; shift ;;
+    --model) need "$1" "${2:-}"; model=$2; shift ;;
+    --fallback-model) need "$1" "${2:-}"; fallback_model=$2; shift ;;
+    --gemini-model) need "$1" "${2:-}"; gemini_model=$2; shift ;;
+    --timeout) need "$1" "${2:-}"; timeout_s=$2; shift ;;
+    --max-parallel) need "$1" "${2:-}"; max_parallel=$2; shift ;;
+    --print-prompt) need "$1" "${2:-}"; print_prompt=$2; shift ;;
+    --check) check=true ;;
+    -h|--help) sed -n '2,80p' "$0"; exit 0 ;; # through the exit codes
+    *) usage_err "unknown argument $1" ;;
+  esac
+  shift
+done
+
+valid_dim() { case " $ALL_DIMENSIONS " in *" $1 "*) return 0 ;; esac; return 1; }
+
+if [ -n "$print_prompt" ]; then
+  valid_dim "$print_prompt" || usage_err "unknown dimension '$print_prompt' (expected one of: $ALL_DIMENSIONS)"
+  prompt_text "$print_prompt" "$base"
+  exit 0
+fi
+
+tool_list=()
+for t in ${tools//,/ }; do
+  case " $ALL_TOOLS " in
+    *" $t "*) tool_list+=("$t") ;;
+    *) usage_err "unknown tool '$t' (expected one of: $ALL_TOOLS)" ;;
+  esac
+done
+[ "${#tool_list[@]}" -gt 0 ] || usage_err "--tools is empty"
+
+if [ -n "${CCM_TIMEOUT_BIN:-}" ]; then
+  timeout_bin=$CCM_TIMEOUT_BIN
+  [ "$timeout_bin" = none ] && timeout_bin=""
+elif command -v timeout >/dev/null 2>&1; then
+  timeout_bin=timeout
+elif command -v gtimeout >/dev/null 2>&1; then
+  timeout_bin=gtimeout
+else
+  timeout_bin=""
+fi
+
+# unavailable_reason TOOL: why TOOL cannot run, or nothing if it can.
+unavailable_reason() {
+  if ! command -v "$1" >/dev/null 2>&1; then
+    echo "$1 not found on PATH"
+  elif [ -z "$timeout_bin" ]; then
+    echo "no timeout or gtimeout found (brew install coreutils); an unbounded run could hang"
+  fi
+}
+
+if [ "$check" = true ]; then
+  any=false checks=()
+  for t in "${tool_list[@]}"; do
+    r=$(unavailable_reason "$t")
+    [ -n "$r" ] || any=true
+    checks+=("$(jq -n --arg t "$t" --arg r "$r" \
+      '{tool: $t, available: ($r == "")} + (if $r == "" then {} else {reason: $r} end)')")
+  done
+  printf '%s\n' "${checks[@]}" | jq -s '{tools: .}'
+  [ "$any" = true ] || exit 2
+  exit 0
+fi
+
+[ -n "$dimensions" ] || usage_err "--dimensions is required"
+dims=()
+for d in ${dimensions//,/ }; do
+  valid_dim "$d" || usage_err "unknown dimension '$d' (expected one of: $ALL_DIMENSIONS)"
+  dims+=("$d")
+done
+case $timeout_s in ''|*[!0-9]*|0) usage_err "--timeout must be a positive whole number" ;; esac
+case $max_parallel in ''|*[!0-9]*|0) usage_err "--max-parallel must be a positive whole number" ;; esac
+case $pr in *[!0-9]*) usage_err "--pr must be a PR number" ;; esac
+if [ -n "$pr" ] && [ "${#modules[@]}" -gt 0 ]; then usage_err "--pr and --module are exclusive"; fi
+for m in ${modules[@]+"${modules[@]}"}; do
+  case $m in
+    *=*) name=${m%%=*}; [[ $name =~ ^[A-Za-z0-9._-]+$ ]] || usage_err "--module name '$name' must be letters, digits, '.', '_', or '-'" ;;
+    *) usage_err "--module takes NAME=FILE, got '$m'" ;;
+  esac
+done
+
+# Relative paths in --module and --conventions are relative to the caller's
+# directory, so make them absolute before changing to the repo root.
+abs() { case $1 in /*) printf '%s' "$1" ;; *) printf '%s/%s' "$PWD" "$1" ;; esac; }
+if [ -n "$conventions" ]; then
+  conventions=$(abs "$conventions")
+  [ -r "$conventions" ] || read_err "cannot read conventions file $conventions"
+fi
+for i in ${modules[@]+"${!modules[@]}"}; do
+  m=${modules[$i]}
+  modules[i]="${m%%=*}=$(abs "${m#*=}")"
+  [ -r "${modules[$i]#*=}" ] || read_err "cannot read module file ${m#*=}"
+done
+
+if ! root=$(git rev-parse --show-toplevel 2>/dev/null); then
+  read_err "not a git repository"
+fi
+cd "$root"
+
+mode=branch
+if [ -n "$pr" ]; then mode="pr"; fi
+if [ "${#modules[@]}" -gt 0 ]; then mode=full; fi
+
+state=$(ccm_state_dir)/external-review
+mkdir -p "$state"
+run_dir=$(mktemp -d "$state/run.XXXXXX")
+
+# The diff is needed only by dimension passes outside full mode.
+need_diff=false
+if [ "$mode" != full ]; then
+  for d in "${dims[@]}"; do [ "$d" != adversarial ] && need_diff=true; done
+fi
+if [ "$need_diff" = true ]; then
+  if [ "$mode" = pr ]; then
+    gh pr diff "$pr" >"$run_dir/diff.txt" 2>"$run_dir/diff.err" ||
+      read_err "gh pr diff $pr failed: $(head -n 3 "$run_dir/diff.err")"
+  else
+    git diff "$base...HEAD" >"$run_dir/diff.txt" 2>"$run_dir/diff.err" ||
+      read_err "git diff $base...HEAD failed: $(head -n 3 "$run_dir/diff.err")"
+  fi
+fi
+
+# ---- passes ----------------------------------------------------------------
+
+# Input fed to a pass: the prompt, then the diff or the module's file list.
+# Written by this script, not piped, so a failed read cannot silently hand a
+# CLI an empty prompt.
+write_input() {
+  local dim=$1 module_file=$2 out=$3
+  if [ "$dim" = adversarial ]; then
+    prompt_text adversarial "$base" >"$out"
+    return
+  fi
+  prompt_text "$dim" "$base" "$conventions" >"$out"
+  if [ -n "$module_file" ]; then
+    { echo "Files to review:"; command cat "$module_file"; } >>"$out"
+  fi
+}
+
+# bounded CMD...: run under the deadline, stdin closed unless redirected.
+bounded() { "$timeout_bin" --kill-after=30 "$timeout_s" "$@"; }
+
+run_pass() {
+  local name=$1 tool=$2 dim=$3 mode_=$4
+  local in=$run_dir/$name.in out=$run_dir/$name.out err=$run_dir/$name.err rc
+  set +e
+  if [ "$tool" = gemini ]; then
+    # Branch and PR mode: the prompt only, as /ccmagic:codex-review did.
+    local text
+    if [ "$mode_" = full ] || [ "$dim" = adversarial ]; then
+      text=$(command cat "$in")
+    else
+      text=$(command cat "$in.prompt")
+    fi
+    bounded gemini --model "$gemini_model" -p "$text" </dev/null >"$out" 2>"$err"
+    rc=$?
+  elif [ "$dim" = adversarial ]; then
+    bounded codex exec "$(command cat "$in")" -C "$root" -s read-only </dev/null >"$out" 2>"$err"
+    rc=$?
+  else
+    local m=$model
+    bounded codex --model "$m" --full-auto exec - <"$in" >"$out" 2>"$err"
+    rc=$?
+    if [ "$rc" -ne 0 ] && [ "$rc" -ne 124 ] && [ "$rc" -ne 137 ] && [ "$m" != "$fallback_model" ] &&
+      grep -Eqi 'model not found|not available|permission denied' "$out" "$err"; then
+      m=$fallback_model
+      bounded codex --model "$m" --full-auto exec - <"$in" >"$out" 2>"$err"
+      rc=$?
+    fi
+    echo "$m" >"$run_dir/$name.model"
+  fi
+  set -e
+  echo "$rc" >"$run_dir/$name.rc"
+}
+
+# classify NAME RC: print the status for a finished pass.
+classify() {
+  local name=$1 rc=$2 out=$run_dir/$1.out err=$run_dir/$1.err
+  case $rc in
+    0)
+      if [ -z "$(tr -d '[:space:]' <"$out")" ] ||
+        [ "$(sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' "$out" | grep -v '^$')" = "No actionable findings." ]; then
+        echo empty
+      else
+        echo findings
+      fi ;;
+    124|137) echo timed-out ;;
+    *)
+      if grep -Eqi 'not logged in|unauthorized|authentication failed|run codex login' "$out" "$err"; then
+        echo auth-failed
+      else
+        echo failed
+      fi ;;
+  esac
+}
+
+names=() tools_of=() dims_of=() mods_of=() reasons=()
+for tool in "${tool_list[@]}"; do
+  for d in "${dims[@]}"; do
+    if [ "$mode" = full ] && [ "$d" != adversarial ]; then
+      targets=("${modules[@]}")
+    else
+      targets=("")
+    fi
+    for target in "${targets[@]}"; do
+      mod=${target%%=*} modfile=${target#*=}
+      name=$tool-$d${mod:+-$mod}
+      names+=("$name") tools_of+=("$tool") dims_of+=("$d") mods_of+=("$mod")
+      reason=$(unavailable_reason "$tool")
+      reasons+=("$reason")
+      [ -n "$reason" ] && continue
+      write_input "$d" "$modfile" "$run_dir/$name.in"
+      if [ "$d" != adversarial ] && [ "$mode" != full ]; then
+        command cp -f "$run_dir/$name.in" "$run_dir/$name.in.prompt"
+        command cat "$run_dir/diff.txt" >>"$run_dir/$name.in"
+      fi
+    done
+  done
+done
+
+ran=0
+for i in "${!names[@]}"; do
+  [ -z "${reasons[$i]}" ] || continue
+  while [ "$(jobs -pr | wc -l)" -ge "$max_parallel" ]; do sleep 1; done
+  run_pass "${names[$i]}" "${tools_of[$i]}" "${dims_of[$i]}" "$mode" &
+  ran=$((ran + 1))
+done
+wait
+
+results=()
+for i in "${!names[@]}"; do
+  name=${names[$i]}
+  base_obj=$(jq -n --arg t "${tools_of[$i]}" --arg d "${dims_of[$i]}" --arg m "${mods_of[$i]}" \
+    '{tool: $t, dimension: $d} + (if $m == "" then {} else {module: $m} end)')
+  if [ -n "${reasons[$i]}" ]; then
+    results+=("$(jq -n --argjson b "$base_obj" --arg r "${reasons[$i]}" \
+      '$b + {status: "unavailable", exit_code: null, output_file: null, stderr_file: null, reason: $r}')")
+    continue
+  fi
+  rc=$(command cat "$run_dir/$name.rc" 2>/dev/null || echo 1)
+  status=$(classify "$name" "$rc")
+  used_model=""
+  [ -f "$run_dir/$name.model" ] && used_model=$(command cat "$run_dir/$name.model")
+  results+=("$(jq -n --argjson b "$base_obj" --arg s "$status" --argjson rc "$rc" \
+    --arg o "$run_dir/$name.out" --arg e "$run_dir/$name.err" --arg m "$used_model" \
+    '$b + (if $m == "" then {} else {model: $m} end)
+     + {status: $s, exit_code: $rc, output_file: $o, stderr_file: $e}')")
+done
+
+base_out=$base
+[ "$mode" = pr ] && base_out=""
+printf '%s\n' "${results[@]}" | jq -s --arg run_dir "$run_dir" --arg mode "$mode" \
+  --arg base "$base_out" --argjson t "$timeout_s" \
+  '{run_dir: $run_dir, mode: $mode, base: (if $base == "" then null else $base end),
+    timeout_seconds: $t, passes: .}' | tee "$run_dir/result.json"
+
+[ "$ran" -gt 0 ] || exit 2
+exit 0

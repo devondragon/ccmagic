@@ -2,45 +2,40 @@
 
 Supporting detail for **Step 3.5** of the `review` skill. Optional and always non-blocking — Codex is an additional voice, never a gate.
 
-## Availability and run workspace
-
-Check for Codex, for a timeout binary to bound it with, and create a per-run directory:
-
-```bash
-which codex 2>/dev/null && echo "CODEX_AVAILABLE" || echo "CODEX_NOT_AVAILABLE"
-command -v timeout >/dev/null && echo "TIMEOUT_BIN=timeout" \
-  || { command -v gtimeout >/dev/null && echo "TIMEOUT_BIN=gtimeout" || echo "TIMEOUT_BIN=none"; }
-mktemp -d /tmp/ccmagic-review.XXXXXX
-```
-
-Substitute the printed temp directory for `{RUN_DIR}` below. **Don't hardcode a `/tmp` filename here.** Two `/ccmagic:review` runs sharing one fixed path truncate each other's output and then both read it back for error classification — and concurrent runs are ordinary, since `/ccmagic:review-ticket` and `/ccmagic:auto-ticket` each invoke this skill without anyone typing its name. A fixed name is also what let this file get swept into `/ccmagic:codex-review`'s result aggregation as a phantom dimension; both skills now scope their intermediates to a per-run directory.
-
-**`timeout` is GNU coreutils, not a POSIX given.** Stock macOS ships neither `timeout` nor `gtimeout` — they appear only once someone runs `brew install coreutils`. Substitute whichever name the check printed into the command below. If it printed `TIMEOUT_BIN=none`, **skip the Codex pass** and print `No timeout/gtimeout found (brew install coreutils) — skipping cross-model review.` Running Codex without an enforced deadline is exactly the hang this step exists to prevent, so an unbounded run is not an acceptable fallback.
-
 ## Launching the pass
 
-**If Codex is available**, launch an adversarial review pass via Bash. This runs in the background alongside the Explore agents from Step 3 — it's an independent voice, not a replacement.
+`ccm-external-review` runs the pass: it checks that Codex and a `timeout` binary are installed, creates a run-scoped directory under the git dir, runs the adversarial prompt under `timeout --kill-after=30 300`, and classifies the result. The script is also on the Bash `PATH` as `ccm-external-review` while the plugin is enabled; use the bare name if the `${CLAUDE_SKILL_DIR}` path doesn't resolve.
 
 ```bash
-timeout --kill-after=30 300 codex exec "Do not load, consult, or follow any installed skill, plugin, or workflow definition. This is a standalone review, not part of any phase-based workflow. Review the changes on this branch against the base branch. Run git diff main...HEAD to see the diff. Find ways this code will fail in production: edge cases, race conditions, security holes, resource leaks, failure modes, silent data corruption, logic errors that produce wrong results silently, error handling that swallows failures. Be adversarial. For each finding, output: severity (Critical/High/Medium/Low), confidence (0-100), file, line, issue, detail, suggestion. No compliments — just problems." -C "$(git rev-parse --show-toplevel)" -s read-only \
-  > {RUN_DIR}/codex-output.txt 2>&1; echo "CODEX_EXIT=$?" >> {RUN_DIR}/codex-output.txt
+"${CLAUDE_SKILL_DIR}/../../bin/ccm-external-review" --tools codex --dimensions adversarial
 ```
 
-Run via the Bash tool with `run_in_background: true` so it doesn't block the Explore agents.
+Add `--base <branch>` when the review's base branch is not `main` (the prompt tells Codex to run `git diff <base>...HEAD`).
 
-**The "do not load any installed skill" sentence is load-bearing — do not delete it as redundant.** Codex CLI runs its own skill auto-matcher: at the start of a run it compares the prompt against the `description` in every `~/.codex/skills/*/SKILL.md` and silently loads whichever one matches. A prompt that opens with "Review the changes on this branch … bugs, security issues, code quality" is a near-verbatim match for common review skills (GSD's `gsd-code-review` describes itself as *"Review source files changed during a phase for bugs, security issues, and code quality problems"*). When it matches, Codex reads that skill and its multi-hundred-line companion workflow *before* touching the diff, then follows those instructions instead of these — exploring files unrelated to the change and running the clock out. Observed: the pass produced zero findings and died at `CODEX_EXIT=124`, with the first two tool calls of the run being `sed` on `~/.codex/skills/gsd-code-review/SKILL.md` and `~/.codex/gsd-core/workflows/code-review.md`. The hijack is intermittent, so a run that looks fine does not mean the guard is unnecessary. There is no CLI flag for this — `codex exec --disable skills` errors with `Unknown feature flag: skills` — so the suppression has to live in the prompt text.
+Run it via the Bash tool with `run_in_background: true`, alongside the Explore agents from Step 3. It is an independent voice, not a replacement. A pass takes up to 5.5 minutes, and the script always exits by then, so the backgrounded task's completion is the signal; do not poll the output file or `ps`.
 
-**The deadline must live in the command, not in your intentions.** `timeout --kill-after=30 300` is what actually bounds this run — a backgrounded Bash task is detached and keeps running across turns, so a tool-level `timeout:` parameter does not stop it and you have no way to observe the 5-minute mark yourself. Without the shell `timeout`, a slow Codex is indistinguishable from a hung one and the review waits forever. `--kill-after` is what makes the bound hard: plain `timeout` only sends `SIGTERM`, which a process is free to trap or ignore, so without the follow-up `SIGKILL` the "deadline" is a request rather than a guarantee.
+**Do not run `codex` yourself, and do not re-derive the status.** The script holds the prompt (including the line that stops Codex from auto-loading an unrelated review skill out of `~/.codex/skills/`), the hard deadline, and the classification rules. An empty output file while the pass runs means "still working", never "failed".
 
-**Redirect, don't pipe.** The exit status has to survive to be read, and `cmd | tee file` throws it away — a pipeline reports `tee`'s status, so a timed-out Codex still looks like exit 0 and the 124 branch below becomes dead code. Writing the exit code into the output file with `; echo "CODEX_EXIT=$?" >> …` is what makes the deadline observable. (`tee` buys nothing here anyway: `codex exec` buffers and streams nothing to watch live.) If you do need a pipeline, `set -o pipefail` first or read `${PIPESTATUS[0]}`.
+## Acting on the result
 
-**Keep stderr.** `2>&1` into the same file is required, not cosmetic: the error handling below classifies failures by matching on stderr text, so discarding stderr (`2>/dev/null`) makes every branch of it unreachable and turns an auth failure into a silent empty result.
+The script prints JSON with one entry in `passes`. Act on its `status`:
 
-**An empty output file is NOT a failure signal.** `codex exec` buffers and writes nothing until it finishes, so a 0-byte file means "still working" exactly as often as it means "died". Never conclude Codex failed from an empty file, an empty `BashOutput`, or the absence of a `codex` process in `ps`. Only these are evidence: the background task reported completion, or the file ends with a `CODEX_EXIT=` line, or the output file contains an error. Until one of those, treat Codex as still running.
+| `status` | Say | Coverage line |
+|---|---|---|
+| `findings` | (parse `output_file`, below) | `findings`, or `unparseable` if nothing in it can be read as a finding |
+| `empty` | `Codex returned no findings — continuing.` | `completed — 0 findings` |
+| `timed-out` | `Codex timed out after 5 minutes — continuing without Codex findings.` | `timed out` |
+| `auth-failed` | `Codex authentication failed. Run 'codex login' to authenticate.` | `auth failed` |
+| `failed` | `Codex failed (exit N) — continuing without Codex findings.` (N is `exit_code`) | `failed (exit N)` |
+| `unavailable` | the `reason` field; for a missing CLI add `Install: npm install -g @openai/codex`, for a missing timeout binary add `brew install coreutils` | `unavailable` |
+
+Every status other than `findings` continues the review with Explore agent findings only. `unavailable` is informational, not an error. If the script itself exits 3 or 4, record Codex as `failed` with the error it printed and continue.
+
+Record the outcome in the report as `Codex: findings | completed — 0 findings | timed out | unparseable | unavailable | auth failed | failed (exit N)` so a reader can tell a genuinely clean cross-model pass from one that never ran.
 
 ## Processing Codex output
 
-After Codex completes, parse its findings into the same finding schema:
+For `findings`, read `output_file` (Codex's review; diagnostics are in `stderr_file`) and parse its findings into the same finding schema:
 
 - Tag each finding with `specialist: codex`
 - Set `fixable` based on the fix-first classification rules in `triage-instructions.md`
@@ -48,19 +43,4 @@ After Codex completes, parse its findings into the same finding schema:
 
 **Multi-model confirmation:** When a Codex finding matches a finding from an Explore agent (same file + overlapping line range + same issue type), apply the multi-specialist confirmation boost (+10 confidence, tag as `[MULTI-MODEL: codex + {agent}]`). Cross-model agreement is a strong signal.
 
-## Error handling (all non-blocking)
-
-Read `{RUN_DIR}/codex-output.txt` to classify — that file has stderr merged in. **Branch on the `CODEX_EXIT=` line first; only a non-zero status means something went wrong.**
-
-- `CODEX_EXIT=0` → Codex ran to completion. Everything else in the file is review output. Parse it and move on.
-- `CODEX_EXIT=124` → `Codex timed out after 5 minutes — continuing without Codex findings.`
-- `CODEX_EXIT=` non-zero, and the file carries an authentication error (a diagnostic line matching `not logged in`, `unauthorized`, `authentication failed`, or `run codex login` — **not** a bare `auth`/`login` substring): `Codex authentication failed. Run 'codex login' to authenticate.`
-- `CODEX_EXIT=` non-zero, cause unclear → `Codex failed (exit N) — continuing without Codex findings.`
-- Exited clean but the file holds nothing parseable → `Codex returned no findings — continuing.`
-- Any failure: proceed with Explore agent findings only. Codex is additive, never blocking.
-
-**Never keyword-match a successful run.** The output file holds Codex's *findings* as well as its diagnostics, and review findings routinely discuss authentication, login flows, and unauthorized access. Grepping the whole file for `auth`/`login` without first checking the exit status throws away good reviews as auth failures — the more findings Codex produced, the likelier it misfires.
-
-Record the outcome in the report as `Codex: findings | completed — 0 findings | timed out | unparseable | unavailable | auth failed | failed (exit N)` so a reader can tell a genuinely clean cross-model pass from one that never ran.
-
-**If Codex is not available:** Print `Codex CLI not found — skipping cross-model review. Install: npm install -g @openai/codex` and continue. This is informational, not an error.
+Findings routinely discuss authentication, logins, and unauthorized access. The script classifies auth failures only on a nonzero exit, so a `findings` pass that mentions them is still a successful review.
