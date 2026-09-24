@@ -36,7 +36,7 @@ This skill and every sub-skill it calls share one contract — the autonomous si
 
 Call `Task` with `run_in_background: false` for every step, and keep every Bash call in the foreground too. This orchestrator is itself a subagent: if it ends its turn to wait for a background step, it returns to its caller before the step reports, and the run summary (Step 6) is never posted. The per-step agents follow the same rule for anything they launch.
 
-There is no inline mode — a forked orchestrator cannot invoke the `context: fork` skills that `work-ticket`/`review-ticket`/`validate` reach, so running steps inline in this orchestrator's own context was never actually achievable. Per-step isolation and per-step models are the whole point of this skill.
+There is no inline mode: a forked orchestrator cannot invoke a `context: fork` skill, and the steps reach forked skills (`validate` itself, and `analyze-impact` from `work-ticket`), so running steps inline in this orchestrator's own context is not achievable. (`review` also ran forked until 3.13.2; it now runs inline.) Per-step isolation and per-step models are the whole point of this skill.
 
 **Every step below runs through `run_step`**, including the `/ccmagic:push` commit-and-push call sites in the Step 3 review-fix loop and Step 4b validate-fix. Nothing else about the flow (route-and-stop, loops, bounds) changes.
 

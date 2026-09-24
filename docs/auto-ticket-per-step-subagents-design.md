@@ -1,6 +1,8 @@
 # Design: per-step subagents + per-step models for `auto-ticket`
 
 **Status:** implemented in 3.2.0 — historical design record
+
+> **Note (3.13.2):** `review` no longer runs with `context: fork`, so the statements below that `review-ticket` or `work-ticket` reach a forked `review` are historical. The constraint they describe still holds for `validate` and `analyze-impact`, which remain forked.
 **Target version:** 3.2.0 (additive feature)
 **Branch:** `feature/auto-ticket-per-step-subagents`
 
