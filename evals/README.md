@@ -10,7 +10,7 @@ evals/run.sh
 
 Add `--no-publish` to keep the report local.
 
-Cases 01 to 05 grant `Bash` so the skill can run `bin/ccm-review-route`, and the eval tool refuses a Bash-granting run while `~/.docker` holds a symlink, which Docker Desktop's `~/.docker/bin` and `~/.docker/cli-plugins` always do. Use `evals/run.sh` instead of calling `claude plugin eval` directly: it runs the tool with `HOME` set to an empty temporary directory, so the check passes without any change to `~/.docker`; it drops installed plugins' `bin/` directories from `PATH` so a bare `ccm-*` name can't resolve to your installed copy of ccmagic; and it adds `--ablation with-without --judge-model opus --trust-plugin --allow-tools Bash`.
+Cases 01 to 05 grant `Bash` so the skill can run `bin/ccm-review-route`, and the eval tool refuses a Bash-granting run while `~/.docker` holds a symlink, which Docker Desktop's `~/.docker/bin` and `~/.docker/cli-plugins` always do. Use `evals/run.sh` instead of calling `claude plugin eval` directly: it runs the tool with `HOME` set to an empty temporary directory, so the check passes without any change to `~/.docker`; it replaces installed plugins' `bin/` directories on `PATH` with this checkout's `bin/`, so a bare `ccm-*` name runs the plugin under test, as it would for an enabled plugin; and it adds `--ablation with-without --judge-model opus --trust-plugin --allow-tools Bash`.
 
 A throwaway `HOME` can't read Claude Code's keychain login, so the script needs a token. One-time setup: run `claude setup-token`, then store the token in the macOS keychain (the command prompts for it, so it never lands in shell history):
 
