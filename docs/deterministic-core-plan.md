@@ -8,13 +8,15 @@ An evaluation of every ccmagic skill found that converting whole skills to code 
 
 The approach: keep every skill, move the mechanical steps into small bash scripts in `bin/` and hooks in `hooks/`, and have the skill act on the script's JSON output. Everything stays bash + `gh` + `jq`, with no Python.
 
-## Done (steps 1 to 3)
+## Done (steps 1 to 5)
 
 | PR | Version | Contents |
 |---|---|---|
 | #42 | 3.8.0 | `bin/ccm-lib.sh` (config parsing), `ccm-context`, `ccm-ci-status`, `ccm-merge-gate`; PreToolUse merge guard; finish-ticket and merge rewired; `tests/run.sh`, `tests/stubs/gh`, `.github/workflows/tests.yml` |
 | #43 | 3.9.0 | Guard also denies force pushes, secret-shaped files, and (autonomous) bad commit subjects; `hooks/lib-commit.sh` |
 | #44 | 3.10.0 | `ccm-pr-threads` (disposition markers decide "handled"), `ccm-pr-reply`; SubagentStop handshake hook; auto-ticket Step 4 and pr-feedback rewired |
+| #45 | 3.11.0 | Step 4: `ccm-validate`; validate and test rewired; `ccm-context` in work-ticket, review-ticket, pr, pr-feedback, auto-ticket; test runner now honors `set -e` |
+| #46 | 3.12.0 | Step 5: `ccm-review-route`, `ccm-post-review` (with `hooks/lib-handshake.sh`), `ccm-external-review`, `ccm-doctor` |
 
 The PRs are stacked: #43 is based on #42's branch, and #44 on #43's. Merge in order and retarget each to `main` after the one below it merges.
 
