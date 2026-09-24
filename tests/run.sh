@@ -899,9 +899,139 @@ validate_pyproject_needs_tool_config() {
   check "$(jq -r '[.checks[] | .command // "-"] | join("|")' <<<"$OUT")" 'ruff format --check|ruff check|-|pytest|-'
 }
 
+# ---- ccm-doctor ------------------------------------------------------------
+
+# level_of AREA MESSAGE-PREFIX: the level of the first matching line in OUT.
+level_of() {
+  jq -r --arg a "$1" --arg m "$2" 'select(.area == $a and (.message | startswith($m))) | .level' <<<"$OUT" | head -1
+}
+
+# message_of MESSAGE-PREFIX: the full message of the first matching line.
+message_of() {
+  jq -r --arg m "$1" 'select(.message | startswith($m)) | .message' <<<"$OUT" | head -1
+}
+
+# seed_plugin: a fake plugin root with one hook and a help listing that
+# names a skill that isn't there.
+seed_plugin() {
+  P=$T/plugin
+  mkdir -p "$P/hooks" "$P/skills/help"
+  touch "$P/hooks/pre-tool-use-guard.sh"
+  # shellcheck disable=SC2016 # literal backticks in the markdown
+  printf '# Help\n\n**`/ccmagic:help`**\n\n**`/ccmagic:gone [x]`**\n' >"$P/skills/help/SKILL.md"
+}
+
+doctor_every_line_is_json() {
+  run "$BIN/ccm-doctor"
+  check "$RC" "0"
+  [ -n "$OUT" ]
+  local line
+  while IFS= read -r line; do
+    check "$(jq -r '[(.level | test("^(OK|WARN|INFO|FAIL)$")), (.area | type), (.message | type), has("fix")] | map(tostring) | join(",")' <<<"$line")" \
+      "true,string,string,true"
+  done <<<"$OUT"
+}
+
+doctor_project_setup() {
+  mkdir -p context
+  echo x >context/conventions.md
+  run "$BIN/ccm-doctor" --quick
+  check "$(level_of "Project setup" context/conventions.md),$(level_of "Project setup" context/branching.md)" "OK,WARN"
+  check "$(level_of "Project setup" context/knowledge/STACK.md)" "INFO"
+  check "$(jq -r 'select(.message == "context/branching.md missing") | .fix' <<<"$OUT")" "/ccmagic:init"
+}
+
+doctor_config_values_and_defaults() {
+  run "$BIN/ccm-doctor" --quick
+  check "$(level_of Configuration .claude/ccmagic.local.md)" "INFO"
+  config 'tracker: github
+ticket_url_base: https://github.com/acme/app/issues/'
+  run "$BIN/ccm-doctor" --quick
+  check "$(level_of Configuration .claude/ccmagic.local.md)" "OK"
+  check "$(message_of "tracker =")" "tracker = github"
+  check "$(message_of "autonomous =")" "autonomous = false (default)"
+  check "$(message_of "github_repo =")" "github_repo = auto-detect via gh"
+}
+
+doctor_quick_only_project_areas() {
+  run "$BIN/ccm-doctor" --quick
+  check "$(jq -rs 'map(.area) | unique | join(",")' <<<"$OUT")" "Configuration,Project setup"
+}
+
+doctor_plugin_files_and_skills() {
+  seed_plugin
+  run "$BIN/ccm-doctor" --plugin-root "$P"
+  check "$RC" "0"
+  check "$(level_of "Hooks and scripts" hooks/pre-tool-use-guard.sh),$(level_of "Hooks and scripts" bin/ccm-validate)" "OK,WARN"
+  check "$(level_of Skills "1 skills present"),$(level_of Skills "skill gone")" "OK,WARN"
+  check "$(level_of Skills "skill help")" ""
+  # The real plugin has these files on every branch.
+  run "$BIN/ccm-doctor"
+  check "$(level_of "Hooks and scripts" bin/ccm-validate),$(level_of "Hooks and scripts" bin/ccm-doctor)" "OK,OK"
+}
+
+doctor_git_user() {
+  export GIT_CONFIG_GLOBAL=$T/no-global GIT_CONFIG_NOSYSTEM=1
+  run "$BIN/ccm-doctor"
+  check "$(level_of Git "git user.name"),$(level_of Git "git user.email")" "WARN,WARN"
+  git config user.name t
+  git config user.email t@t
+  run "$BIN/ccm-doctor"
+  check "$(level_of Git "git user.name"),$(level_of Git "git user.email"),$(level_of Git "git repository")" "OK,OK,OK"
+}
+
+doctor_outside_repo_fails() {
+  mkdir "$T/plain"
+  cd "$T/plain"
+  export GIT_CEILING_DIRECTORIES=$T
+  run "$BIN/ccm-doctor"
+  check "$RC,$(level_of Git "not in a git repository"),$(level_of Validation skipped)" "1,FAIL,INFO"
+  check "$(level_of Branch "")" ""
+}
+
+doctor_branch_and_ticket() {
+  run "$BIN/ccm-doctor"
+  check "$(level_of Branch "branch 'main'"),$(level_of Branch "no ticket ID")" "INFO,INFO"
+  git checkout -q -b feature/ENG-12-thing
+  run "$BIN/ccm-doctor"
+  check "$(level_of Branch "current branch follows"),$(level_of Branch "ticket ID ENG-12")" "OK,OK"
+  git checkout -q -b bugfix/42-fix
+  run "$BIN/ccm-doctor"
+  check "$(level_of Branch "ticket ID 42")" "OK"
+}
+
+doctor_validation_lines() {
+  config 'validate_lint: true
+validate_test: none'
+  run "$BIN/ccm-doctor"
+  check "$(level_of Validation "lint: true (config)"),$(level_of Validation "test: disabled in config")" "OK,OK"
+  check "$(level_of Validation "format: not configured")" "INFO"
+  check "$(jq -rs 'map(select(.area == "Validation")) | length' <<<"$OUT")" "5"
+}
+
+doctor_usage_errors() {
+  run "$BIN/ccm-doctor" --bogus
+  check "$RC" "4"
+  run "$BIN/ccm-doctor" --plugin-root
+  check "$RC" "4"
+  run "$BIN/ccm-doctor" --plugin-root "$T/nope"
+  check "$RC" "4"
+  run "$BIN/ccm-doctor" -h
+  check "$RC" "0"
+  [[ $OUT == *"Exit codes"* ]]
+}
+
+doctor_without_jq_fails() {
+  mkdir "$T/nojq"
+  ln -s "$(command -v bash)" "$T/nojq/bash"
+  ln -s "$(command -v dirname)" "$T/nojq/dirname"
+  run env PATH="$T/nojq" "$BIN/ccm-doctor"
+  check "$RC,$(jqval .level),$(jqval .fix)" "1,FAIL,brew install jq"
+}
+
 # ---- run -------------------------------------------------------------------
 
-for fn in $(declare -F | awk '{print $3}' | grep -E '^(context|ci|merge_gate|guard|post|stop|threads|reply|validate)_'); do
+for fn in $(declare -F | awk '{print $3}' | grep -E '^(context|ci|merge_gate|guard|post|stop|threads|reply|validate|doctor)_'); do
   t "$fn" "$fn"
 done
 
