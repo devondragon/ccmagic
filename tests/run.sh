@@ -1194,6 +1194,8 @@ route_read_errors_exit_3() {
   check "$RC,$(jqval .error)" "3,git diff no-such-ref...HEAD failed"
   run "$BIN/ccm-review-route" --diff-file "$T/missing.diff"
   check "$RC,$(jqval .error)" "3,diff file not found"
+}
+
 # ---- ccm-doctor ------------------------------------------------------------
 
 # level_of AREA MESSAGE-PREFIX: the level of the first matching line in OUT.
@@ -1322,6 +1324,8 @@ doctor_without_jq_fails() {
   ln -s "$(command -v dirname)" "$T/nojq/dirname"
   run env PATH="$T/nojq" "$BIN/ccm-doctor"
   check "$RC,$(jqval .level),$(jqval .fix)" "1,FAIL,brew install jq"
+}
+
 # ---- ccm-external-review ---------------------------------------------------
 
 # seed_cli NAME BODY: a stub CLI in $T/bin that logs its arguments (one per
@@ -1364,8 +1368,8 @@ pass_field() {
     '.passes[] | select(.tool == $t and .dimension == $d) | .[$f] | tostring' <<<"$OUT"
 }
 
-# seed_branch: a feature branch with one changed file, for diff-fed passes.
-seed_branch() {
+# seed_ext_branch: a feature branch with one changed file, for diff-fed passes.
+seed_ext_branch() {
   git checkout -q -b feature/x
   # shellcheck disable=SC2016 # literal file content
   echo 'rm -rf "$DIR/"' >danger.sh
@@ -1374,7 +1378,7 @@ seed_branch() {
 }
 
 extreview_findings_and_empty() {
-  seed_branch
+  seed_ext_branch
   # Findings that talk about authorization must not read as an auth failure.
   seed_cli codex 'echo "| High | 90 | danger.sh:1 | unauthorized deletion, run codex login bypass | x | y | z |"'
   seed_cli gemini 'printf "\n  No actionable findings.  \n\n"'
@@ -1466,7 +1470,7 @@ extreview_no_timeout_binary_skips() {
 }
 
 extreview_model_fallback() {
-  seed_branch
+  seed_ext_branch
   # shellcheck disable=SC2016 # the stub expands $2
   seed_cli codex 'case "$2" in gpt-5.3-codex) echo "Error: model not found" >&2; exit 1 ;; esac; echo "| High | 90 | a | b | c | d | e |"'
   run "$BIN/ccm-external-review" --tools codex --dimensions correctness
@@ -1522,13 +1526,15 @@ extreview_prompt_shape_and_conventions() {
     check "$(tail -n 1 <<<"$OUT")" "Test: specific test to add or update"
     grep -qx "If there are no actionable findings, output exactly: No actionable findings." <<<"$OUT"
   done
-  seed_branch
+  seed_ext_branch
   seed_cli codex 'true'
   run "$BIN/ccm-external-review" --tools codex --dimensions deps --conventions "$T/conv.md"
   grep -qx "Use tabs." "$T/codex.stdin"
 }
 
 # ---- run -------------------------------------------------------------------
+
+MIRRORS=$(mktemp -d)
 
 for fn in $(declare -F | awk '{print $3}' | grep -E '^(context|ci|merge_gate|guard|post|postreview|stop|threads|reply|validate|route|doctor|extreview)_'); do
   t "$fn" "$fn"
