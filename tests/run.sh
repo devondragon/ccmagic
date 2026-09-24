@@ -1550,11 +1550,11 @@ extreview_prompt_shape_and_conventions() {
 # ---- run -------------------------------------------------------------------
 
 MIRRORS=$(mktemp -d)
+trap 'rm -rf "$MIRRORS"' EXIT
 
 for fn in $(declare -F | awk '{print $3}' | grep -E '^(context|ci|merge_gate|guard|post|postreview|stop|threads|reply|validate|route|doctor|extreview)_'); do
   t "$fn" "$fn"
 done
-rm -rf "$MIRRORS"
 
 echo
 echo "$PASS passed, $FAIL failed"

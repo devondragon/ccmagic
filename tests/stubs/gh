@@ -4,8 +4,8 @@
 # protection, status, graphql, graphql-resolve, reply.
 # For each name: NAME.json is printed to stdout, NAME.err to stderr, and
 # NAME.rc (default 0) is the exit code. -q/--jq is applied with jq -r.
-# Every call is appended to $GH_FIXTURES/calls.log. For pr-comment, stdin
-# (the --body-file - body) is saved to $GH_FIXTURES/pr-comment.stdin.
+# Every call is appended to $GH_FIXTURES/calls.log. For pr-comment with
+# --body-file -, stdin is saved to $GH_FIXTURES/pr-comment.stdin.
 set -u
 echo "$*" >>"$GH_FIXTURES/calls.log"
 name=""
@@ -13,7 +13,14 @@ case "$1 ${2:-}" in
   "pr view") name=pr-view ;;
   "pr checks") name=pr-checks ;;
   "pr diff") name=pr-diff ;;
-  "pr comment") name=pr-comment; cat >"$GH_FIXTURES/pr-comment.stdin" ;;
+  "pr comment")
+    name=pr-comment
+    # Read stdin only when the body comes from it, so other calls can't block.
+    case " $* " in
+      *" --body-file - "*) cat >"$GH_FIXTURES/pr-comment.stdin" ;;
+      *) : >"$GH_FIXTURES/pr-comment.stdin" ;;
+    esac
+    ;;
   "run list") name=run-list ;;
   "repo view") name=repo-view ;;
   "api graphql")
