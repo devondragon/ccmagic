@@ -12,7 +12,7 @@ Supporting detail for **Step 3.5** of the `review` skill. Optional and always no
 
 Add `--base <branch>` when the review's base branch is not `main` (the prompt tells Codex to run `git diff <base>...HEAD`).
 
-Run it via the Bash tool with `run_in_background: true`, alongside the Explore agents from Step 3. It is an independent voice, not a replacement. A pass takes up to 5.5 minutes, and the script always exits by then, so the backgrounded task's completion is the signal; do not poll the output file or `ps`.
+In an interactive run, run it via the Bash tool with `run_in_background: true`, alongside the Explore agents from Step 3. When running autonomously (inside `/ccmagic:auto-ticket`'s review step, which is a subagent), run it in the foreground with a 600000 ms timeout after the Step 3 agents return: a subagent cannot wait for a background task, and the script always exits within 5.5 minutes. It is an independent voice, not a replacement. A pass takes up to 5.5 minutes, and the script always exits by then, so the backgrounded task's completion is the signal; do not poll the output file or `ps`.
 
 **Do not run `codex` yourself, and do not re-derive the status.** The script holds the prompt (including the line that stops Codex from auto-loading an unrelated review skill out of `~/.codex/skills/`), the hard deadline, and the classification rules. An empty output file while the pass runs means "still working", never "failed".
 

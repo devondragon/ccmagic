@@ -34,6 +34,8 @@ This skill and every sub-skill it calls share one contract — the autonomous si
 
 `auto-ticket` runs **forked** (`context: fork`), so it executes as a subagent and can spawn a child subagent per step. Every step below always runs **forked** to its per-step agent: `run_step(step, grounding)` = spawn the step's per-step agent via the `Task` tool, passing the grounding block as the task prompt, on the step's model (see the registry), and parse the **last** handshake block from the child's returned text.
 
+Call `Task` with `run_in_background: false` for every step, and keep every Bash call in the foreground too. This orchestrator is itself a subagent: if it ends its turn to wait for a background step, it returns to its caller before the step reports, and the run summary (Step 6) is never posted. The per-step agents follow the same rule for anything they launch.
+
 There is no inline mode — a forked orchestrator cannot invoke the `context: fork` skills that `work-ticket`/`review-ticket`/`validate` reach, so running steps inline in this orchestrator's own context was never actually achievable. Per-step isolation and per-step models are the whole point of this skill.
 
 **Every step below runs through `run_step`**, including the `/ccmagic:push` commit-and-push call sites in the Step 3 review-fix loop and Step 4b validate-fix. Nothing else about the flow (route-and-stop, loops, bounds) changes.

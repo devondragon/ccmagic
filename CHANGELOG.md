@@ -2,6 +2,12 @@
 
 All notable changes to ccmagic are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.12.1] — 2026-09
+
+### Fixed
+
+- `/ccmagic:auto-ticket` lost its review and its run summary when the review step's analysis agents ran in the background. Claude Code launches agents in the background by default, and `auto-review` is a subagent, so it returned as soon as it ended its turn to wait for them: the orchestrator got no verdict, improvised the remaining steps, and never posted the run summary, so the merge gate found no run record (reeve RS-22, 2026-09-24; the same failure as RD-5 on 2026-09-21). The review skill now dispatches every agent batch in the foreground in one message (`run_in_background: false`), which still runs them in parallel, and runs the Codex pass in the foreground when autonomous. `auto-ticket` and every `auto-*` agent keep all `Task` and Bash calls in the foreground.
+
 ## [3.12.0] — 2026-09
 
 ### Added

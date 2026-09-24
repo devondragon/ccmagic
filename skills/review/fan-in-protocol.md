@@ -6,6 +6,10 @@ Supporting detail for **Step 3.9** of the `review` skill. This is the rule that 
 
 Steps 3 and 3.5 dispatch up to 7 agents plus Codex. **Some of them will not report back.** A completion notification can be dropped, an agent can finish abnormally, a CLI can die silently. The pipeline must degrade, not stall — a review that never produces a report is strictly worse than one that reports five dimensions out of six and says so.
 
+## Foreground agents
+
+Agents are dispatched in the foreground (`run_in_background: false`, one message per batch; see the skill's parallel-execution note), so their results arrive in the dispatch message. An agent that errors or returns no findings block counts as not reported. The deadline and waiting rules below matter for anything still running in the background, which is the Codex pass in an interactive run.
+
 ## Every fan-out, not just Step 3
 
 Each of these is a join where one silent agent stalls the whole run, and each gets its own deadline:
@@ -14,7 +18,7 @@ Each of these is a join where one silent agent stalls the whole run, and each ge
 |---|---|
 | Step 3 (branch/PR mode) | up to 7 concern agents |
 | Step 3 (full mode) | module agents, then the Cross-Module Agent |
-| Step 3.5 | the backgrounded Codex pass |
+| Step 3.5 | the Codex pass (backgrounded in an interactive run) |
 | Step 5c | Critical/High verification agents (4 concurrent) |
 
 ## Set the deadline at dispatch, not when you start to worry
