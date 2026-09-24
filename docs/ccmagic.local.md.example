@@ -82,7 +82,13 @@ max_feedback_passes: 3
 # bin/ccm-validate runs format, lint, types, test, and build checks, one command
 # each, and the command's exit code is the verdict. A validate_<check> key sets
 # the command; `none` disables the check; an absent key means detect it from
-# package.json scripts, Makefile targets, go.mod, Cargo.toml, or pyproject.toml.
+# package.json scripts, Makefile targets, Gradle or Maven builds, go.mod,
+# Cargo.toml, or pyproject.toml. A Gradle (build.gradle*, settings.gradle*) or
+# Maven (pom.xml) build is the primary build: it supplies test and build
+# (./gradlew test and build, or ./mvnw -B test and -B verify; gradle or mvn
+# without a wrapper) ahead of package.json and the Makefile, which still supply
+# format, lint, and types. Gradle adds spotlessCheck for format when the root
+# build file applies the Spotless plugin.
 # validate_timeout_seconds bounds each check (a check that hits it fails).
 # validate_format: npm run format:check
 # validate_lint: npm run lint

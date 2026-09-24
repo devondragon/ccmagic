@@ -1003,6 +1003,68 @@ validate_pyproject_needs_tool_config() {
   check "$(jq -r '[.checks[] | .command // "-"] | join("|")' <<<"$OUT")" 'ruff format --check|ruff check|-|pytest|-'
 }
 
+# seed_wrapper NAME [RC]: an executable ./NAME build wrapper stub that logs its
+# arguments to $T/jvm.log and exits RC, so the tests need no Java.
+seed_wrapper() {
+  printf '#!/bin/sh\necho "%s $*" >>"%s/jvm.log"\nexit %s\n' "$1" "$T" "${2:-0}" >"$1"
+  chmod +x "$1"
+}
+
+# commands: the resolved command per check, in order, "-" when skipped.
+commands() { jq -r '[.checks[] | .command // "-"] | join("|")' <<<"$OUT"; }
+
+validate_gradle_wrapper_used() {
+  printf "plugins {\n  id 'java'\n  id 'com.diffplug.spotless' version '6.25.0'\n}\n" >build.gradle
+  seed_wrapper gradlew
+  run "$BIN/ccm-validate" --list
+  check "$(commands)" './gradlew spotlessCheck|-|-|./gradlew test|./gradlew build'
+  run "$BIN/ccm-validate" --only test,build
+  check "$(jqval .status),$RC" "pass,0"
+  check "$(command cat "$T/jvm.log")" $'gradlew test\ngradlew build'
+}
+
+validate_gradle_failing_test_fails() {
+  echo 'rootProject.name = "x"' >settings.gradle.kts
+  seed_wrapper gradlew 1
+  run "$BIN/ccm-validate" --only test
+  check "$(jqval .status),$RC,$(jqval '.checks[0].command')" "fail,1,./gradlew test"
+}
+
+validate_gradle_beats_package_json_for_test_and_build() {
+  seed_pkg '{"lint":"true","test":"false","build":"false"}'
+  echo 'plugins { java }' >build.gradle.kts
+  seed_wrapper gradlew
+  run "$BIN/ccm-validate" --list
+  check "$(commands)" '-|npm run lint|-|./gradlew test|./gradlew build'
+  run "$BIN/ccm-validate"
+  check "$(jqval .status),$RC" "pass,0"
+  check "$(command cat "$T/pm.log")" "npm run lint"
+  check "$(command cat "$T/jvm.log")" $'gradlew test\ngradlew build'
+}
+
+validate_maven_detection() {
+  echo '<project/>' >pom.xml
+  seed_wrapper mvnw
+  run "$BIN/ccm-validate" --list
+  check "$(commands)" '-|-|-|./mvnw -B test|./mvnw -B verify'
+  run "$BIN/ccm-validate"
+  check "$(jqval .status),$RC" "pass,0"
+  check "$(command cat "$T/jvm.log")" $'mvnw -B test\nmvnw -B verify'
+}
+
+validate_jvm_without_wrapper_uses_tool_name() {
+  echo 'rootProject.name = "x"' >settings.gradle
+  run "$BIN/ccm-validate" --list
+  check "$(commands)" '-|-|-|gradle test|gradle build'
+  rm settings.gradle
+  echo '<project/>' >pom.xml
+  run "$BIN/ccm-validate" --list
+  check "$(commands)" '-|-|-|mvn -B test|mvn -B verify'
+  printf '#!/bin/sh\n' >mvnw
+  run "$BIN/ccm-validate" --list
+  check "$(commands)" '-|-|-|sh ./mvnw -B test|sh ./mvnw -B verify'
+}
+
 # ---- ccm-review-route ------------------------------------------------------
 
 # seed_branch FILE LINES [FILE LINES...]: on a feature branch, commit each FILE
