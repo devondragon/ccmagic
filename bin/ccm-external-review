@@ -52,7 +52,8 @@
 # Each pass writes to a run-scoped directory under the git dir
 # (.git/ccmagic/external-review/run.XXXXXX): NAME.in (the input it was fed),
 # NAME.out (stdout, the review), NAME.err (stderr), NAME.rc (exit status).
-# The printed JSON is also saved there as result.json.
+# The printed JSON is also saved there as result.json. Only the 10 most
+# recent run directories are kept.
 #
 # Pass status, decided from the exit status first, never from keywords alone:
 #   findings     exit 0, and stdout holds something besides "No actionable
@@ -388,6 +389,10 @@ if [ "${#modules[@]}" -gt 0 ]; then mode=full; fi
 
 state=$(ccm_state_dir)/external-review
 mkdir -p "$state"
+# Keep the 9 most recent runs; with this one that makes 10. Run directory
+# names come from mktemp, so parsing ls output is safe here.
+# shellcheck disable=SC2012
+{ ls -1dt "$state"/run.* 2>/dev/null || true; } | tail -n +10 | while IFS= read -r old; do rm -rf "$old"; done
 run_dir=$(mktemp -d "$state/run.XXXXXX")
 
 # The diff is needed only by dimension passes outside full mode.

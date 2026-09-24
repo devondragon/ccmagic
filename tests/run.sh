@@ -1440,6 +1440,21 @@ extreview_hang_times_out() {
   [ $((SECONDS - start)) -lt 15 ]
 }
 
+extreview_keeps_ten_most_recent_runs() {
+  seed_cli gemini 'echo "No actionable findings."'
+  local state i
+  state="$(git rev-parse --path-format=absolute --git-dir)/ccmagic/external-review"
+  mkdir -p "$state"
+  for i in 01 02 03 04 05 06 07 08 09 10 11 12; do
+    mkdir "$state/run.old$i"
+    touch -t "2026010100$i" "$state/run.old$i"
+  done
+  run "$BIN/ccm-external-review" --dimensions adversarial
+  check "$RC,$(find "$state" -maxdepth 1 -name 'run.*' | wc -l | tr -d ' ')" "0,10"
+  [ ! -e "$state/run.old01" ] && [ -d "$state/run.old12" ]
+  [ -f "$(jq -r '.run_dir // empty' <<<"$OUT")/result.json" ] || [ -n "$(find "$state" -name result.json)" ]
+}
+
 extreview_unavailable_when_not_on_path() {
   seed_cli gemini 'echo "No actionable findings."'
   run "$BIN/ccm-external-review" --dimensions adversarial

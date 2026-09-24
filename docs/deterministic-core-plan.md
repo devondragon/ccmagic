@@ -29,7 +29,7 @@ The PRs are stacked: #43 is based on #42's branch, and #44 on #43's. Merge in or
 - **Every PR**:
   - bump the minor version in `.claude-plugin/plugin.json` and `.claude-plugin/marketplace.json`;
   - add a CHANGELOG entry;
-  - update the README "Hooks and scripts" section, the `doctor` file list (section 4), and the `.claude/CLAUDE.md` layout if files were added;
+  - update the README "Hooks and scripts" section, the file list in `bin/ccm-doctor` (it moved out of the doctor skill in step 5), and the `.claude/CLAUDE.md` layout if files were added;
   - use a conventional-commit subject with no attribution trailer.
 
 ## Step 4: `ccm-validate`, and `ccm-context` in the remaining skills
