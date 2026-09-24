@@ -41,11 +41,13 @@ Baseline on main at e87c906 (2026-09-18, 3 runs per arm): mean Δ +0.20, $4.77, 
 
 After the issue #37 fix (3 runs per arm, -j 4), case 05-quick-noise-bait scores with 1.00, without 0.00, Δ +1.00, with `no-noise-findings` passing 3/3 in the with-plugin arm (0/3 at the baseline).
 
+After the issue #35 fix (full suite, 3 runs per arm, -j 4): mean Δ +0.25, $8.37, 764 s. Measured before 3.12.0 added Bash to cases 01 to 05 and the `routes-match-script` grader, so later runs are not directly comparable.
+
 Known conditions of the without-plugin arm: the sandbox still has the built-in `/code-review` skill, and the model used it on several runs. The without arm is therefore "Claude with generic review tooling," not a bare model.
 
 Known findings from the pilots, kept in the suite on purpose:
 
-- Natural-language review requests (02, 04) did not trigger the skill in any pilot or baseline run; only the explicit slash command did (issue #35, open).
+- Natural-language review requests (02, 04) now trigger the skill after the issue #35 description rewrite: `review-fired` in the with-plugin arm went from 0/3 to 3/3 on both cases across two full suite runs. The routing-line and confidence regex graders still read 0/3 on those cases because the skill runs under `context: fork` when reached through the Skill tool, and the parent summarizes the fork's report in its own words, dropping the routing line and confidence scores. Slash-command prompts are expanded inline by the harness, which is why 01, 03, and 05 match. Issue #35 stays open for that half; it is a `context: fork` design decision, not a wording problem.
 - With the skill, the review reported "PASS WITH WARNINGS" on INFO-only findings in one run of 01, against its own verdict rule (issue #36; verdict rule made explicit in PR #38).
 - With the skill, a removed JSDoc block was reported as a WARNING in 05, although the skill's finding rules exclude missing comments unless a convention requires them (issue #37; fixed in PR #38, case 05 with-arm 0.33 to 1.00).
 - In DEEP mode with no repository present, the skill performed the analysis inline and dispatched no Explore agents, and said so in Coverage.
