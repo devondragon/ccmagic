@@ -2,7 +2,7 @@
 name: review-ticket
 description: Ticket-grounded code review. Fetches the ticket from Linear, GitHub Issues, or JIRA, then runs /ccmagic:review with the ticket scope as the primary intent source. Adds an explicit Ticket-scope drift section (in-scope / out-of-scope / missing-from-ticket).
 user-invocable: true
-allowed-tools: Read(*), Bash(git diff:*, git log:*, git status:*, git branch:*, git show:*, git show-ref:*, git rev-parse:*, git merge-base:*, git ls-files:*, gh issue view:*, gh issue comment:*, gh pr view:*, gh pr diff:*, gh pr list:*, gh pr comment:*, gh repo view:*), Bash(${CLAUDE_SKILL_DIR}/../../bin/ccm-context *), Glob(*), Grep(*), Agent(*), Task(*), TodoWrite(*), AskUserQuestion(*), Skill(*)
+allowed-tools: Read(*), Bash(git diff:*, git log:*, git status:*, git branch:*, git show:*, git show-ref:*, git rev-parse:*, git merge-base:*, git ls-files:*, gh issue view:*, gh issue comment:*, gh pr view:*, gh pr diff:*, gh pr list:*, gh pr comment:*, gh repo view:*), Bash(${CLAUDE_SKILL_DIR}/../../bin/ccm-context *), Bash(${CLAUDE_SKILL_DIR}/../../bin/ccm-post-review *), Glob(*), Grep(*), Agent(*), Task(*), TodoWrite(*), AskUserQuestion(*), Skill(*)
 argument-hint: "[TICKET-ID] [--threshold N]"
 model: inherit
 ---
@@ -13,7 +13,7 @@ Runs a full code review with the **ticket as the ground truth for intent**. The 
 
 **On invocation, announce:** "I'll resolve your tracker, fetch the ticket, run the scope-drift check against acceptance criteria, then call /ccmagic:review with the ticket context attached. The final report includes a Ticket-scope drift section."
 
-**This skill is read-only against the codebase.** It reports and verdicts; it never edits source, and never runs `git add`, `git commit`, `git push`, `gh pr create`, or `gh pr merge` — the frontmatter grants only read-only `git`/`gh` subcommands plus the two comment-posting ones it needs. `/ccmagic:review` runs here **without** `--fix`, even when the findings look mechanically fixable. Applying fixes is the caller's job: interactively that's you, and under `/ccmagic:auto-ticket` it's the orchestrator's bounded fix loop, which applies the findings, pushes via `/ccmagic:push`, and re-invokes this skill for a delta pass. Fixing your own findings and then verifying them yourself is self-certification — the separation is what makes the re-review worth anything.
+**This skill is read-only against the codebase.** It reports and verdicts; it never edits source, and never runs `git add`, `git commit`, `git push`, `gh pr create`, or `gh pr merge` — the frontmatter grants only read-only `git`/`gh` subcommands plus the two comment-posting ones it needs and `ccm-post-review` for the report. `/ccmagic:review` runs here **without** `--fix`, even when the findings look mechanically fixable. Applying fixes is the caller's job: interactively that's you, and under `/ccmagic:auto-ticket` it's the orchestrator's bounded fix loop, which applies the findings, pushes via `/ccmagic:push`, and re-invokes this skill for a delta pass. Fixing your own findings and then verifying them yourself is self-certification — the separation is what makes the re-review worth anything.
 
 ## When to use this vs `/ccmagic:review`
 
@@ -232,7 +232,19 @@ Absent all three, run the interactive path exactly as documented above. Also rea
   - **Out-of-scope changes** stay, but flag each one — leave the out-of-scope table populated and post a PR comment listing them — unless this pass's report is being posted as a PR comment (the *Report posting* rule below): a full report carries the out-of-scope table itself, and a delta report carries net-new out-of-scope items plus the reference to the prior report's table; either way, don't post both. Do not revert.
   - **Missing AC** → treat as *not-done*: `fixable-findings` if the caller can close it in-scope; `needs-human` if it can't.
   - **CRITICAL findings** from `/ccmagic:review` must be fixed before proceeding → return them under `fixable-findings` (the caller fixes and re-reviews). A CRITICAL finding that needs human judgment → `needs-human`.
-- **Report posting:** if a PR exists for the branch, post the Step 6 combined report (or the delta report on re-review passes) as a PR comment (`gh pr comment`). Every posted report, full or delta, begins with the `# Ticket-Grounded Review: {TICKET-ID}` heading line with no preamble before it, and in autonomous mode ends with the handshake shown under *Verdict → handshake mapping*: the same keys in the same order, the actual verdict filled into `status:`, inside a code fence, as the last thing in the comment body (an external merge gate selects the comment by that heading and reads the handshake block that ends it; a fenced block is the rendering it reads without ambiguity); with no PR (e.g. a standalone pre-PR review), skip — the report in your output is the artifact. If the `gh pr comment` post itself fails, say so in your output and continue — a later delta pass then leans on the grounding block's `previous_findings:` alone (the prior-comment reference is a convenience, not a dependency).
+- **Report posting:** if a PR exists for the branch, post the Step 6 combined report (or the delta report on re-review passes) as a PR comment. Every posted report, full or delta, begins with the `# Ticket-Grounded Review: {TICKET-ID}` heading line with no preamble before it, and in autonomous mode ends with the handshake shown under *Verdict → handshake mapping*: the same keys in the same order, the actual verdict filled into `status:`, inside a code fence, as the last thing in the comment body (an external merge gate selects the comment by that heading and reads the handshake block that ends it; a fenced block is the rendering it reads without ambiguity); with no PR (e.g. a standalone pre-PR review), skip — the report in your output is the artifact.
+
+  Post it with `ccm-post-review`, never with `gh pr comment` directly. It reads the report on stdin, checks the heading and the fenced handshake, and only then posts. Pass the PR number from the Step 0 `ccm-context` output (`pr.number`), or omit it to use the current branch's PR:
+  ```bash
+  "${CLAUDE_SKILL_DIR}/../../bin/ccm-post-review" {PR} <<'CCM_REVIEW_EOF'
+  # Ticket-Grounded Review: {TICKET-ID}
+  ...
+  CCM_REVIEW_EOF
+  ```
+  The script is also on the Bash `PATH` as `ccm-post-review` while the plugin is enabled; use the bare name if the `${CLAUDE_SKILL_DIR}` path doesn't resolve. Act on its exit code:
+  - **0:** posted; the JSON has the comment `url`.
+  - **1:** refused, nothing posted. `problems` lists what is wrong with the report's format. Fix the report and run it again; do not post it any other way.
+  - **3:** the post itself failed (no PR for the branch, GitHub error). Say so in your output and continue. A later delta pass then leans on the grounding block's `previous_findings:` alone (the prior-comment reference is a convenience, not a dependency).
 - **Re-review passes (`review_pass:` ≥ 2 in the grounding block):** post a **delta report** instead of a full fresh one, under the same `# Ticket-Grounded Review: {TICKET-ID}` heading line and ending with the same fenced handshake — each entry in the grounding block's `previous_findings:` list verified and reported fixed / not-fixed as one-liners, net-new findings in full (schema unchanged), and a reference to the previous pass's report comment on the PR (fetch via `gh pr view --json comments` if needed) instead of repeating unchanged sections. Verdict and handshake semantics are unchanged, and the systemic-enumeration and scoped-all-clear rules apply in full on every pass.
 
 ### Verdict → handshake mapping
