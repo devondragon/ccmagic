@@ -624,6 +624,19 @@ stop_missing_follow_ups_blocked() {
   check "$(blocked)" "block"
 }
 
+stop_requested_state_after_follow_ups_passes() {
+  run_stop_hook $'PR opened.\n\nstatus: done\nreason: https://github.com/acme/app/pull/7\nfollow_ups: []\nrequested_state: In Review' ccmagic:auto-work
+  check "$(blocked)" "allow"
+}
+
+# A report written as a pseudo tool call (seen in the first auto-ticket field
+# run) is sent back, and the reason tells the agent how to hand back properly.
+stop_handback_tag_as_text_blocked() {
+  run_stop_hook $'status: done\nreason: pushed 1 commit\nfollow_ups: []\n\n<SubagentHandback>\nmessage: Push complete.\n</SubagentHandback>' ccmagic:auto-push
+  check "$(blocked)" "block"
+  [[ $(jq -r .reason <<<"$OUT") == *"SubagentHandback tool, its message must be your full report ending with this block"* ]]
+}
+
 stop_second_attempt_released() {
   run_stop_hook 'still no handshake' ccmagic:auto-finish true
   check "$(blocked)" "allow"
