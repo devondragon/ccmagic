@@ -21,7 +21,7 @@ Perform an adaptive code review that **auto-routes between QUICK and DEEP** base
 
 The one permitted write is `--fix` (Step 7a), and it edits the **working tree only** — the user reviews the diff and commits it themselves. Without `--fix`, do not use `Edit` on source files at all.
 
-> **Parallel execution:** Launch independent agents simultaneously. Claude Code determines when this is safe.
+> **Parallel execution:** Launch independent agents simultaneously, all of a batch in one message, each with `run_in_background: false`. Foreground agents in one message still run in parallel, and their results come back in that message. A background agent reports only through a completion notification, and when this skill runs inside a subagent (the `auto-review` step of `/ccmagic:auto-ticket`), that subagent returns to its caller as soon as it ends its turn, before any notification arrives: the review is lost and the step has no verdict. The one background task allowed is the Codex pass in an interactive run (Step 3.5).
 
 ## Step 0: Parse Arguments
 
@@ -289,7 +289,7 @@ After the review completes, record the counts as in Step 7d.
 
 Load `${CLAUDE_SKILL_DIR}/codex-pass.md` and follow it. It covers running the pass with `ccm-external-review` and acting on the status it reports.
 
-In short: run `"${CLAUDE_SKILL_DIR}/../../bin/ccm-external-review" --tools codex --dimensions adversarial` (bare name `ccm-external-review` also works; plugin `bin/` is on `PATH`) in the background alongside the Step 3 agents. The script checks availability, bounds the pass with `timeout --kill-after=30 300`, and classifies it by exit status; act on its `status` rather than re-deriving it. Codex is additive and never blocking — every failure mode continues the review with Explore agent findings only.
+In short: run `"${CLAUDE_SKILL_DIR}/../../bin/ccm-external-review" --tools codex --dimensions adversarial` (bare name `ccm-external-review` also works; plugin `bin/` is on `PATH`) in the background alongside the Step 3 agents in an interactive run, or in the foreground with a 600000 ms timeout when running autonomously. The script checks availability, bounds the pass with `timeout --kill-after=30 300`, and classifies it by exit status; act on its `status` rather than re-deriving it. Codex is additive and never blocking — every failure mode continues the review with Explore agent findings only.
 
 ---
 
