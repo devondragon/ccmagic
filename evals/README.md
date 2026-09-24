@@ -10,6 +10,12 @@ claude plugin eval . --ablation with-without --judge-model opus
 
 Add `--no-publish` to keep the report local.
 
+Cases 01 to 05 grant `Bash` so the skill can run `bin/ccm-review-route`. The eval tool refuses a run that grants Bash while `~/.docker` contains a symlink (Docker Desktop's `~/.docker/bin/*` links are enough), so move those out of the way first. `--case` takes a name glob, but bracket and brace patterns such as `0[24]*` match nothing and a repeated `--case` keeps only the last, so run a subset one case at a time:
+
+```
+claude plugin eval . --ablation with-without --judge-model opus --no-publish --trust-plugin --allow-tools Bash --runs 3 --case 02-quick-off-by-one
+```
+
 ## Cases
 
 | case | shape | expected routing | outcome graders (weight 1) | format graders (weight 0.5) | invariants |
