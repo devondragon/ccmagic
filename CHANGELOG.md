@@ -2,6 +2,15 @@
 
 All notable changes to ccmagic are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.13.2] - 2026-09
+
+### Fixed
+
+- Natural-language review requests now show the full `/ccmagic:review` report, including the routing line and the severity sections, because the skill no longer runs under `context: fork`. In eval cases 02 and 04, every run where the skill fired showed the routing line in its final message, against 0/3 with the fork; see `evals/README.md`.
+- `ccm-review-route` no longer writes a temp file, and the skills' heredocs (review's pasted diff, review-ticket's `ccm-post-review` call, finish-ticket's GitHub comment) set `TMPPREFIX` under `$TMPDIR`. zsh, the default macOS shell, writes heredoc temp files to `/tmp` regardless of `TMPDIR`, so under a sandbox that allows only `$TMPDIR` the heredoc failed before the script ran and the review improvised its routing line.
+- The review's final report starts with the routing line. Running inline, the early announcement can sit several tool calls above the report.
+- `evals/run.sh` runs the eval suite with `HOME` set to a temporary directory, so the eval tool's refusal of Bash-granting runs when `~/.docker` holds symlinks (Docker Desktop always creates some) no longer blocks cases 01 to 05. It authenticates with a `claude setup-token` token from the keychain or environment. Reached through the Skill tool, the forked review returned its report to the parent conversation, which wrote its own summary and dropped the routing line, the report structure, and the confidence percentages. The skill now runs inline and its report is the user-facing message; the DEEP path still isolates the heavy reading in its Explore agents. The QUICK path now reads only the lines around a finding instead of whole files, and the skill says that "stop" returns to the calling skill when `/ccmagic:review-ticket` or `/ccmagic:work-ticket` invoked it (issue #35).
+
 ## [3.13.1] - 2026-09
 
 ### Fixed

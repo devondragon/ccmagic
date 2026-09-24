@@ -5,7 +5,6 @@ allowed-tools: Read(*), Edit(*), Bash(git diff:*, git log:*, git status:*, git b
 description: Use when the user asks for a code review of a change, diff, branch, or PR, including a diff pasted inline and phrasings like "review this before I open the PR", "can you code review this?", or "look over this change". Auto-routes between a fast inline checklist (QUICK) and the full multi-agent pipeline (DEEP), biased toward depth, with confidence scoring and convention awareness.
 argument-hint: "[branch|full|PR#] [--quick|--deep] [--fix] [--threshold N]"
 model: sonnet
-context: fork
 ---
 
 # Code Review Command
@@ -50,12 +49,12 @@ In branch and PR mode, always run the router script and act on its JSON. It appl
 ```bash
 "${CLAUDE_SKILL_DIR}/../../bin/ccm-review-route"      # branch mode (main...HEAD)
 "${CLAUDE_SKILL_DIR}/../../bin/ccm-review-route" 42   # PR mode
-"${CLAUDE_SKILL_DIR}/../../bin/ccm-review-route" --diff-file - <<'CCM_DIFF_END'
+TMPPREFIX="${TMPDIR:-/tmp}/zsh"; "${CLAUDE_SKILL_DIR}/../../bin/ccm-review-route" --diff-file - <<'CCM_DIFF_END'
 <the pasted diff, verbatim, when there is no checkout>
 CCM_DIFF_END
 ```
 
-The script is also on the Bash `PATH` as `ccm-review-route`; use the bare name if the `${CLAUDE_SKILL_DIR}` path doesn't resolve. Keep its `gated` list for Step 3. Exit 3 means it couldn't read the diff: route DEEP and print `Routing → DEEP, reason: router failed: <error>`.
+The script is also on the Bash `PATH` as `ccm-review-route`; use the bare name if the `${CLAUDE_SKILL_DIR}` path doesn't resolve. The `TMPPREFIX=` assignment keeps zsh (the default macOS shell) writing its heredoc temp file under `$TMPDIR`; without it zsh uses `/tmp`, which a sandboxed Bash may refuse, and the heredoc fails before the script runs. It is harmless in bash. Keep its `gated` list for Step 3. Exit 3 means it couldn't read the diff: route DEEP and print `Routing → DEEP, reason: router failed: <error>`.
 
 Then pick the route, first match wins:
 
@@ -72,11 +71,13 @@ Routing → DEEP, reason: 3 files (limit 2), 120 lines (limit 50), touches src/a
 
 With an override, print `Routing → QUICK, reason: --quick override` (or `--deep override`, or `full mode`).
 
+Print the same line again as the **first line of the final report** (QUICK output and the Step 6 report). The review runs inline, so tool calls separate the early announcement from the report, and a reader who sees only the report must still see which review they got.
+
 **If QUICK was selected, skip ahead to the [QUICK execution](#quick-execution) section. If DEEP, continue with Step 1.**
 
 ## QUICK execution
 
-If Step 0.5 selected QUICK, walk this checklist line by line against the diff. Don't skip categories. Load full file context when needed.
+If Step 0.5 selected QUICK, walk this checklist line by line against the diff. Don't skip categories. Work from the diff; when a finding depends on code outside the hunk, read only the lines around it (`Read` with `offset` and `limit`), not whole files.
 
 Before reporting, read `${CLAUDE_SKILL_DIR}/finding-schema.md` and apply its **What NOT to Report** exclusions. Formatting and whitespace, import ordering, TODO/FIXME/HACK markers, and missing or removed comments and JSDoc (absent an explicit documented convention requiring them) are never CRITICAL or WARNING findings, and usually are not findings at all.
 
@@ -115,7 +116,7 @@ Final verdict line. Only CRITICAL and WARNING findings decide the verdict; INFO 
 - **PASS WITH WARNINGS** — one or more WARNING findings, no CRITICAL; merge at reviewer's discretion.
 - **FAIL** — one or more CRITICAL findings; address before merge.
 
-After producing the report, **stop**. Do not continue into DEEP mode steps.
+After producing the report, **stop**. Do not continue into DEEP mode steps. (If another skill invoked this one, such as `/ccmagic:review-ticket` or `/ccmagic:work-ticket`, stopping ends the review only: go back to that skill's next step.)
 
 If `--fix` was passed, apply mechanical fixes under the Step 7a rules (working tree only, clean-tree precondition, no commit) and then stop. Without `--fix`, QUICK ends at the report — change nothing.
 
@@ -479,5 +480,7 @@ Record the user's decision in the report.
 ## Execution
 
 When invoked, immediately begin the review process without asking for confirmation. Be thorough but concise. Every finding must meet the confidence threshold and follow the finding schema. Quality over quantity — 5 verified, actionable findings beat 30 unvalidated observations.
+
+This skill runs inline, so its report is the message the user reads. When another skill invoked it (`/ccmagic:review-ticket`, `/ccmagic:work-ticket`), the report goes back to that skill, which continues with its next step.
 
 **End state:** a report. Without `--fix`, the repository is byte-for-byte unchanged when you finish. With `--fix`, the working tree carries the fixes and nothing is staged, committed, pushed, or turned into a PR. Committing and pushing belong to `/ccmagic:push`; merging belongs to `/ccmagic:merge`. A review that lands its own changes has destroyed the thing that makes it a review — an independent read of work someone else decided to keep.

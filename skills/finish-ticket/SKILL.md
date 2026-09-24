@@ -374,7 +374,7 @@ Compose the closing comment first (same body for all trackers):
 ### GitHub
 
 ```bash
-gh issue comment {N} --body "$(cat <<'EOF'
+TMPPREFIX="${TMPDIR:-/tmp}/zsh"; gh issue comment {N} --body "$(cat <<'EOF'
 {closing comment content}
 EOF
 )"

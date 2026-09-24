@@ -2,13 +2,27 @@
 
 Covers the `/ccmagic:review` skill only. Every case pastes a unified diff inline and states that no git checkout exists, so the skill has to review the supplied diff. Each case runs in two arms (with the plugin, without it) and the headline number is Δ = with-plugin score minus without-plugin score.
 
-Run the full suite (3 runs per case, both arms, opus judge):
+Run the full suite (3 runs per case, both arms, opus judge) with the wrapper described below:
 
 ```
-claude plugin eval . --ablation with-without --judge-model opus
+evals/run.sh
 ```
 
 Add `--no-publish` to keep the report local.
+
+Cases 01 to 05 grant `Bash` so the skill can run `bin/ccm-review-route`, and the eval tool refuses a Bash-granting run while `~/.docker` holds a symlink, which Docker Desktop's `~/.docker/bin` and `~/.docker/cli-plugins` always do. Use `evals/run.sh` instead of calling `claude plugin eval` directly: it runs the tool with `HOME` set to an empty temporary directory, so the check passes without any change to `~/.docker`; it replaces installed plugins' `bin/` directories on `PATH` with this checkout's `bin/`, so a bare `ccm-*` name runs the plugin under test, as it would for an enabled plugin; and it adds `--ablation with-without --judge-model opus --trust-plugin --allow-tools Bash`.
+
+A throwaway `HOME` can't read Claude Code's keychain login, so the script needs a token. One-time setup: run `claude setup-token`, then store the token in the macOS keychain (the command prompts for it, so it never lands in shell history):
+
+```
+security add-generic-password -a "$USER" -s ccmagic-eval-oauth-token -w
+```
+
+The script also accepts an exported `CLAUDE_CODE_OAUTH_TOKEN`, or `ANTHROPIC_API_KEY` (billed per use). `--case` takes a name glob, but bracket and brace patterns such as `0[24]*` match nothing and a repeated `--case` keeps only the last, so run a subset one case at a time:
+
+```
+evals/run.sh --no-publish --runs 3 --case 02-quick-off-by-one
+```
 
 ## Cases
 
@@ -42,6 +56,8 @@ Baseline on main at e87c906 (2026-09-18, 3 runs per arm): mean Δ +0.20, $4.77, 
 After the issue #37 fix (3 runs per arm, -j 4), case 05-quick-noise-bait scores with 1.00, without 0.00, Δ +1.00, with `no-noise-findings` passing 3/3 in the with-plugin arm (0/3 at the baseline).
 
 After the issue #35 fix (full suite, 3 runs per arm, -j 4): mean Δ +0.25, $8.37, 764 s. Measured before 3.12.0 added Bash to cases 01 to 05 and the `routes-match-script` grader, so later runs are not directly comparable.
+
+After dropping `context: fork` (3.13.2, cases 02 and 04 only, 3 runs per arm, `evals/run.sh`, 2026-09-24): in every with-plugin run where the skill fired, the routing line reached the final message (02: 1/1, the script's exact line; 04: 2/2, one exact), against 0/3 on `main` with the fork. Mean Δ +0.14 on both cases (`main`: -0.19 and 0.00). `confidence-score-present` on 04 was 2/3 in one run and 0/3 in the next. `review-fired` was 1/3 (02) and 2/3 (04), and `main` measured 2/3 and 1/3 the same day, so the 3/3 recorded after the #35 description fix no longer reproduces on either side; that is a triggering question separate from the fork.
 
 Known conditions of the without-plugin arm: the sandbox still has the built-in `/code-review` skill, and the model used it on several runs. The without arm is therefore "Claude with generic review tooling," not a bare model.
 

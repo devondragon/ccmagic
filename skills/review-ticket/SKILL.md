@@ -236,12 +236,12 @@ Absent all three, run the interactive path exactly as documented above. Also rea
 
   Post it with `ccm-post-review`, never with `gh pr comment` directly. It reads the report on stdin, checks the heading and the fenced handshake, and only then posts. Pass the PR number from the Step 0 `ccm-context` output (`pr.number`), or omit it to use the current branch's PR:
   ```bash
-  "${CLAUDE_SKILL_DIR}/../../bin/ccm-post-review" {PR} <<'CCM_REVIEW_EOF'
+  TMPPREFIX="${TMPDIR:-/tmp}/zsh"; "${CLAUDE_SKILL_DIR}/../../bin/ccm-post-review" {PR} <<'CCM_REVIEW_EOF'
   # Ticket-Grounded Review: {TICKET-ID}
   ...
   CCM_REVIEW_EOF
   ```
-  The script is also on the Bash `PATH` as `ccm-post-review` while the plugin is enabled; use the bare name if the `${CLAUDE_SKILL_DIR}` path doesn't resolve. Act on its exit code:
+  The script is also on the Bash `PATH` as `ccm-post-review` while the plugin is enabled; use the bare name if the `${CLAUDE_SKILL_DIR}` path doesn't resolve. The `TMPPREFIX=` assignment keeps zsh (the default macOS shell) writing its heredoc temp file under `$TMPDIR`; without it zsh uses `/tmp`, which a sandboxed Bash may refuse, and the heredoc fails before the script runs. It is harmless in bash. Act on its exit code:
   - **0:** posted; the JSON has the comment `url`.
   - **1:** refused, nothing posted. `problems` lists what is wrong with the report's format. Fix the report and run it again; do not post it any other way.
   - **3:** the post itself failed (no PR for the branch, GitHub error). Say so in your output and continue. A later delta pass then leans on the grounding block's `previous_findings:` alone (the prior-comment reference is a convenience, not a dependency).

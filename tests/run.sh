@@ -1264,6 +1264,20 @@ route_usage_errors() {
   done
 }
 
+route_works_without_a_writable_tmpdir() {
+  # A sandboxed Bash may refuse temp-file writes (the eval tool's does:
+  # "mktemp: Operation not permitted"); routing a diff must not need one.
+  mkdir -p "$T/nomktemp"
+  printf '#!/bin/sh\necho "mktemp: Operation not permitted" >&2\nexit 1\n' >"$T/nomktemp/mktemp"
+  chmod +x "$T/nomktemp/mktemp"
+  OUT=$(printf '%s\n' '--- a/x.txt' '+++ b/x.txt' '@@ -0,0 +1 @@' '+hi' |
+    PATH="$T/nomktemp:$PATH" "$BIN/ccm-review-route" --diff-file - 2>"$T/stderr") && RC=0 || RC=$?
+  check "$RC,$(jqval .route),$(jqval .files)" "0,QUICK,1"
+  run env PATH="$T/nomktemp:$PATH" "$BIN/ccm-review-route" no-such-ref...HEAD
+  check "$RC,$(jqval .error)" "3,git diff no-such-ref...HEAD failed"
+  [[ $(jqval .detail) == *"no-such-ref"* ]]
+}
+
 route_read_errors_exit_3() {
   run "$BIN/ccm-review-route" no-such-ref...HEAD
   check "$RC,$(jqval .error)" "3,git diff no-such-ref...HEAD failed"

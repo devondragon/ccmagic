@@ -138,6 +138,9 @@ ccmagic/
 ├── tests/
 │   ├── run.sh                 # plain-bash tests for bin/ and hooks/
 │   └── stubs/gh               # gh stub fed recorded API output
+├── evals/
+│   ├── NN-*/                  # review eval cases (prompt, graders)
+│   └── run.sh                 # runs the suite under a temp HOME (see evals/README.md)
 ├── docs/
 │   └── ccmagic.local.md.example  # Template for per-project config
 ├── .claude/CLAUDE.md          # ← you are here (dev notes + conventions)
@@ -160,12 +163,12 @@ context: fork                  # For heavy skills (subagent isolation)
 ```
 
 - **All skills are user-invocable and model-invocable.**
-- `context: fork` skills: `map-codebase`, `review`, `codex-review`, `validate`, `analyze-impact`, `research`, `doctor`, `design-explore`, `design-qa`, `browser-qa`, `auto-ticket`.
+- `context: fork` skills: `map-codebase`, `codex-review`, `validate`, `analyze-impact`, `research`, `doctor`, `design-explore`, `design-qa`, `browser-qa`, `auto-ticket`.
 - Do **not** use `disable-model-invocation: true` — it's broken for plugin skills (see [#22345](https://github.com/anthropics/claude-code/issues/22345), [#24042](https://github.com/anthropics/claude-code/issues/24042)). Re-evaluate when fixed upstream.
 
 ## Testing locally
 
-Scripts and hooks: `bash tests/run.sh` (add a case there for any change to `bin/` or `hooks/`), and `shellcheck -x bin/ccm-* hooks/*.sh tests/run.sh tests/stubs/gh`. CI runs both, with Ubuntu's shellcheck 0.9.0, which flags some rules newer versions don't; to match it locally: `docker run --rm -v "$PWD:/mnt" -w /mnt koalaman/shellcheck:v0.9.0 -x bin/ccm-* hooks/*.sh tests/run.sh tests/stubs/gh`. CI's jq is 1.7; to run the tests as CI does: `docker run --rm -v "$PWD:/src:ro" ubuntu:24.04 bash -c 'apt-get update -qq && apt-get install -y -qq jq git perl >/dev/null && cp -r /src /w && cd /w && git config --global --add safe.directory "*" && bash tests/run.sh'`.
+Scripts and hooks: `bash tests/run.sh` (add a case there for any change to `bin/` or `hooks/`), and `shellcheck -x bin/ccm-* hooks/*.sh tests/run.sh tests/stubs/gh evals/run.sh`. CI runs both, with Ubuntu's shellcheck 0.9.0, which flags some rules newer versions don't; to match it locally: `docker run --rm -v "$PWD:/mnt" -w /mnt koalaman/shellcheck:v0.9.0 -x bin/ccm-* hooks/*.sh tests/run.sh tests/stubs/gh evals/run.sh`. CI's jq is 1.7; to run the tests as CI does: `docker run --rm -v "$PWD:/src:ro" ubuntu:24.04 bash -c 'apt-get update -qq && apt-get install -y -qq jq git perl >/dev/null && cp -r /src /w && cd /w && git config --global --add safe.directory "*" && bash tests/run.sh'`.
 
 When a rule has exactly one right answer (a CI verdict, a config value, a merge precondition), put it in a `bin/ccm-*` script or a hook, and have the skill call the script and act on its JSON. Keep judgment in the skill. Skills reference scripts as `"${CLAUDE_SKILL_DIR}/../../bin/ccm-<name>"`, grant that path in `allowed-tools`, and say the bare name works too (plugin `bin/` is on `PATH`), for contexts where the variable isn't expanded.
 
