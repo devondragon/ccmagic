@@ -97,7 +97,7 @@ Do not proceed without an open PR.
 
 Use the available Linear MCP tool (e.g. `mcp__claude_ai_Linear__get_issue`). Extract `title`, `description`, `state.name`, `assignee`, `priority`, `labels`, `url`. Linear states are workflow-defined per team — fetch the full state list so you can match QA/Done targets in Step 7.
 
-**Under prompt-relay** (contract §7): skip the MCP call — take `title` and `description` from the grounding block's `ticket_content:` section (contract §2). There is no team-state list to fetch; state targets are relay intents, not API transitions, so Step 7 skips state-name matching entirely under this transport. If the `ticket_content:` section is absent, stop with the setup-error message per contract §7 `fetch_ticket` — never guess. The "If not found" stop text below applies only to the MCP path.
+**Under prompt-relay** (contract §7), **or when orchestrated** (`orchestrator:` in the grounding block, contract §8, any tracker and transport): skip the fetch and take `title` and `description` from the grounding block's `ticket_content:` section (contract §2). Fetch no state list; Step 7 reports a `requested_state:` instead of matching state names. If the section is absent, stop with the setup-error message per contract §7 `fetch_ticket` (orchestrated: emit `needs-human` per contract §8); never guess, and never spawn a helper to fetch it. The "If not found" stop text below applies only to the MCP path.
 
 ### GitHub
 
@@ -152,12 +152,7 @@ git log --oneline {baseRefName}...HEAD
 git diff {baseRefName}...HEAD --stat
 ```
 
-Compare the commit history and file changes against the ticket title and description. Briefly assess whether the work looks complete relative to the ticket scope.
-
-Look for:
-- Obvious gaps (e.g., ticket mentions a UI change but only backend files changed).
-- Scope creep (many unrelated files changed).
-- Incomplete implementation signals (TODO comments, skipped tests, WIP commits).
+Compare the commit history and file changes against the ticket title and description. Briefly assess whether the work looks complete relative to the ticket scope. Look for obvious gaps (e.g., ticket mentions a UI change but only backend files changed), scope creep (many unrelated files changed), and incomplete implementation signals (TODO comments, skipped tests, WIP commits).
 
 ### 3e. Report
 
@@ -322,11 +317,7 @@ If the merge fails due to conflicts:
 
 ### Verify merge success
 
-```bash
-gh pr view {pr_number} --json state,mergedAt,mergeCommit
-```
-
-Confirm `state` is `MERGED`.
+Run `gh pr view {pr_number} --json state,mergedAt,mergeCommit` and confirm `state` is `MERGED`.
 
 ---
 
@@ -334,7 +325,7 @@ Confirm `state` is `MERGED`.
 
 ### Hand-off branch (`merge_owner: reeve` and the PR was not merged here)
 
-Post this comment to the ticket instead of the closing comment, using the same per-tracker mechanism the sections below use for the closing comment (Linear: the Linear MCP comment tool; GitHub: `gh issue comment {N}`; JIRA: the Atlassian MCP comment tool). Under prompt-relay (contract §7), do not post it; include its composed content in this skill's final output so the orchestrator's summary carries it.
+Post this comment to the ticket instead of the closing comment, using the same per-tracker mechanism the sections below use for the closing comment (Linear: the Linear MCP comment tool; GitHub: `gh issue comment {N}`; JIRA: the Atlassian MCP comment tool). Under prompt-relay (contract §7) or when orchestrated (contract §8), do not post it; include its composed content in this skill's final output so the orchestrator's summary carries it.
 
 ````markdown
 ## Ready for merge, handed off to Reeve
@@ -352,7 +343,7 @@ Reeve classifies this PR against `.reeve/policy.yml`, re-checks CI, and merges o
 
 The Preflight line reports what Step 3 actually observed. If the user chose to proceed past a Step 3 blocker interactively, name the blocker there rather than asserting green; Reeve re-checks CI and mergeability before it merges.
 
-Then transition the ticket to `merge_handoff_state` by **exact** state-name match (no fallbacks: not Done, not Merged, not In Review). On JIRA this is a transition to the status with that exact name from the list fetched in Step 2, scoped to the project. If no state with that name exists on the team (or project), do not transition and do not merge; in autonomous mode emit `needs-human` with `reason: merge_owner is reeve but state "{merge_handoff_state}" does not exist on {team}`; interactively, say so and stop. Under prompt-relay, report `requested_state: {merge_handoff_state}` in the handshake instead of transitioning. On GitHub Issues, apply the label `awaiting-merge` (create it first if missing: `gh label create "awaiting-merge" 2>/dev/null || true`, then `gh issue edit {N} --add-label "awaiting-merge"`) and leave the issue open. Skip the rest of Step 7 and go to Step 8.
+Then transition the ticket to `merge_handoff_state` by **exact** state-name match (no fallbacks: not Done, not Merged, not In Review). On JIRA this is a transition to the status with that exact name from the list fetched in Step 2, scoped to the project. If no state with that name exists on the team (or project), do not transition and do not merge; in autonomous mode emit `needs-human` with `reason: merge_owner is reeve but state "{merge_handoff_state}" does not exist on {team}`; interactively, say so and stop. Under prompt-relay or when orchestrated, report `requested_state: {merge_handoff_state}` in the handshake instead of transitioning (the orchestrator does the exact-name check). On GitHub Issues, apply the label `awaiting-merge` (create it first if missing: `gh label create "awaiting-merge" 2>/dev/null || true`, then `gh issue edit {N} --add-label "awaiting-merge"`) and leave the issue open. Skip the rest of Step 7 and go to Step 8.
 
 Compose the closing comment first (same body for all trackers):
 
@@ -378,7 +369,7 @@ Compose the closing comment first (same body for all trackers):
    - **Done path** — try "Done", "Completed", "Closed".
 3. If QA path, update the assignee to the QA person.
 
-**Under prompt-relay** (contract §7): do not post the closing comment to the ticket (contract §7 `comment` — the orchestrator's single summary carries it) and do not transition state — skip state-name matching entirely (per Step 2's prompt-relay note). Instead report `requested_state: Done` via the handshake field (contract §3), and make sure the closing-comment content composed above is present in this skill's final output so the orchestrator's Step 6 summary can include it. **Merging via `gh` is unchanged** — that already happened in Step 6.
+**Under prompt-relay** (contract §7), **or when orchestrated** (contract §8, for every tracker in this step): do not post the closing comment to the ticket (the orchestrator's summary carries it) and do not transition or close anything, and skip state-name matching entirely (per Step 2). Instead report `requested_state: Done` via the handshake field (contract §3), and make sure the closing-comment content composed above is present in this skill's final output so the orchestrator's Step 6 summary can include it. **Merging via `gh` is unchanged** — that already happened in Step 6.
 
 ### GitHub
 
@@ -437,7 +428,7 @@ Autonomous mode is ON when the first present signal (in priority order) resolves
 2. An `autonomous: true` line in the grounding/context block a parent skill (e.g. `/ccmagic:auto-ticket`) prepends when invoking this skill.
 3. `autonomous: true` in `ccmagic.local.md` frontmatter — the project file `.claude/ccmagic.local.md` first, then the user file `~/.claude/ccmagic.local.md`.
 
-Absent all three, run the interactive path exactly as documented above. Also read `needs_human_state:` / `needs_human_label:` / `merge_owner:` / `merge_handoff_state:` from config; a value in the grounding block wins over config. **Orchestrated vs. standalone** works as in `/ccmagic:work-ticket` → *Autonomous mode*.
+Absent all three, run the interactive path exactly as documented above. Also read `needs_human_state:` / `needs_human_label:` / `merge_owner:` / `merge_handoff_state:` from config; a value in the grounding block wins over config. **Orchestrated vs. standalone** works as in `/ccmagic:work-ticket` → *Autonomous mode*. **No tracker I/O when orchestrated:** with `orchestrator:` in the grounding block, Steps 2 and 7 make no tracker reads or writes (contract §8); the target state goes in `requested_state:` and the closing or hand-off comment stays in your report.
 
 ### Behavior at each human-gate
 
@@ -454,7 +445,7 @@ When `merge_owner` resolves to `reeve`, the run **never merges**. The Step 3 mer
 status: done
 reason: handed off to reeve; PR #{pr_number} awaiting merge
 follow_ups: []
-requested_state: <{merge_handoff_state} — prompt-relay only, omit otherwise>
+requested_state: <{merge_handoff_state} when orchestrated or under prompt-relay; omit otherwise>
 ```
 
 The `reason` must begin with the exact text `handed off to reeve`; `/ccmagic:auto-ticket` keys on it. A missing `merge_handoff_state` on the team is `needs-human` (Step 7 hand-off branch), never a fallback merge. Absent the key, or with `merge_owner: self`, this section does not apply and the run merges as documented above.
@@ -474,10 +465,10 @@ The `reason` must begin with the exact text `handed off to reeve`; `/ccmagic:aut
 status: done | needs-human
 reason: <one line — "merged into {base}" on done; the blockers on needs-human>
 follow_ups: []
-requested_state: <Done — prompt-relay only, omit otherwise>
+requested_state: <Done when orchestrated or under prompt-relay; omit otherwise>
 ```
 
-`done` = PR merged, ticket moved to Done, closing comment posted; or, with `merge_owner: reeve`, PR left open, ticket moved to `merge_handoff_state`, hand-off comment posted, and `reason` beginning `handed off to reeve`. Under prompt-relay (contract §7), `done` = merged, with `requested_state: Done` reported in the handshake — the harness/tracker automation owns the actual move.
+`done` = PR merged, ticket moved to Done, closing comment posted; or, with `merge_owner: reeve`, PR left open, ticket moved to `merge_handoff_state`, hand-off comment posted, and `reason` beginning `handed off to reeve`. When orchestrated (contract §8) or under prompt-relay (contract §7), `done` = merged (or handed off), with the target state in `requested_state:`; the orchestrator or the harness owns the actual move and comment.
 
 ---
 

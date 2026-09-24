@@ -39,18 +39,20 @@ review_pass: {n — only on Step 3 re-reviews; absent on the first review pass}
 
 `merge_owner` and `merge_handoff_state` come from config (§5) with defaults `self` and `Awaiting Merge`; only `finish-ticket` acts on them.
 
-Under the **prompt-relay transport** (§7) the block also carries the ticket content, because no tracker MCP is available to fetch it. The orchestrator appends a `ticket_content:` section:
+The block always carries the ticket content, on every transport. The orchestrator fetches the ticket once in its Step 0 (under prompt-relay it takes the content from the invocation instead, §7) and appends a `ticket_content:` section:
 
 ```
 ticket_content:
 ~~~
 {title}
 
-{description}
+{description, as written}
+
+{acceptance criteria, as written, when the tracker keeps them in a separate field}
 ~~~
 ```
 
-The `~~~` fence is deliberate — issue bodies routinely contain backtick fences, so tildes keep the ticket body from prematurely closing the block. Under prompt-relay, sub-skills read the ticket's title and description from this section **instead of** calling the Linear MCP.
+The `~~~` fence is deliberate — issue bodies routinely contain backtick fences, so tildes keep the ticket body from prematurely closing the block. Copy the text as written; do not summarize it, because the step agents parse acceptance criteria out of it. Sub-skills in an orchestrated run read the ticket from this section **instead of** fetching it (§8).
 
 `review_pass:` appears only when the orchestrator re-invokes `review-ticket` inside its Step 3 fix loop (2 on the first re-review, incrementing). `review-ticket` uses it to switch to a delta report (see its *Autonomous mode*); all other sub-skills ignore it. On those re-invocations the orchestrator also appends a `previous_findings:` section to the grounding block — a short fenced list of the findings it just applied in the fix loop (id/title + file per finding) — so the fresh review subagent knows exactly what to verify as fixed:
 
@@ -74,7 +76,7 @@ In autonomous mode, every sub-skill ends its output with a fenced block:
 status: clean | fixable-findings | needs-human | done
 reason: <one line, when not clean/done>
 follow_ups: [<ticket ids or short descriptions of anything filed/deferred>]
-requested_state: <intended tracker state — prompt-relay transport only; omit otherwise>
+requested_state: <intended tracker state: orchestrated runs (§8) and the prompt-relay transport; omit otherwise>
 ```
 
 Which values each sub-skill can emit:
@@ -92,7 +94,14 @@ Parse the **last** such block in the sub-skill's output. If a sub-skill fails to
 
 The plugin's SubagentStop hook (`hooks/subagent-stop-handshake.sh`) enforces this on the `ccmagic:auto-*` step agents: a final message without a valid block (a `status:` value allowed for that step, then `reason:` and `follow_ups:`, with nothing after) sends the agent back once to add it. A second miss is let through, and the rule above applies.
 
-Under the prompt-relay transport, a sub-skill that would have transitioned ticket state reports the intended state in `requested_state:` (per §7 `set_state`); the orchestrator folds it into its final relayed summary as an intent line `Requested state: {X}`.
+**Delivering the handshake from a step agent.** Some harnesses deliver a background subagent's report through a `SubagentHandback` tool call, and the caller then sees only that call's `message`, not the agent's final text. So a step agent:
+
+- ends its final report with the handshake block, with nothing after it;
+- when it delivers the report with `SubagentHandback`, puts the full report, ending with the handshake, in `message` (never an empty `message`), and then ends its final text with the same handshake, which is what the hook checks;
+- never writes tool-call tags such as `<SubagentHandback>` as text;
+- runs helper agents in the foreground, or keeps waiting for background ones, rather than ending its turn to wait for them (the hook fires on every stop).
+
+In an orchestrated run (§8) a sub-skill that would have transitioned ticket state reports the intended state in `requested_state:`, and the orchestrator applies it after the step returns. Under the prompt-relay transport the orchestrator cannot apply it either, so it folds it into its final relayed summary as an intent line `Requested state: {X}` (§7 `set_state`).
 
 ## 4. Route-and-stop (park the ticket)
 
@@ -122,11 +131,11 @@ The single routine the orchestrator (or a standalone top-level sub-skill) runs w
 **Autonomous decisions so far:**
 {bullet list — classification, minor choices made, drift flagged}
 
-**Follow-ups {filed | to file (prompt-relay)}:** {ticket ids or short descriptions, or "none"}
+**Follow-ups:** {filed ticket ids with one-liners; items not filed with the reason; under prompt-relay, "to file:" short descriptions; or "none"}
 
 ### Run record
 ```json
-{"ccmagic": {"version": 1, "run_id": "{run_id}", "ticket": "{TICKET-ID}", "outcome": "parked", "classification": "{class}", "merge_owner": "{self | reeve}", "pr": {pr_number or null}, "review_passes": {n}, "feedback_passes": {n}, "ci_attempts": {n}, "findings": {"critical": {n}, "high": {n}}, "steps": [{"step": "work-ticket", "status": "done"}, {"step": "review-ticket", "status": "needs-human", "reason": "{one line}"}]}}
+{"ccmagic": {"version": 1, "run_id": "{run_id}", "ticket": "{TICKET-ID}", "outcome": "parked", "classification": "{class}", "merge_owner": "{self | reeve}", "pr": {pr_number or null}, "review_passes": {n}, "feedback_passes": {n}, "ci_attempts": {n}, "findings": {"critical": {n}, "high": {n}}, "steps": [{"step": "work-ticket", "status": "done"}, {"step": "review-ticket", "status": "needs-human", "reason": "{one line}"}], "follow_ups": []}}
 ```
 
 Nothing was merged. Resolve the item above, then re-run `/ccmagic:auto-ticket {TICKET-ID}` (or continue manually).
@@ -223,3 +232,18 @@ Only the top-level session's output reaches the tracker — per-step subagent ou
 ### Scope
 
 This transport adds no config keys and changes nothing when an MCP is present — it is a purely additive branch, gated on the detection rule above.
+
+## 8. Tracker access in orchestrated runs
+
+In an **orchestrated** run (the grounding block carries `orchestrator: auto-ticket`) the orchestrator is the only part of the run that reads or writes the tracker, on every transport. Step agents list only built-in tools, so tracker MCP tools do not reach them; they must not work around that by spawning helper agents to fetch or update the ticket, or by calling a tracker API or CLI themselves. A step agent and every sub-skill it runs apply the §7 operations table as if the transport were prompt-relay, with these specifics:
+
+| Op | Orchestrated step behavior | The orchestrator then |
+|---|---|---|
+| `fetch_ticket(id)` | Read the title, description, and acceptance criteria from the grounding block's `ticket_content:` (§2). If it is missing, emit `needs-human` with `reason: grounding block has no ticket_content` (never guess, never fetch). | Nothing: it fetched the ticket in Step 0. |
+| `set_state(In Progress)` | Skip. | Assigns the ticket and moves it to In Progress in Step 0. |
+| `set_state(In Review \| Done \| merge_handoff_state)` | Report it in the handshake's `requested_state:`. | Applies it after the step returns (mcp), or relays it as `Requested state:` (prompt-relay). |
+| `comment(ticket, body)` | Skip. Put anything the ticket should carry (for example finish-ticket's closing or hand-off comment) in the step's final report. | Posts its run summary to the ticket in Step 6 (mcp). |
+| `link_pr(url)` | Skip; the PR URL is in the handshake's `reason` (work-ticket). | Links the PR to the ticket after the work step (mcp). |
+| `file_followup(desc)` | Record a short description in `follow_ups:`; reply to a deferred PR thread with `ccm-pr-reply ... --ticket requested`. | Files it or lists it with a reason (its *Follow-ups* rule). |
+
+Needs-human parking is already the orchestrator's (§4). Comments on the PR (`gh pr comment`, `ccm-post-review`, `ccm-pr-reply`) are not tracker writes and stay in the steps. A sub-skill invoked without a grounding block (interactive or standalone autonomous) keeps its full tracker behavior; this section changes nothing there.

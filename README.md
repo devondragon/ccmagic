@@ -160,11 +160,13 @@ ccmagic's ticket lifecycle can run **fully unattended** — from Claude Code on 
 auto-ticket {ID}
   → work-ticket      implement, self-review, open PR
   → review-ticket    scope-drift + code review; fix CRITICAL findings, re-review
-  → pr-feedback loop  apply fixes · reply · file follow-ups · push · validate
+  → pr-feedback loop  apply fixes · reply · note follow-ups · push · validate
                       · wait for CI + bot reviews · recompute "clean"   (× up to max_feedback_passes)
   → finish-ticket    merge gate: mergeable + CI green + no unaddressed change-requests
-  → summary          posted to the PR and the ticket
+  → summary          follow-ups filed or listed; posted to the PR and the ticket
 ```
+
+The orchestrator is the only part of the run that reads or writes the tracker: it fetches the ticket once and passes its content to every step, and it applies the state changes (In Progress, In Review, Done or the hand-off state), links the PR, and files follow-ups that the steps report in their handshakes. Every follow-up a step reports is either filed or listed in the summary with the reason it wasn't.
 
 Review-fix passes fix systemic findings as a whole class, re-reviews post deltas rather than fresh full reports, and the CI wait is a bounded blocking watch (`gh pr checks --watch`) — never a sleep loop.
 
@@ -181,7 +183,7 @@ Every autonomous run ends in exactly one of three states: **merged**, **handed-o
 
 ### Handing off to an external merge gate
 
-A repo whose merges belong to an external gate sets `merge_owner: reeve`. The run implements, reviews, and addresses feedback as usual, then `finish-ticket` runs its merge gate as a preflight and hands the open PR off instead of merging: on Linear/JIRA it moves the ticket to `merge_handoff_state` (default `Awaiting Merge`); on GitHub Issues, which have no custom states, it applies the `awaiting-merge` label instead and leaves the issue open; under the prompt-relay transport it reports the requested state in the handshake rather than transitioning it directly. Every run summary now ends with a fenced JSON run record that such a gate can parse.
+A repo whose merges belong to an external gate sets `merge_owner: reeve`. The run implements, reviews, and addresses feedback as usual, then `finish-ticket` runs its merge gate as a preflight and hands the open PR off instead of merging, and the orchestrator updates the ticket: on Linear/JIRA it moves the ticket to `merge_handoff_state` (default `Awaiting Merge`); on GitHub Issues, which have no custom states, it applies the `awaiting-merge` label instead and leaves the issue open; under the prompt-relay transport it reports the requested state in the handshake rather than transitioning it directly. Every run summary now ends with a fenced JSON run record that such a gate can parse.
 
 ### Turning it on
 
@@ -282,7 +284,7 @@ Rules that have one right answer are enforced in code, not left to the skill tex
   | Staging or committing a secret-shaped file (`.env`, private keys, credential files) | denied | denied until the user confirms (`CCMAGIC_ALLOW_SENSITIVE=1`); files under `## Always Include` in `context/commit-preferences.md` pass |
   | Commit subject not in conventional-commit format | denied, with the expected format | allowed; the PostToolUse hook warns |
 
-- `SubagentStop` handshake check (`hooks/subagent-stop-handshake.sh`): a `ccmagic:auto-*` step agent whose final message doesn't end with a valid status handshake is sent back once to add it. Its handshake validation lives in `hooks/lib-handshake.sh`, which `ccm-post-review` shares.
+- `SubagentStop` handshake check (`hooks/subagent-stop-handshake.sh`): a `ccmagic:auto-*` step agent whose final message doesn't end with a valid status handshake is sent back once to add it. The send-back message also covers the `SubagentHandback` tool: its message must carry the full report ending with the handshake. Its handshake validation lives in `hooks/lib-handshake.sh`, which `ccm-post-review` shares.
 - `PostToolUse` commit-format check (`hooks/post-tool-use-commit.sh`): warns when a commit subject doesn't match the conventional-commit format in `.claude/CLAUDE.md`. It never rejects, so it's safe on repos with non-conventional history.
 
 Tests: `tests/run.sh` (plain bash, with a `gh` stub fed recorded API output). CI runs it and shellcheck on every PR.

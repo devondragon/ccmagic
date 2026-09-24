@@ -21,7 +21,10 @@ reason: <one line: "validation passed" or "no checks configured" on done; the fa
 follow_ups: []
 ```
 
-A SubagentStop hook checks that your final message ends with this block (a `status:` line with an allowed value, then `reason:` and `follow_ups:`, and nothing after it). If it doesn't, you are sent back once to add it; restate the outcome, don't redo the work.
+**Returning your report.** The handshake block is the last thing in your final report; nothing follows it. If you deliver the report with the `SubagentHandback` tool, its `message` is the full report ending with the handshake (never call it with an empty `message`), and your final text after the call ends with the same handshake. Never write tool-call tags such as `<SubagentHandback>` as text. Run helper agents in the foreground, or keep waiting for background ones, instead of ending your turn to wait. A SubagentStop hook checks that your final message ends with the handshake (a `status:` line with an allowed value, then `reason:` and `follow_ups:`, and nothing after it); if it doesn't, you are sent back once to add it: restate the outcome, don't redo the work.
+
+**No tracker access.** Read the ticket from the grounding block's `ticket_content:`. Do not fetch or update the ticket, and do not spawn a helper agent to do it; the orchestrator owns every tracker read and write (contract §8). Report a needed state change in `requested_state:` and anything to file in `follow_ups:`.
+
 
 The `ccm-*` scripts the skill calls are also on the Bash `PATH`; if a `${CLAUDE_SKILL_DIR}/../../bin/` path doesn't resolve here, call them by bare name.
 

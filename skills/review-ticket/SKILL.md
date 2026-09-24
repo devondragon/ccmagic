@@ -63,7 +63,7 @@ Use `ticket_id` from the Step 0 `ccm-context` call; do not re-parse the branch y
 
 Use `mcp__*Linear*__get_issue`. Extract `title`, `description`, `state.name`, `labels`, `priority`, comments. The description may contain acceptance criteria as bullet lists, checkboxes, or "Acceptance Criteria" headers — parse them out.
 
-**Under prompt-relay** (contract §7): skip the MCP call — take `title` and `description` from the grounding block's `ticket_content:` section (contract §2). Parse acceptance criteria out of that text exactly as for an MCP fetch (bullets, checkboxes, "Acceptance Criteria" headers). Ticket *comments* are not available under prompt-relay — the AC sources are title + description only. If the `ticket_content:` section is absent, stop with the setup-error message per contract §7 `fetch_ticket` — never guess. The "If not found" stop text below applies only to the MCP path.
+**Under prompt-relay** (contract §7), **or when orchestrated** (`orchestrator:` in the grounding block, contract §8, any tracker and transport): skip the fetch and take `title`, `description`, and any acceptance criteria from the grounding block's `ticket_content:` section (contract §2). Parse acceptance criteria out of that text exactly as for an MCP fetch (bullets, checkboxes, "Acceptance Criteria" headers). Ticket *comments* are not available there: the AC sources are the ticket content only. If the `ticket_content:` section is absent, stop with the setup-error message per contract §7 `fetch_ticket` (orchestrated: emit `needs-human` per contract §8); never guess, and never spawn a helper to fetch it. The "If not found" stop text below applies only to the MCP path.
 
 ### GitHub
 
@@ -222,7 +222,7 @@ Autonomous mode is ON when the first present signal (in priority order) resolves
 2. An `autonomous: true` line in the grounding/context block a parent skill prepends when invoking this skill.
 3. `autonomous: true` in `ccmagic.local.md` frontmatter — the project file `.claude/ccmagic.local.md` first, then the user file `~/.claude/ccmagic.local.md`.
 
-Absent all three, run the interactive path exactly as documented above. Also read `needs_human_state:` / `needs_human_label:` from config. **Orchestrated vs. standalone** works exactly as in `/ccmagic:work-ticket` → *Autonomous mode*: a parent's grounding block (#2) means the parent parks on `needs-human`; `--autonomous`/config (#1/#3) means this skill parks (route-and-stop) itself.
+Absent all three, run the interactive path exactly as documented above. Also read `needs_human_state:` / `needs_human_label:` from config. **Orchestrated vs. standalone** works exactly as in `/ccmagic:work-ticket` → *Autonomous mode*: a parent's grounding block (#2) means the parent parks on `needs-human`; `--autonomous`/config (#1/#3) means this skill parks (route-and-stop) itself. **No tracker I/O when orchestrated:** with `orchestrator:` in the grounding block, Step 2 reads the ticket from `ticket_content:` and the skill makes no tracker writes; anything to file goes in `follow_ups:` as a short description (contract §8).
 
 ### Behavior at each human-gate
 
