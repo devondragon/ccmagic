@@ -49,12 +49,12 @@ In branch and PR mode, always run the router script and act on its JSON. It appl
 ```bash
 "${CLAUDE_SKILL_DIR}/../../bin/ccm-review-route"      # branch mode (main...HEAD)
 "${CLAUDE_SKILL_DIR}/../../bin/ccm-review-route" 42   # PR mode
-"${CLAUDE_SKILL_DIR}/../../bin/ccm-review-route" --diff-file - <<'CCM_DIFF_END'
+TMPPREFIX="${TMPDIR:-/tmp}/zsh"; "${CLAUDE_SKILL_DIR}/../../bin/ccm-review-route" --diff-file - <<'CCM_DIFF_END'
 <the pasted diff, verbatim, when there is no checkout>
 CCM_DIFF_END
 ```
 
-The script is also on the Bash `PATH` as `ccm-review-route`; use the bare name if the `${CLAUDE_SKILL_DIR}` path doesn't resolve. Keep its `gated` list for Step 3. Exit 3 means it couldn't read the diff: route DEEP and print `Routing → DEEP, reason: router failed: <error>`.
+The script is also on the Bash `PATH` as `ccm-review-route`; use the bare name if the `${CLAUDE_SKILL_DIR}` path doesn't resolve. The `TMPPREFIX=` assignment keeps zsh (the default macOS shell) writing its heredoc temp file under `$TMPDIR`; without it zsh uses `/tmp`, which a sandboxed Bash may refuse, and the heredoc fails before the script runs. It is harmless in bash. Keep its `gated` list for Step 3. Exit 3 means it couldn't read the diff: route DEEP and print `Routing → DEEP, reason: router failed: <error>`.
 
 Then pick the route, first match wins:
 
@@ -70,6 +70,8 @@ Routing → DEEP, reason: 3 files (limit 2), 120 lines (limit 50), touches src/a
 ```
 
 With an override, print `Routing → QUICK, reason: --quick override` (or `--deep override`, or `full mode`).
+
+Print the same line again as the **first line of the final report** (QUICK output and the Step 6 report). The review runs inline, so tool calls separate the early announcement from the report, and a reader who sees only the report must still see which review they got.
 
 **If QUICK was selected, skip ahead to the [QUICK execution](#quick-execution) section. If DEEP, continue with Step 1.**
 
