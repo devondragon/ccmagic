@@ -899,9 +899,202 @@ validate_pyproject_needs_tool_config() {
   check "$(jq -r '[.checks[] | .command // "-"] | join("|")' <<<"$OUT")" 'ruff format --check|ruff check|-|pytest|-'
 }
 
+# ---- ccm-review-route ------------------------------------------------------
+
+# seed_branch FILE LINES [FILE LINES...]: on a feature branch, commit each FILE
+# with LINES generated lines (or, for a non-numeric LINES, that literal text).
+seed_branch() {
+  git checkout -q -b feature/x
+  while [ $# -gt 0 ]; do
+    mkdir -p "$(dirname "$1")"
+    case $2 in
+      ''|*[!0-9]*) printf '%s\n' "$2" >"$1" ;;
+      *) seq 1 "$2" | sed 's/^/line /' >"$1" ;;
+    esac
+    shift 2
+  done
+  git add -A
+  git -c user.email=t@t -c user.name=t commit -q -m change
+}
+
+route_quick_small_change() {
+  seed_branch src/util/format.ts 3
+  run "$BIN/ccm-review-route"
+  check "$(jqval .route),$RC,$(jqval .files),$(jqval .lines),$(jqval .source.value)" "QUICK,0,1,3,main...HEAD"
+  check "$(jqval .line)" "Routing → QUICK, reason: 1 file, 3 lines, no risk patterns, no new types, no error-flow change"
+  check "$(jqval '.failed | length')" "0"
+}
+
+route_deep_on_three_files() {
+  seed_branch a.ts 1 b.ts 1 c.ts 1
+  run "$BIN/ccm-review-route"
+  check "$(jqval .route),$(jqval .files),$(jqval '.failed | join(",")')" "DEEP,3,files"
+  [[ $(jqval .reason) == "3 files (limit 2), 3 lines"* ]]
+}
+
+route_line_limit_is_inclusive_at_50() {
+  seed_branch a.ts 30 b.ts 20
+  run "$BIN/ccm-review-route"
+  check "$(jqval .route),$(jqval .lines)" "QUICK,50"
+  printf 'more\n' >>b.ts
+  git -c user.email=t@t -c user.name=t commit -q -am more
+  run "$BIN/ccm-review-route"
+  check "$(jqval .route),$(jqval .lines),$(jqval '.failed | join(",")')" "DEEP,51,lines"
+}
+
+route_deep_on_risk_path_case_insensitive() {
+  seed_branch src/Auth/Login.ts 1
+  run "$BIN/ccm-review-route"
+  check "$(jqval .route),$(jqval '.failed | join(",")')" "DEEP,risk_path"
+  check "$(jq -c '.risk_matches' <<<"$OUT")" '[{"path":"src/Auth/Login.ts","patterns":["auth","login"]}]'
+  [[ $(jqval .reason) == *"touches src/Auth/Login.ts (auth, login)"* ]]
+}
+
+route_deep_on_workflow_path() {
+  seed_branch .github/workflows/build.yml 1
+  run "$BIN/ccm-review-route"
+  check "$(jqval .route),$(jqval '.risk_matches[0].patterns | join(",")')" "DEEP,.github/workflows"
+}
+
+route_deep_on_new_type() {
+  seed_branch src/model.ts 'export interface Order {'
+  run "$BIN/ccm-review-route"
+  check "$(jqval .route),$(jqval '.failed | join(",")'),$(jqval '.new_types[0].text')" \
+    "DEEP,new_types,export interface Order {"
+}
+
+route_type_keyword_needs_a_word_boundary() {
+  seed_branch src/model.ts 'const subclass = prototype'
+  run "$BIN/ccm-review-route"
+  check "$(jqval .route)" "QUICK"
+}
+
+route_deep_on_removed_error_handling() {
+  printf 'try {\n  run()\n} catch (e) {}\n' >src.ts
+  git add src.ts
+  git -c user.email=t@t -c user.name=t commit -q -m base
+  git checkout -q -b feature/x
+  printf 'run()\n' >src.ts
+  git -c user.email=t@t -c user.name=t commit -q -am change
+  run "$BIN/ccm-review-route"
+  check "$(jqval .route),$(jqval '.failed | join(",")'),$(jqval '.additions'),$(jqval '.deletions')" \
+    "DEEP,error_flow,1,3"
+  check "$(jqval '[.error_flow[].text] | join("|")')" "try {|} catch (e) {}"
+}
+
+route_error_keyword_needs_a_word_boundary() {
+  seed_branch src/a.ts 'const entry = retry(recovered)'
+  run "$BIN/ccm-review-route"
+  check "$(jqval .route)" "QUICK"
+}
+
+route_pr_number_reads_gh_pr_diff() {
+  fx pr-diff 'diff --git a/src/db/query.ts b/src/db/query.ts
+index 1..2 100644
+--- a/src/db/query.ts
++++ b/src/db/query.ts
+@@ -1 +1 @@
+-old
++new'
+  run "$BIN/ccm-review-route" '#7'
+  check "$(jqval .route),$(jqval .source.kind),$(jqval .source.value),$(jqval .lines)" "DEEP,pr,7,2"
+  grep -q '^pr diff 7' "$GH_FIXTURES/calls.log"
+  fx_err pr-diff 'no pull requests found' 1
+  run "$BIN/ccm-review-route" 7
+  check "$RC,$(jqval .error)" "3,gh pr diff 7 failed"
+}
+
+route_pasted_diff_without_git_headers() {
+  # A removed line starting with "--" stays content because the hunk counts
+  # say so; the second ---/+++ pair starts a new file.
+  run_route_stdin '--- a/one.sql
++++ b/one.sql
+@@ -1,2 +1,1 @@
+--- a comment
+ keep
+--- a/two.txt
++++ b/two.txt
+@@ -0,0 +1 @@
++hello'
+  check "$(jqval .files),$(jqval .lines),$(jqval '.file_list | join(",")')" "2,2,one.sql,two.txt"
+  check "$(jqval .route),$(jqval '.risk_matches[0].path')" "DEEP,one.sql"
+}
+
+# run_route_stdin DIFF: route a diff given on stdin.
+run_route_stdin() {
+  OUT=$(printf '%s\n' "$1" | "$BIN/ccm-review-route" --diff-file - 2>"$T/stderr") && RC=0 || RC=$?
+}
+
+route_rename_checks_old_and_new_path() {
+  run_route_stdin 'diff --git a/src/auth.ts b/src/users.ts
+similarity index 100%
+rename from src/auth.ts
+rename to src/users.ts'
+  check "$(jqval .route),$(jqval .files),$(jqval .lines),$(jqval '.risk_matches[0].patterns | join(",")')" \
+    "DEEP,1,0,auth"
+}
+
+route_eval_cases_match_graders() {
+  local d want re
+  for d in "$ROOT"/evals/0[1-5]-*; do
+    want=QUICK
+    [ -f "$d/graders/routes-deep.md" ] && want=DEEP
+    run_route_stdin "$(awk '/^```diff$/ {f = 1; next} /^```$/ {f = 0} f' "$d/prompt.md")"
+    check "$(basename "$d"):$(jqval .route)" "$(basename "$d"):$want"
+    re=$(awk 'n >= 2 {print} /^---$/ {n++}' "$d/graders/routes-match-script.md")
+    [[ $(jqval .line) =~ $re ]] || { echo "    $(basename "$d"): '$(jqval .line)' !~ '$re'"; return 1; }
+  done
+}
+
+route_record_updates_stats_and_gates() {
+  mkdir -p context
+  echo '{"testing":{"dispatched":9,"findings":0},"security":{"dispatched":20,"findings":0},"performance":{"dispatched":4,"findings":3}}' \
+    >context/review-stats.json
+  run "$BIN/ccm-review-route" --record testing=0,migration=2
+  check "$RC,$(jqval '.gated | map(.specialist) | join(",")')" "0,testing"
+  check "$(jq -c '[.testing, .migration, .performance]' context/review-stats.json)" \
+    '[{"dispatched":10,"findings":0},{"dispatched":1,"findings":2},{"dispatched":4,"findings":3}]'
+  seed_branch a.ts 1
+  run "$BIN/ccm-review-route"
+  check "$(jqval .route),$(jq -c .gated <<<"$OUT")" 'QUICK,[{"specialist":"testing","dispatched":10}]'
+}
+
+route_record_creates_stats_file() {
+  run "$BIN/ccm-review-route" --record performance=1
+  check "$RC,$(jq -c . context/review-stats.json)" '0,{"performance":{"dispatched":1,"findings":1}}'
+}
+
+route_record_leaves_bad_stats_file_alone() {
+  mkdir -p context
+  echo '[1,2]' >context/review-stats.json
+  run "$BIN/ccm-review-route" --record testing=1
+  check "$RC,$(command cat context/review-stats.json)" "3,[1,2]"
+  seed_branch a.ts 1
+  run "$BIN/ccm-review-route"
+  check "$RC,$(jqval .route),$(jqval '.gated | length')" "0,QUICK,0"
+  [[ $(jqval .stats_error) == *"not a JSON object"* ]]
+}
+
+route_usage_errors() {
+  local args
+  for args in '--bogus' '--record' '--record testing' '--record Testing=1' '--record testing=x' \
+    '--record testing=1 main' 'main --diff-file x' 'a b' '-'; do
+    # shellcheck disable=SC2086 # split the argument list on purpose
+    run "$BIN/ccm-review-route" $args
+    check "$args:$RC" "$args:4"
+  done
+}
+
+route_read_errors_exit_3() {
+  run "$BIN/ccm-review-route" no-such-ref...HEAD
+  check "$RC,$(jqval .error)" "3,git diff no-such-ref...HEAD failed"
+  run "$BIN/ccm-review-route" --diff-file "$T/missing.diff"
+  check "$RC,$(jqval .error)" "3,diff file not found"
+}
+
 # ---- run -------------------------------------------------------------------
 
-for fn in $(declare -F | awk '{print $3}' | grep -E '^(context|ci|merge_gate|guard|post|stop|threads|reply|validate)_'); do
+for fn in $(declare -F | awk '{print $3}' | grep -E '^(context|ci|merge_gate|guard|post|stop|threads|reply|validate|route)_'); do
   t "$fn" "$fn"
 done
 

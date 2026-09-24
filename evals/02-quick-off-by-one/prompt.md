@@ -1,7 +1,7 @@
 ---
 max_turns: 12
 timeout_seconds: 240
-allowed_tools: [Skill, Read, Glob, Grep, TodoWrite]
+allowed_tools: [Skill, Read, Glob, Grep, Bash, TodoWrite]
 model: sonnet
 runs: 3
 ---

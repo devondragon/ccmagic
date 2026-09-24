@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Test stub for gh. Answers from files in $GH_FIXTURES, named after the
-# subcommand: pr-view, pr-checks, run-list, repo-view, protection, status,
+# subcommand: pr-view, pr-checks, pr-diff, run-list, repo-view, protection, status,
 # graphql, graphql-resolve, reply.
 # For each name: NAME.json is printed to stdout, NAME.err to stderr, and
 # NAME.rc (default 0) is the exit code. -q/--jq is applied with jq -r.
@@ -11,6 +11,7 @@ name=""
 case "$1 ${2:-}" in
   "pr view") name=pr-view ;;
   "pr checks") name=pr-checks ;;
+  "pr diff") name=pr-diff ;;
   "run list") name=run-list ;;
   "repo view") name=repo-view ;;
   "api graphql")
