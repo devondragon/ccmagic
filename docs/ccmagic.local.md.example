@@ -85,8 +85,8 @@ max_feedback_passes: 3
 # package.json scripts, Makefile targets, Gradle or Maven builds, go.mod,
 # Cargo.toml, or pyproject.toml. A Gradle (build.gradle*, settings.gradle*) or
 # Maven (pom.xml) build is the primary build: it supplies test and build
-# (./gradlew test and build, or ./mvnw -B test and -B verify; gradle or mvn
-# without a wrapper) ahead of package.json and the Makefile, which still supply
+# (test: ./gradlew test, build: ./gradlew build; or test: ./mvnw -B test,
+# build: ./mvnw -B verify; gradle or mvn replaces the wrapper when there is none) ahead of package.json and the Makefile, which still supply
 # format, lint, and types. Gradle adds spotlessCheck for format when the root
 # build file applies the Spotless plugin.
 # validate_timeout_seconds bounds each check (a check that hits it fails).
