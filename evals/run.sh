@@ -10,6 +10,8 @@
 # ~/.docker/bin and ~/.docker/cli-plugins, and DOCKER_CONFIG doesn't change what
 # the tool checks. Running with HOME set to an empty temporary directory avoids
 # the check without touching the real ~/.docker. The directory is removed on exit.
+# It also drops installed plugins' bin/ directories from PATH, so a bare
+# `ccm-*` name can't resolve to an installed copy of this plugin.
 #
 # Auth: with a different HOME, Claude Code can't read its keychain login, so the
 # run needs a token in the environment. In order of preference:
@@ -28,7 +30,7 @@ set -euo pipefail
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 
 case ${1:-} in
-  -h|--help) sed -n '2,26p' "$0"; exit 0 ;;
+  -h|--help) sed -n '2,28p' "$0"; exit 0 ;;
 esac
 
 if [ -z "${CLAUDE_CODE_OAUTH_TOKEN:-}" ] && [ -z "${ANTHROPIC_API_KEY:-}" ]; then
@@ -50,5 +52,10 @@ if [ -f "$HOME/.gitconfig" ]; then
   cp "$HOME/.gitconfig" "$eval_home/.gitconfig"
 fi
 
-HOME=$eval_home claude plugin eval "$root" \
+# Drop installed plugins' bin/ directories from PATH. A Claude Code session
+# puts them there, and a run started from one would otherwise resolve a bare
+# `ccm-*` name to the installed plugin instead of the one under test.
+clean_path=$(printf '%s' "$PATH" | tr ':' '\n' | grep -v '/\.claude/plugins/' | paste -sd: -)
+
+PATH=$clean_path HOME=$eval_home claude plugin eval "$root" \
   --ablation with-without --judge-model opus --trust-plugin --allow-tools Bash "$@"
