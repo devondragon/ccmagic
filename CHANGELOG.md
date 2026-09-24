@@ -2,6 +2,22 @@
 
 All notable changes to ccmagic are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.13.0] - 2026-09
+
+Fixes from the first `/ccmagic:auto-ticket` field run.
+
+### Fixed
+
+- Step agents that returned their report through a `SubagentHandback` tool call, or wrote a `<SubagentHandback>` tag as text, were sent back by the SubagentStop hook, and one retry delivered a report without the handshake. The agents and the contract (§3) now say how to hand back: the handshake ends the report, a `SubagentHandback` message carries the full report ending with the handshake (never an empty message), the final text ends with the handshake too, tool-call tags are never written as text, and helpers run in the foreground instead of the agent ending its turn to wait. The hook's send-back message says the same. The hook still rejects any text after the handshake, including a trailing `</SubagentHandback>` tag.
+- Step agents could not reach the tracker (their tool lists carry no MCP tools), so they spawned helper agents to fetch or update the ticket, and the finish step could not move it. The orchestrator now fetches the ticket once and passes its title, description, and acceptance criteria in the grounding block's `ticket_content:` on every transport, and it does every tracker write itself: In Progress, In Review, Done or the hand-off state, the PR link, and follow-up tickets. Steps report state changes in `requested_state:` and items to file in `follow_ups:` (contract §8). `work-ticket`, `review-ticket`, `pr-feedback`, and `finish-ticket` do no tracker I/O when orchestrated; their interactive and standalone paths are unchanged.
+- `ccm-validate` did not detect Gradle or Maven, so a Gradle repo with a `package.json` validated only its JS tests. It now detects `build.gradle*`/`settings.gradle*` (`./gradlew` or `gradle`) and `pom.xml` (`./mvnw` or `mvn`). A JVM build supplies `test` and `build` (`gradle test` and `build`; `mvn -B test` and `-B verify`) ahead of `package.json` and the Makefile, which still supply `format`, `lint`, and `types`; Gradle's `spotlessCheck` is used for `format` when the root build file applies Spotless and nothing earlier supplied it.
+- A `follow_ups` item from a `clean` review was left out of the run summary. The orchestrator now collects every non-empty `follow_ups` item from every step and either files it or lists it in the summary's Follow-ups section with the reason it wasn't filed.
+
+### Changed
+
+- The run record JSON gains an additive `follow_ups` array (`{item, step, ticket, reason}` per item). Existing keys are unchanged.
+- `requested_state:` in the handshake is no longer prompt-relay only: every orchestrated step uses it to ask the orchestrator for a state change.
+
 ## [3.12.1] — 2026-09
 
 ### Fixed

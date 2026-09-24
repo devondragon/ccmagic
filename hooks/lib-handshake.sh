@@ -7,7 +7,7 @@
 #   status: <value>
 #   reason: <one line>
 #   follow_ups: [...]
-#   requested_state: <state>     (prompt-relay only)
+#   requested_state: <state>     (optional: a tracker state change the step needs)
 
 # ccm_handshake_problem ALLOWED: read text on stdin and print what is wrong
 # with the handshake that ends it, or nothing when it is valid. ALLOWED is a

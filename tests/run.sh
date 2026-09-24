@@ -624,6 +624,19 @@ stop_missing_follow_ups_blocked() {
   check "$(blocked)" "block"
 }
 
+stop_requested_state_after_follow_ups_passes() {
+  run_stop_hook $'PR opened.\n\nstatus: done\nreason: https://github.com/acme/app/pull/7\nfollow_ups: []\nrequested_state: In Review' ccmagic:auto-work
+  check "$(blocked)" "allow"
+}
+
+# A report written as a pseudo tool call (seen in the first auto-ticket field
+# run) is sent back, and the reason tells the agent how to hand back properly.
+stop_handback_tag_as_text_blocked() {
+  run_stop_hook $'status: done\nreason: pushed 1 commit\nfollow_ups: []\n\n<SubagentHandback>\nmessage: Push complete.\n</SubagentHandback>' ccmagic:auto-push
+  check "$(blocked)" "block"
+  [[ $(jq -r .reason <<<"$OUT") == *"SubagentHandback tool, its message must be your full report ending with this block"* ]]
+}
+
 stop_second_attempt_released() {
   run_stop_hook 'still no handshake' ccmagic:auto-finish true
   check "$(blocked)" "allow"
@@ -1001,6 +1014,68 @@ validate_pyproject_needs_tool_config() {
   touch ruff.toml
   run "$BIN/ccm-validate" --list
   check "$(jq -r '[.checks[] | .command // "-"] | join("|")' <<<"$OUT")" 'ruff format --check|ruff check|-|pytest|-'
+}
+
+# seed_wrapper NAME [RC]: an executable ./NAME build wrapper stub that logs its
+# arguments to $T/jvm.log and exits RC, so the tests need no Java.
+seed_wrapper() {
+  printf '#!/bin/sh\necho "%s $*" >>"%s/jvm.log"\nexit %s\n' "$1" "$T" "${2:-0}" >"$1"
+  chmod +x "$1"
+}
+
+# commands: the resolved command per check, in order, "-" when skipped.
+commands() { jq -r '[.checks[] | .command // "-"] | join("|")' <<<"$OUT"; }
+
+validate_gradle_wrapper_used() {
+  printf "plugins {\n  id 'java'\n  id 'com.diffplug.spotless' version '6.25.0'\n}\n" >build.gradle
+  seed_wrapper gradlew
+  run "$BIN/ccm-validate" --list
+  check "$(commands)" './gradlew spotlessCheck|-|-|./gradlew test|./gradlew build'
+  run "$BIN/ccm-validate" --only test,build
+  check "$(jqval .status),$RC" "pass,0"
+  check "$(command cat "$T/jvm.log")" $'gradlew test\ngradlew build'
+}
+
+validate_gradle_failing_test_fails() {
+  echo 'rootProject.name = "x"' >settings.gradle.kts
+  seed_wrapper gradlew 1
+  run "$BIN/ccm-validate" --only test
+  check "$(jqval .status),$RC,$(jqval '.checks[0].command')" "fail,1,./gradlew test"
+}
+
+validate_gradle_beats_package_json_for_test_and_build() {
+  seed_pkg '{"lint":"true","test":"false","build":"false"}'
+  echo 'plugins { java }' >build.gradle.kts
+  seed_wrapper gradlew
+  run "$BIN/ccm-validate" --list
+  check "$(commands)" '-|npm run lint|-|./gradlew test|./gradlew build'
+  run "$BIN/ccm-validate"
+  check "$(jqval .status),$RC" "pass,0"
+  check "$(command cat "$T/pm.log")" "npm run lint"
+  check "$(command cat "$T/jvm.log")" $'gradlew test\ngradlew build'
+}
+
+validate_maven_detection() {
+  echo '<project/>' >pom.xml
+  seed_wrapper mvnw
+  run "$BIN/ccm-validate" --list
+  check "$(commands)" '-|-|-|./mvnw -B test|./mvnw -B verify'
+  run "$BIN/ccm-validate"
+  check "$(jqval .status),$RC" "pass,0"
+  check "$(command cat "$T/jvm.log")" $'mvnw -B test\nmvnw -B verify'
+}
+
+validate_jvm_without_wrapper_uses_tool_name() {
+  echo 'rootProject.name = "x"' >settings.gradle
+  run "$BIN/ccm-validate" --list
+  check "$(commands)" '-|-|-|gradle test|gradle build'
+  rm settings.gradle
+  echo '<project/>' >pom.xml
+  run "$BIN/ccm-validate" --list
+  check "$(commands)" '-|-|-|mvn -B test|mvn -B verify'
+  printf '#!/bin/sh\n' >mvnw
+  run "$BIN/ccm-validate" --list
+  check "$(commands)" '-|-|-|sh ./mvnw -B test|sh ./mvnw -B verify'
 }
 
 # ---- ccm-review-route ------------------------------------------------------

@@ -202,3 +202,4 @@ claude --plugin-dir ./
 - `$ARGUMENTS` works in skills for dynamic values.
 - `${CLAUDE_SKILL_DIR}` references supporting files in the skill directory.
 - `${CLAUDE_PLUGIN_ROOT}` references the plugin root (used in `hooks/hooks.json`).
+- The `agents/auto-*.md` step agents have no tracker access: in an `/ccmagic:auto-ticket` run the orchestrator does every tracker read and write (`skills/auto-ticket/autonomous-contract.md` §8). Keep their "Returning your report" and "No tracker access" paragraphs identical across all six agents.

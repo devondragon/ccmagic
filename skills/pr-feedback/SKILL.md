@@ -222,14 +222,14 @@ Autonomous mode is ON when the first present signal (in priority order) resolves
 
 Absent all three, run the interactive plan-only path exactly as documented above.
 
-**Tracker for follow-ups.** Reuse `tracker:` / `ticket:` / `transport:` if the grounding block carries them (trust the grounding block's `transport:` rather than re-detecting). Otherwise run `"${CLAUDE_SKILL_DIR}/../../bin/ccm-context"` (bare `ccm-context` works too, since plugin `bin/` is on `PATH`) and read its JSON: `config.tracker` when it is pinned (`linear`, `github`, or `jira`), else `tracker_hint` (from the ticket ID parsed from the branch, and `config.ticket_url_base`), `gh_available`, and `config.github_repo`. Do not re-read the config files or re-parse the branch. The MCP probe and the rest of the cascade stay as in `/ccmagic:work-ticket` Step 0b, because a shell can't see MCP servers. **Under prompt-relay** (contract §7): skip tracker resolution for follow-ups — there is no ticket-creation API in this transport; see the defer/out-of-scope rule below for how deferred items are recorded instead. **Orchestrated vs. standalone** works as in `/ccmagic:work-ticket` → *Autonomous mode*.
+**Tracker for follow-ups.** Reuse `tracker:` / `ticket:` / `transport:` if the grounding block carries them (trust the grounding block's `transport:` rather than re-detecting). Otherwise run `"${CLAUDE_SKILL_DIR}/../../bin/ccm-context"` (bare `ccm-context` works too, since plugin `bin/` is on `PATH`) and read its JSON: `config.tracker` when it is pinned (`linear`, `github`, or `jira`), else `tracker_hint` (from the ticket ID parsed from the branch, and `config.ticket_url_base`), `gh_available`, and `config.github_repo`. Do not re-read the config files or re-parse the branch. The MCP probe and the rest of the cascade stay as in `/ccmagic:work-ticket` Step 0b, because a shell can't see MCP servers. **Under prompt-relay** (contract §7), **or when orchestrated** (`orchestrator:` in the grounding block, contract §8, any transport): skip tracker resolution for follow-ups, because this skill files no tickets there; see the defer/out-of-scope rule below for how deferred items are recorded instead. **Orchestrated vs. standalone** works as in `/ccmagic:work-ticket` → *Autonomous mode*.
 
 ### What changes: triage → execute
 
 Run Steps 1–5 exactly as written (load conventions, fetch threads, classify, verify, detect conflicts, group). Then, instead of building a plan and stopping (Steps 6–7), do these in order:
 
 1. **address-now** → apply the fix with `Edit`, grouped by file per Steps 5–6.
-2. **defer / out-of-scope** → file **one follow-up ticket per item** in the active tracker (Linear via `mcp__*Linear*__save_issue`, GitHub via `gh issue create`, JIRA via the Atlassian MCP) and record its ID in `follow_ups`. **Under prompt-relay** (contract §7 `file_followup`): there is no ticket-creation API — instead, record a short description of the item in `follow_ups` (contract §3's handshake accepts "ticket ids or short descriptions"); the reply in step 4 uses `--ticket requested`. The orchestrator lists these under "Follow-ups to file" in its final summary.
+2. **defer / out-of-scope** → file **one follow-up ticket per item** in the active tracker (Linear via `mcp__*Linear*__save_issue`, GitHub via `gh issue create`, JIRA via the Atlassian MCP) and record its ID in `follow_ups`. **Under prompt-relay or when orchestrated** (contract §7 `file_followup`, §8): do not file a ticket; record a short description of the item in `follow_ups` (contract §3's handshake accepts "ticket ids or short descriptions"); the reply in step 4 uses `--ticket requested`. The orchestrator files these, or lists them with a reason, in its final summary.
 3. **Push**: invoke `/ccmagic:push` with the autonomous grounding block prepended (it commits the grouped fixes and pushes; if push returns `needs-human`, propagate that and skip step 4). Replies come after the push because a `fixed` reply must cite a pushed commit.
 4. **Reply on every triaged thread with `ccm-pr-reply`**, using the response templates in `${CLAUDE_SKILL_DIR}/triage-guide.md` for the body. The script appends the disposition marker that `ccm-pr-threads` reads, replies to the thread's root comment, and resolves the thread for `fixed`:
    ```bash
@@ -246,17 +246,17 @@ Run Steps 1–5 exactly as written (load conventions, fetch threads, classify, v
 ### Behavior at each human-gate
 
 - **Step 4d (Conflicting reviewers):** do not ask. Conventions already win in this skill — if a project convention decides the conflict, take that side automatically and cite it in the reply. Only a **genuine tie** (no convention applies) → `needs-human` (the `reason` names the `file:line` and both positions).
-- **Step 4c (`defer` / out-of-scope verdict):** do not ask. Default action is **create a follow-up ticket** for each deferred/out-of-scope item; **under prompt-relay**, record it as a short description in `follow_ups:` instead (contract §7 `file_followup`).
+- **Step 4c (`defer` / out-of-scope verdict):** do not ask. Default action is **create a follow-up ticket** for each deferred/out-of-scope item; **under prompt-relay or when orchestrated**, record it as a short description in `follow_ups:` instead (contract §7 `file_followup`, §8).
 
 ### Handshake (emit last, in autonomous mode)
 
 ```
 status: done | needs-human
 reason: applied {A} / declined {D} / deferred {F}   (or the blocking tie on needs-human)
-follow_ups: [<follow-up ticket ids filed — or short descriptions under prompt-relay>]
+follow_ups: [<follow-up ticket ids filed, or short descriptions when orchestrated or under prompt-relay>]
 ```
 
-`done` = this pass's fixes are applied, replies posted, follow-ups filed (or recorded as short descriptions under prompt-relay), and the branch pushed. `needs-human` = a genuine reviewer tie (or a fix that can't be made safely) surfaced; if top-level, route-and-stop (park to `needs_human_state`, or `needs_human_label` if that state doesn't exist — on GitHub create the label first if missing; comment) before emitting — otherwise hand the handshake to the parent. **Under prompt-relay** (contract §7), that top-level park applies contract §4's *Under the prompt-relay transport* adjustments — no state move or label, parked note to the PR only, emitted (with `Requested state: {needs_human_state}`) wrapped in the §7 final-message delimiters as your final output. The parent orchestrator recomputes overall "clean" (CI green + zero unresolved actionable threads) after CI and any new bot review land.
+`done` = this pass's fixes are applied, replies posted, follow-ups filed (or recorded as short descriptions when orchestrated or under prompt-relay), and the branch pushed. `needs-human` = a genuine reviewer tie (or a fix that can't be made safely) surfaced; if top-level, route-and-stop (park to `needs_human_state`, or `needs_human_label` if that state doesn't exist — on GitHub create the label first if missing; comment) before emitting — otherwise hand the handshake to the parent. **Under prompt-relay** (contract §7), that top-level park applies contract §4's *Under the prompt-relay transport* adjustments — no state move or label, parked note to the PR only, emitted (with `Requested state: {needs_human_state}`) wrapped in the §7 final-message delimiters as your final output. The parent orchestrator recomputes overall "clean" (CI green + zero unresolved actionable threads) after CI and any new bot review land.
 
 ## Execution
 

@@ -71,7 +71,7 @@ Use the available Linear MCP tool (e.g. `mcp__claude_ai_Linear__get_issue`) with
 - `labels` and `priority` (helpful for triage)
 - URL: from the response, or `{ticket_url_base}/{TICKET-ID}` if available
 
-**Under prompt-relay** (contract §7): skip the MCP call — read `title` and `description` from the grounding block's `ticket_content:` section (contract §2). If that section is absent, stop with the setup-error message per contract §7 `fetch_ticket` — never guess. The "If not found" stop text below applies only to the MCP path.
+**Under prompt-relay** (contract §7), **or when orchestrated** (`orchestrator:` in the grounding block, contract §8, any transport): skip the fetch and read `title` and `description` (and any acceptance criteria) from the grounding block's `ticket_content:` section (contract §2). If that section is absent, stop with the setup-error message per contract §7 `fetch_ticket` (orchestrated: emit `needs-human` per contract §8); never guess, and never spawn a helper to fetch it. The "If not found" stop text below applies only to the MCP path.
 
 ### GitHub
 
@@ -97,7 +97,7 @@ Do not proceed.
 
 ## Step 2: Assign the ticket and move to In Progress
 
-Under prompt-relay (contract §7), skip this step entirely — the harness already assigned the ticket and moved it to In Progress on assignment.
+Under prompt-relay (contract §7), skip this step entirely — the harness already assigned the ticket and moved it to In Progress on assignment. When orchestrated (contract §8), skip it too: the orchestrator already did it.
 
 ### Linear
 
@@ -266,7 +266,7 @@ Once the PR exists, update the ticket to reflect that work is ready for review.
 
 Save the issue with state transitioned to "In Review" (or the closest equivalent — Linear teams often customize this). Add the PR link via the `mcp__*Linear*__create_attachment` tool, or as a comment using `save_comment` if attachments aren't available.
 
-**Under prompt-relay** (contract §7): no attachment/comment API — report the intended state via the handshake's `requested_state: In Review` field (contract §3). The PR URL travels in the run summary; the tracker's GitHub integration auto-links the PR via the branch name. Never a failure — the "If transition fails" note below applies only to the MCP path.
+**Under prompt-relay** (contract §7), **or when orchestrated** (contract §8, any transport, for every tracker below): make no tracker write; report the intended state via the handshake's `requested_state: In Review` field (contract §3). The PR URL travels in the run summary; the tracker's GitHub integration auto-links the PR via the branch name. Never a failure — the "If transition fails" note below applies only to the MCP path.
 
 ### GitHub
 
@@ -313,6 +313,8 @@ Also read these keys from `.claude/ccmagic.local.md`: `needs_human_state:`, `nee
 
 **Orchestrated vs. standalone.** If the signal came from a parent's grounding block (#2), the parent owns routing — on a `needs-human` outcome, emit the handshake and stop, and let the parent park the ticket. If the signal came from `--autonomous` or config (#1/#3) with no parent, this skill is the top-level autonomous entry point — perform **route-and-stop** yourself before emitting the handshake.
 
+**No tracker I/O when orchestrated.** With `orchestrator:` in the grounding block, the orchestrator owns every tracker read and write on every transport (contract §8): Step 1 reads the ticket from `ticket_content:`, Step 2 is skipped, and Step 8 only reports `requested_state: In Review`. Deferred items go in `follow_ups:` as short descriptions; don't file tickets. Never spawn a helper agent to reach the tracker. Standalone runs keep the tracker steps as written.
+
 ### Behavior at each human-gate
 
 - **Step 3 (Classification):** do not ask. Proceed with your own classification and reasoning; record both in the PR body ("Autonomous classification: {class} — {reasoning}"). No pause.
@@ -335,13 +337,13 @@ Also read these keys from `.claude/ccmagic.local.md`: `needs_human_state:`, `nee
 
 ### Handshake (emit last, in autonomous mode)
 
-`/ccmagic:work-ticket` emits `done` (PR created and ticket moved to In Review) or `needs-human`. Under prompt-relay (contract §7), "moved to In Review" means `requested_state: In Review` was reported in the handshake — the harness owns the actual move:
+`/ccmagic:work-ticket` emits `done` (PR created and ticket moved to In Review) or `needs-human`. When orchestrated (contract §8) or under prompt-relay (contract §7), "moved to In Review" means `requested_state: In Review` was reported in the handshake; the orchestrator or the harness owns the actual move:
 
 ```
 status: done | needs-human
 reason: <one line — the PR URL on done; the blocking decision on needs-human>
 follow_ups: [<any tickets or deferrals noted>]
-requested_state: <In Review — prompt-relay only, omit otherwise>
+requested_state: <In Review when orchestrated or under prompt-relay; omit otherwise>
 ```
 
 ---
