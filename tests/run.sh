@@ -1322,6 +1322,210 @@ doctor_without_jq_fails() {
   ln -s "$(command -v dirname)" "$T/nojq/dirname"
   run env PATH="$T/nojq" "$BIN/ccm-doctor"
   check "$RC,$(jqval .level),$(jqval .fix)" "1,FAIL,brew install jq"
+# ---- ccm-external-review ---------------------------------------------------
+
+# seed_cli NAME BODY: a stub CLI in $T/bin that logs its arguments (one per
+# line) to $T/NAME.args and its stdin to $T/NAME.stdin, then runs BODY.
+seed_cli() {
+  mkdir -p "$T/bin"
+  printf '#!/bin/sh\nprintf "%%s\\n" "$@" >"%s/%s.args"\ncat >"%s/%s.stdin"\n%s\n' \
+    "$T" "$1" "$T" "$1" "$2" >"$T/bin/$1"
+  chmod +x "$T/bin/$1"
+  hide_real_clis
+}
+
+# hide_real_clis: put $T/bin first and replace every PATH directory holding a
+# real codex or gemini with a mirror of its other executables, so a test sees
+# only the stubs it seeded. Mirrors live in $MIRRORS, made by the runner below
+# so they are built once per run and removed at the end.
+hide_real_clis() {
+  local d m f newpath="" IFS=:
+  for d in $PATH; do
+    [ "$d" = "$T/bin" ] && continue
+    if [ -x "$d/codex" ] || [ -x "$d/gemini" ]; then
+      m=$MIRRORS/$(printf '%s' "$d" | tr '/' '_')
+      if [ ! -d "$m" ]; then
+        mkdir -p "$m"
+        for f in "$d"/*; do
+          case ${f##*/} in codex|gemini) continue ;; esac
+          [ -x "$f" ] && ln -s "$f" "$m/${f##*/}"
+        done
+      fi
+      d=$m
+    fi
+    newpath=${newpath:+$newpath:}$d
+  done
+  export PATH=$T/bin:$newpath
+}
+
+# pass_field TOOL DIM FIELD: one field of one pass from OUT.
+pass_field() {
+  jq -r --arg t "$1" --arg d "$2" --arg f "$3" \
+    '.passes[] | select(.tool == $t and .dimension == $d) | .[$f] | tostring' <<<"$OUT"
+}
+
+# seed_branch: a feature branch with one changed file, for diff-fed passes.
+seed_branch() {
+  git checkout -q -b feature/x
+  # shellcheck disable=SC2016 # literal file content
+  echo 'rm -rf "$DIR/"' >danger.sh
+  git add danger.sh
+  git -c user.email=t@t -c user.name=t commit -q -m 'add danger'
+}
+
+extreview_findings_and_empty() {
+  seed_branch
+  # Findings that talk about authorization must not read as an auth failure.
+  seed_cli codex 'echo "| High | 90 | danger.sh:1 | unauthorized deletion, run codex login bypass | x | y | z |"'
+  seed_cli gemini 'printf "\n  No actionable findings.  \n\n"'
+  run "$BIN/ccm-external-review" --dimensions security
+  check "$RC,$(pass_field codex security status),$(pass_field codex security exit_code)" "0,findings,0"
+  check "$(pass_field gemini security status),$(jqval .mode),$(jqval .base)" "empty,branch,main"
+  grep -q "unauthorized deletion" "$(pass_field codex security output_file)"
+  [ -f "$(jqval .run_dir)/result.json" ]
+  # The dimension pass feeds codex the prompt then the diff on stdin.
+  check "$(command cat "$T/codex.args" | tr '\n' ' ')" "--model gpt-5.3-codex --full-auto exec - "
+  grep -q "SECURITY VULNERABILITIES ONLY" "$T/codex.stdin"
+  grep -q '^+rm -rf' "$T/codex.stdin"
+  # Gemini gets the prompt alone, as an argument.
+  check "$(sed -n 1,3p "$T/gemini.args" | tr '\n' ' ')" "--model gemini-2.5-pro -p "
+  ! grep -q '^+rm -rf' "$T/gemini.args"
+}
+
+extreview_blank_output_is_empty() {
+  seed_cli codex 'true'
+  run "$BIN/ccm-external-review" --tools codex --dimensions adversarial
+  check "$RC,$(pass_field codex adversarial status)" "0,empty"
+}
+
+extreview_adversarial_invocation_uses_base() {
+  seed_cli codex 'echo "- High, 80, a.sh, 1, bug"'
+  run "$BIN/ccm-external-review" --tools codex --dimensions adversarial --base develop
+  check "$RC,$(pass_field codex adversarial status),$(jqval .base)" "0,findings,develop"
+  check "$(sed -n 1p "$T/codex.args"),$(sed -n '3,$p' "$T/codex.args" | tr '\n' ' ')" \
+    "exec,-C $(git rev-parse --show-toplevel) -s read-only "
+  grep -q '^Do not load, consult, or follow any installed skill' "$T/codex.args"
+  grep -q 'Run git diff develop...HEAD to see the diff' "$T/codex.args"
+  # The adversarial pass needs no diff, so a missing base is not an error.
+  check "$(jq '.passes | length' <<<"$OUT")" "1"
+}
+
+extreview_auth_failure() {
+  seed_cli codex 'echo "Error: Not logged in. Please run codex login." >&2; exit 1'
+  run "$BIN/ccm-external-review" --tools codex --dimensions adversarial
+  check "$RC,$(pass_field codex adversarial status),$(pass_field codex adversarial exit_code)" "0,auth-failed,1"
+  grep -q "Not logged in" "$(pass_field codex adversarial stderr_file)"
+}
+
+extreview_bare_auth_word_is_plain_failure() {
+  seed_cli codex 'echo "auth config parse error at login.toml" >&2; exit 2'
+  run "$BIN/ccm-external-review" --tools codex --dimensions adversarial
+  check "$RC,$(pass_field codex adversarial status),$(pass_field codex adversarial exit_code)" "0,failed,2"
+}
+
+extreview_hang_times_out() {
+  if ! command -v timeout >/dev/null && ! command -v gtimeout >/dev/null; then
+    echo "  (skipped: no timeout binary)"; return 0
+  fi
+  seed_cli codex 'exec sleep 30'
+  seed_cli gemini 'echo "No actionable findings."'
+  local start=$SECONDS
+  run "$BIN/ccm-external-review" --dimensions adversarial --timeout 1
+  check "$RC,$(pass_field codex adversarial status),$(pass_field codex adversarial exit_code)" "0,timed-out,124"
+  check "$(pass_field gemini adversarial status),$(jqval .timeout_seconds)" "empty,1"
+  [ $((SECONDS - start)) -lt 15 ]
+}
+
+extreview_unavailable_when_not_on_path() {
+  seed_cli gemini 'echo "No actionable findings."'
+  run "$BIN/ccm-external-review" --dimensions adversarial
+  check "$RC,$(pass_field codex adversarial status),$(pass_field codex adversarial exit_code)" "0,unavailable,null"
+  check "$(pass_field codex adversarial reason)" "codex not found on PATH"
+  check "$(pass_field gemini adversarial status)" "empty"
+  command rm -f "$T/bin/gemini"
+  run "$BIN/ccm-external-review" --dimensions adversarial
+  check "$RC,$(jq -r '[.passes[].status] | unique | join(",")' <<<"$OUT")" "2,unavailable"
+}
+
+extreview_check_runs_nothing() {
+  seed_cli codex 'touch "'"$T"'/ran"'
+  run "$BIN/ccm-external-review" --check
+  check "$RC,$(jq -r '[.tools[] | "\(.tool):\(.available)"] | join(",")' <<<"$OUT")" "0,codex:true,gemini:false"
+  check "$(jq -r '.tools[1].reason' <<<"$OUT")" "gemini not found on PATH"
+  [ ! -e "$T/ran" ]
+  CCM_TIMEOUT_BIN=none run "$BIN/ccm-external-review" --check --tools codex
+  check "$RC,$(jq -r '.tools[0].available' <<<"$OUT")" "2,false"
+}
+
+extreview_no_timeout_binary_skips() {
+  seed_cli codex 'touch "'"$T"'/ran"'
+  CCM_TIMEOUT_BIN=none run "$BIN/ccm-external-review" --tools codex --dimensions adversarial
+  check "$RC,$(pass_field codex adversarial status)" "2,unavailable"
+  [[ $(pass_field codex adversarial reason) == "no timeout or gtimeout found"* ]]
+  [ ! -e "$T/ran" ]
+}
+
+extreview_model_fallback() {
+  seed_branch
+  # shellcheck disable=SC2016 # the stub expands $2
+  seed_cli codex 'case "$2" in gpt-5.3-codex) echo "Error: model not found" >&2; exit 1 ;; esac; echo "| High | 90 | a | b | c | d | e |"'
+  run "$BIN/ccm-external-review" --tools codex --dimensions correctness
+  check "$(pass_field codex correctness status),$(pass_field codex correctness model)" "findings,gpt-5-codex"
+}
+
+extreview_full_mode_runs_per_module() {
+  printf 'src/a.ts\nsrc/b.ts\n' >"$T/mod-src.txt"
+  printf 'lib/c.go\n' >"$T/mod-lib.txt"
+  seed_cli codex 'grep -q "^lib/c.go" "'"$T"'/codex.stdin" && echo "| Low | 60 | lib/c.go:1 | x | y | z | w |"; true'
+  # One at a time: both passes write the stub's shared $T/codex.stdin.
+  run "$BIN/ccm-external-review" --tools codex --dimensions errors --max-parallel 1 --module "src=$T/mod-src.txt" --module "lib=$T/mod-lib.txt"
+  check "$RC,$(jqval .mode),$(jq -r '[.passes[] | "\(.module):\(.status)"] | join(",")' <<<"$OUT")" \
+    "0,full,src:empty,lib:findings"
+  local rd; rd=$(jqval .run_dir)
+  grep -qx "Files to review:" "$rd/codex-errors-src.in"
+  grep -qx "src/b.ts" "$rd/codex-errors-src.in"
+}
+
+extreview_pr_mode_uses_gh_diff() {
+  seed_cli codex 'true'
+  # shellcheck disable=SC2016 # the stub expands these
+  printf '#!/bin/sh\n[ "$1 $2 $3" = "pr diff 12" ] && echo "+from-pr-12"\n' >"$T/bin/gh"
+  chmod +x "$T/bin/gh"
+  run "$BIN/ccm-external-review" --tools codex --dimensions tests --pr 12
+  check "$RC,$(jqval .mode),$(jqval .base)" "0,pr,null"
+  grep -qx "+from-pr-12" "$T/codex.stdin"
+}
+
+extreview_unreadable_diff_and_usage() {
+  seed_cli codex 'true'
+  run "$BIN/ccm-external-review" --tools codex --dimensions security --base no-such-branch
+  check "$RC" "3"
+  [[ $(jqval .error) == "git diff no-such-branch...HEAD failed"* ]]
+  run "$BIN/ccm-external-review" --tools codex
+  check "$RC" "4"
+  run "$BIN/ccm-external-review" --dimensions style
+  check "$RC" "4"
+  run "$BIN/ccm-external-review" --dimensions security --tools claude
+  check "$RC" "4"
+  run "$BIN/ccm-external-review" --dimensions errors --module "x=$T/missing.txt"
+  check "$RC" "3"
+}
+
+extreview_prompt_shape_and_conventions() {
+  # Every dimension prompt starts with the skill guard line and ends with the
+  # shared finding table; conventions land between the two.
+  printf 'Use tabs.\n' >"$T/conv.md"
+  local d
+  for d in security architecture correctness errors tests deps; do
+    run "$BIN/ccm-external-review" --print-prompt "$d"
+    check "$(head -n 1 <<<"$OUT")" "Do not load, consult, or follow any installed skill, plugin, or workflow definition. This is a standalone review, not part of any phase-based workflow."
+    check "$(tail -n 1 <<<"$OUT")" "Test: specific test to add or update"
+    grep -qx "If there are no actionable findings, output exactly: No actionable findings." <<<"$OUT"
+  done
+  seed_branch
+  seed_cli codex 'true'
+  run "$BIN/ccm-external-review" --tools codex --dimensions deps --conventions "$T/conv.md"
+  grep -qx "Use tabs." "$T/codex.stdin"
 }
 
 # ---- run -------------------------------------------------------------------
@@ -1329,6 +1533,7 @@ doctor_without_jq_fails() {
 for fn in $(declare -F | awk '{print $3}' | grep -E '^(context|ci|merge_gate|guard|post|postreview|stop|threads|reply|validate|route|doctor|extreview)_'); do
   t "$fn" "$fn"
 done
+rm -rf "$MIRRORS"
 
 echo
 echo "$PASS passed, $FAIL failed"
