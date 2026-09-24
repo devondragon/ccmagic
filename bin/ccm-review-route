@@ -129,8 +129,8 @@ fail_read() {
   exit 3
 }
 
-err=$(mktemp)
-trap 'rm -f "$err"' EXIT
+# No temp files here: a sandboxed Bash (the eval tool's, for one) may refuse
+# writes to $TMPDIR. On failure the command is rerun to capture its stderr.
 
 if [ -n "$diff_file" ]; then
   source_kind=file source_value=$diff_file
@@ -143,12 +143,13 @@ if [ -n "$diff_file" ]; then
   fi
 elif [[ $target =~ ^#?[0-9]+$ ]]; then
   source_kind=pr source_value=${target#\#}
-  diff=$(gh pr diff "$source_value" 2>"$err") || fail_read "gh pr diff $source_value failed" "$(cat "$err")"
+  diff=$(gh pr diff "$source_value" 2>/dev/null) ||
+    fail_read "gh pr diff $source_value failed" "$(gh pr diff "$source_value" 2>&1 >/dev/null || true)"
 else
   source_kind=range source_value=${target:-main...HEAD}
   git rev-parse --git-dir >/dev/null 2>&1 || fail_read "not a git repository" "$PWD"
-  diff=$(git diff --no-color --no-ext-diff "$source_value" -- 2>"$err") ||
-    fail_read "git diff $source_value failed" "$(cat "$err")"
+  diff=$(git diff --no-color --no-ext-diff "$source_value" -- 2>/dev/null) ||
+    fail_read "git diff $source_value failed" "$(git diff --no-color --no-ext-diff "$source_value" -- 2>&1 >/dev/null || true)"
 fi
 
 # ---- parse -----------------------------------------------------------------
