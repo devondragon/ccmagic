@@ -1,0 +1,248 @@
+#!/usr/bin/env bash
+# ccm-doctor: check a project's ccmagic setup, as JSON lines.
+#
+# Usage: ccm-doctor [--quick] [--plugin-root DIR]
+#
+#   --quick         only the project checks (areas "Project setup" and
+#                   "Configuration")
+#   --plugin-root   check this plugin directory instead of the one this
+#                   script lives in (used by tests)
+#
+# Prints one JSON object per line: {level, area, message, fix}.
+#   level  OK | WARN | INFO | FAIL
+#   area   Project setup, Configuration, Hooks and scripts, Git, Branch,
+#          Skills, Validation
+#   fix    one next step for the user, or null
+#
+# Configuration lines carry "KEY = VALUE" in message for the settings the
+# ticket skills use, resolved the way bin/ccm-lib.sh resolves them (project
+# over user over defaults); "(default)" marks a value no config file sets.
+# Validation lines come from `ccm-validate --list`, one per check: OK for a
+# check that has a command or is disabled in config, INFO for "not
+# configured".
+#
+# MCP servers are visible to the model, not to a shell, so tracker MCP checks
+# stay in the doctor skill.
+#
+# Exit codes:
+#   0  no FAIL line
+#   1  at least one FAIL line (including jq missing, which stops the run)
+#   4  usage error
+
+set -uo pipefail
+here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+
+if ! command -v jq >/dev/null 2>&1; then
+  printf '%s\n' '{"level":"FAIL","area":"Hooks and scripts","message":"jq not installed: the guard hook allows everything, and ccm-doctor and the bin/ scripts cannot run without it","fix":"brew install jq"}'
+  exit 1
+fi
+
+# shellcheck source=bin/ccm-lib.sh
+. "$here/ccm-lib.sh"
+
+quick=false
+plugin_root=$(cd "$here/.." && pwd)
+while [ $# -gt 0 ]; do
+  case $1 in
+    --quick) quick=true ;;
+    --plugin-root)
+      [ -n "${2:-}" ] || { echo "ccm-doctor: --plugin-root needs a value" >&2; exit 4; }
+      [ -d "$2" ] || { echo "ccm-doctor: --plugin-root $2 is not a directory" >&2; exit 4; }
+      plugin_root=$(cd "$2" && pwd); shift ;;
+    -h|--help) sed -n '2,30p' "$0"; exit 0 ;;
+    *) echo "ccm-doctor: unknown argument $1" >&2; exit 4 ;;
+  esac
+  shift
+done
+
+failed=0
+
+# emit LEVEL AREA MESSAGE [FIX]
+emit() {
+  [ "$1" = FAIL ] && failed=1
+  jq -cn --arg l "$1" --arg a "$2" --arg m "$3" --arg f "${4:-}" \
+    '{level: $l, area: $a, message: $m, fix: (if $f == "" then null else $f end)}'
+}
+
+in_repo=false
+if root=$(git rev-parse --show-toplevel 2>/dev/null); then
+  in_repo=true
+  cd "$root" || exit 1
+fi
+
+# ---- Project setup (skill section 1) ---------------------------------------
+
+area="Project setup"
+if [ -f context/conventions.md ]; then
+  emit OK "$area" "context/conventions.md (read by review, codex-review, pr-feedback, push, quick)"
+else
+  emit WARN "$area" "context/conventions.md missing" "/ccmagic:init"
+fi
+if [ -f context/branching.md ]; then
+  emit OK "$area" "context/branching.md (read by pr, merge)"
+else
+  emit WARN "$area" "context/branching.md missing" "/ccmagic:init"
+fi
+if [ -d context/knowledge ]; then
+  emit OK "$area" "context/knowledge/ exists"
+else
+  emit INFO "$area" "context/knowledge/ missing" "/ccmagic:map-codebase"
+fi
+for f in STACK ARCHITECTURE CONVENTIONS; do
+  if [ -f "context/knowledge/$f.md" ]; then
+    emit OK "$area" "context/knowledge/$f.md"
+  else
+    emit INFO "$area" "context/knowledge/$f.md missing" "/ccmagic:map-codebase"
+  fi
+done
+
+# ---- Configuration (skill section 2) ---------------------------------------
+
+area="Configuration"
+project_cfg=${CCM_PROJECT_CONFIG:-$PWD/.claude/ccmagic.local.md}
+user_cfg=${CCM_USER_CONFIG:-$HOME/.claude/ccmagic.local.md}
+if [ -f "$project_cfg" ]; then
+  emit OK "$area" ".claude/ccmagic.local.md present"
+else
+  emit INFO "$area" ".claude/ccmagic.local.md missing: the tracker auto-detects on each ticket skill run (not broken, just not pinned)" \
+    "/ccmagic:init, or copy docs/ccmagic.local.md.example from the plugin"
+fi
+if [ -f "$user_cfg" ]; then
+  emit OK "$area" "user config ~/.claude/ccmagic.local.md present"
+fi
+
+config=$(ccm_config_json)
+set_keys=$(jq -rn --argjson u "$(ccm_frontmatter_json "$user_cfg")" \
+  --argjson p "$(ccm_frontmatter_json "$project_cfg")" '$u + $p | keys | join(" ")')
+for key in tracker ticket_url_base ticket_id_regex default_qa_workflow github_repo autonomous needs_human_label; do
+  val=$(jq -r --arg k "$key" '.[$k] // ""' <<<"$config")
+  case " $set_keys " in
+    *" $key "*) shown=$val ;;
+    *)
+      case $key in
+        ticket_url_base) shown=${val:-not set} ;;
+        github_repo) shown=${val:-auto-detect via gh} ;;
+        *) shown="$val (default)" ;;
+      esac
+      ;;
+  esac
+  emit OK "$area" "$key = $shown"
+done
+
+if [ "$quick" = true ]; then
+  exit "$failed"
+fi
+
+# ---- Hooks and scripts (skill section 4) -----------------------------------
+
+area="Hooks and scripts"
+emit OK "$area" "plugin root: $plugin_root"
+for f in hooks/pre-tool-use-guard.sh hooks/subagent-stop-handshake.sh hooks/post-tool-use-commit.sh \
+  hooks/lib-commit.sh hooks/lib-handshake.sh \
+  bin/ccm-lib.sh bin/ccm-context bin/ccm-ci-status bin/ccm-merge-gate bin/ccm-pr-threads \
+  bin/ccm-pr-reply bin/ccm-validate bin/ccm-review-route bin/ccm-post-review bin/ccm-doctor \
+  bin/ccm-external-review; do
+  if [ -f "$plugin_root/$f" ]; then
+    emit OK "$area" "$f"
+  else
+    emit WARN "$area" "$f missing" "reinstall the ccmagic plugin"
+  fi
+done
+emit OK "$area" "jq installed (the hooks and bin/ scripts need it)"
+if command -v timeout >/dev/null 2>&1 || command -v gtimeout >/dev/null 2>&1; then
+  emit OK "$area" "timeout available (ccm-validate bounds each check)"
+else
+  emit INFO "$area" "no timeout or gtimeout: ccm-validate runs checks without a time limit" "brew install coreutils"
+fi
+
+# ---- Git (skill section 5) -------------------------------------------------
+
+area="Git"
+if [ "$in_repo" = true ]; then
+  emit OK "$area" "git repository"
+else
+  emit FAIL "$area" "not in a git repository: most ccmagic skills require git" "git init, or run from inside a repository"
+fi
+if git config user.name >/dev/null 2>&1; then
+  emit OK "$area" "git user.name set"
+else
+  emit WARN "$area" "git user.name not set" "git config --global user.name \"Your Name\""
+fi
+if git config user.email >/dev/null 2>&1; then
+  emit OK "$area" "git user.email set"
+else
+  emit WARN "$area" "git user.email not set" "git config --global user.email you@example.com"
+fi
+
+# ---- Branch (skill section 6) ----------------------------------------------
+
+area="Branch"
+branch=""
+[ "$in_repo" = true ] && branch=$(git branch --show-current 2>/dev/null || true)
+if [ -n "$branch" ]; then
+  if [[ $branch =~ ^(feature|bugfix|hotfix|chore|release)/ ]]; then
+    emit OK "$area" "current branch follows convention: $branch"
+  else
+    emit INFO "$area" "branch '$branch' doesn't use a ccmagic prefix (feature/, bugfix/, hotfix/, chore/, release/)" \
+      "name work branches like feature/ENG-123-short-description"
+  fi
+  # Same parse the ticket skills use.
+  ticket=$("$here/ccm-context" --offline 2>/dev/null | jq -r '.ticket_id // ""' 2>/dev/null || true)
+  if [ -n "$ticket" ]; then
+    emit OK "$area" "ticket ID $ticket detected from the branch"
+  else
+    regex=$(jq -r '.ticket_id_regex' <<<"$config")
+    emit INFO "$area" "no ticket ID in branch '$branch' (ticket_id_regex $regex, or a GitHub issue number)" \
+      "pass the ticket ID to ticket skills, or name the branch like feature/ENG-123-short-description"
+  fi
+fi
+
+# ---- Skills (skill section 7) ----------------------------------------------
+
+area="Skills"
+if [ -d "$plugin_root/skills" ]; then
+  present=$(for d in "$plugin_root"/skills/*/; do
+    [ -f "$d/SKILL.md" ] && basename "$d"
+  done | sort)
+  count=$(printf '%s' "$present" | grep -c . || true)
+  emit OK "$area" "$count skills present: $(printf '%s' "$present" | tr '\n' ' ' | sed 's/ $//')"
+  # The help skill lists every skill as **`/ccmagic:NAME ...`**.
+  if [ -f "$plugin_root/skills/help/SKILL.md" ]; then
+    while IFS= read -r s; do
+      if ! printf '%s\n' "$present" | grep -qx "$s"; then
+        emit WARN "$area" "skill $s is listed in /ccmagic:help but missing" "reinstall the ccmagic plugin"
+      fi
+    done < <(grep -E '^\*\*`/ccmagic:[a-z0-9-]+' "$plugin_root/skills/help/SKILL.md" |
+      sed -E 's/^\*\*`\/ccmagic:([a-z0-9-]+).*/\1/' | sort -u)
+  fi
+else
+  emit WARN "$area" "no skills directory under $plugin_root" "reinstall the ccmagic plugin"
+fi
+
+# ---- Validation (ccm-validate --list) --------------------------------------
+
+area="Validation"
+if [ "$in_repo" = true ]; then
+  vout=$("$here/ccm-validate" --list 2>/dev/null)
+  vrc=$?
+  if [ "$vrc" -gt 2 ] || ! jq -e '.checks' <<<"$vout" >/dev/null 2>&1; then
+    emit WARN "$area" "ccm-validate --list failed (exit $vrc)" "run ccm-validate --list to see the error"
+  else
+    while IFS=$'\x1f' read -r name status command source reason; do
+      case $status in
+        planned) emit OK "$area" "$name: $command ($source)" ;;
+        skipped)
+          if [ "$reason" = "disabled in config" ]; then
+            emit OK "$area" "$name: disabled in config"
+          else
+            emit INFO "$area" "$name: not configured" "set validate_$name in .claude/ccmagic.local.md if the project has one"
+          fi
+          ;;
+      esac
+    done < <(jq -r '.checks[] | [.name, .status, (.command // ""), (.source // ""), (.reason // "")] | join("\u001f")' <<<"$vout")
+  fi
+else
+  emit INFO "$area" "skipped: not in a git repository"
+fi
+
+exit "$failed"

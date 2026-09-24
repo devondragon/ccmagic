@@ -1,7 +1,7 @@
 ---
 name: review
 user-invocable: true
-allowed-tools: Read(*), Edit(*), Bash(git diff:*, git log:*, git status:*, git branch:*, git show:*, git rev-parse:*, git merge-base:*, git ls-files:*, git blame:*, gh pr view:*, gh pr diff:*, gh pr list:*, gh repo view:*, codex:*, which:*, command:*, timeout:*, gtimeout:*, echo:*, date:*, mktemp:*), Glob(*), Grep(*), Agent(*), Task(*), TodoWrite(*), AskUserQuestion(*), mcp__pal__codereview(*)
+allowed-tools: Read(*), Edit(*), Bash(git diff:*, git log:*, git status:*, git branch:*, git show:*, git rev-parse:*, git merge-base:*, git ls-files:*, git blame:*, gh pr view:*, gh pr diff:*, gh pr list:*, gh repo view:*, codex:*, which:*, command:*, timeout:*, gtimeout:*, echo:*, date:*, mktemp:*), Bash(${CLAUDE_SKILL_DIR}/../../bin/ccm-review-route *), Bash(${CLAUDE_SKILL_DIR}/../../bin/ccm-external-review *), Glob(*), Grep(*), Agent(*), Task(*), TodoWrite(*), AskUserQuestion(*), mcp__pal__codereview(*)
 description: Adaptive code review — auto-routes between a fast inline checklist (QUICK) and the full multi-agent pipeline (DEEP) with confidence scoring and convention awareness. Biased toward depth.
 argument-hint: "[branch|full|PR#] [--quick|--deep] [--fix] [--threshold N]"
 model: sonnet
@@ -45,42 +45,32 @@ If on `main` with no changes and no argument:
 
 ## Step 0.5: Auto-route between QUICK and DEEP
 
-Apply these rules in order — first match wins:
+In branch and PR mode, always run the router script and act on its JSON. It applies the routing rules (QUICK only for at most 2 files and 50 changed lines, no risk-path match, no new type declaration, no error-flow change; `-h` prints them) and reads the review stats. Do not count files or lines or check paths yourself.
 
-1. **User override** — `--quick` → QUICK. `--deep` → DEEP. `full` mode → always DEEP.
-2. **Auto-route** — Default to **DEEP**. Drop to QUICK only when **ALL** of the following are true:
-   - ≤ 2 files changed
-   - ≤ 50 lines changed (additions + deletions combined, per `git diff --shortstat`)
-   - No changed file path matches the risk patterns below
-   - The diff adds no new types (no new `class `, `interface `, `type `, `struct `, `enum `, `trait `)
-   - The diff changes no error-handling control flow (no new/modified `try`, `catch`, `except`, `rescue`, `finally`, `panic`, `recover`, `Result<`, `Either`)
-
-**Risk path patterns** (any match → DEEP, regardless of size):
-
-```
-auth, login, session, token, secret, credential, password, key, oauth,
-crypto, hash, sign, jwt, permission, role, acl, authz,
-migration, schema, sql, query, exec, eval,
-payment, billing, charge, refund, stripe,
-security, sanitiz, escap, csrf, xss, injection,
-deploy, infra, terraform, helm, dockerfile, ci/, .github/workflows
+```bash
+"${CLAUDE_SKILL_DIR}/../../bin/ccm-review-route"      # branch mode (main...HEAD)
+"${CLAUDE_SKILL_DIR}/../../bin/ccm-review-route" 42   # PR mode
+"${CLAUDE_SKILL_DIR}/../../bin/ccm-review-route" --diff-file - <<'CCM_DIFF_END'
+<the pasted diff, verbatim, when there is no checkout>
+CCM_DIFF_END
 ```
 
-Match case-insensitively against the full path.
+The script is also on the Bash `PATH` as `ccm-review-route`; use the bare name if the `${CLAUDE_SKILL_DIR}` path doesn't resolve. Keep its `gated` list for Step 3. Exit 3 means it couldn't read the diff: route DEEP and print `Routing → DEEP, reason: router failed: <error>`.
+
+Then pick the route, first match wins:
+
+1. **User override**: `--quick` → QUICK, `--deep` → DEEP, `full` mode → DEEP (no script run in full mode).
+2. **Otherwise**: the script's `route`.
 
 ### Announce the routing decision
 
-Print one line before any review work begins — this is non-negotiable, the user needs to know which review they got:
+Print one line before any review work begins. This is non-negotiable; the user needs to know which review they got. Without an override, print the script's `line` field verbatim, for example:
 
 ```
-Routing → DEEP — reason: 4 files, 120 lines, touches auth/login.ts
+Routing → DEEP, reason: 3 files (limit 2), 120 lines (limit 50), touches src/auth/login.ts (auth, login)
 ```
 
-or
-
-```
-Routing → QUICK — reason: 1 file, 12 lines, no risk patterns, no new types
-```
+With an override, print `Routing → QUICK, reason: --quick override` (or `--deep override`, or `full mode`).
 
 **If QUICK was selected, skip ahead to the [QUICK execution](#quick-execution) section. If DEEP, continue with Step 1.**
 
@@ -281,17 +271,12 @@ Launch all matching specialists in a single message alongside the core agents (u
 
 **Adaptive gating** (skip specialists that consistently produce zero findings):
 
-If this project has a review history file at `context/review-stats.json`, read it before dispatching. The file tracks per-specialist hit rates:
+The Step 0.5 router output carries `gated`: specialists with 0 findings across 10+ dispatches in `context/review-stats.json` (security is never gated). Do not read or edit that file yourself.
 
-```json
-{"testing": {"dispatched": 8, "findings": 12}, "performance": {"dispatched": 8, "findings": 0}, "migration": {"dispatched": 3, "findings": 2}}
-```
+- Skip each gated specialist and print: `[specialist] auto-gated (0 findings in N reviews)`, with N from its `dispatched`.
+- Override: `--all-specialists` flag forces all specialists regardless of gating.
 
-- If a specialist has 0 findings across 10+ dispatches, **skip it**. Print: `[specialist] auto-gated (0 findings in N reviews)`
-- Exception: **Security** is never gated — it's an insurance policy
-- Override: `--all-specialists` flag forces all specialists regardless of gating
-
-After the review completes (Step 7), update `context/review-stats.json` with the dispatch and finding counts from this review.
+After the review completes, record the counts as in Step 7d.
 
 ---
 
@@ -302,9 +287,9 @@ After the review completes (Step 7), update `context/review-stats.json` with the
 
 ## Step 3.5: Codex CLI Review (optional, parallel)
 
-Load `${CLAUDE_SKILL_DIR}/codex-pass.md` and follow it. It covers availability detection, the run-scoped workspace, the bounded `codex exec` invocation, and how to classify the result.
+Load `${CLAUDE_SKILL_DIR}/codex-pass.md` and follow it. It covers running the pass with `ccm-external-review` and acting on the status it reports.
 
-In short: if Codex and a `timeout` binary are both available, launch the adversarial pass in the background alongside the Step 3 agents, bound it with `timeout --kill-after=30 300`, record its exit status into the output file, and classify by that status rather than by keyword. Codex is additive and never blocking — every failure mode continues the review with Explore agent findings only.
+In short: run `"${CLAUDE_SKILL_DIR}/../../bin/ccm-external-review" --tools codex --dimensions adversarial` (bare name `ccm-external-review` also works; plugin `bin/` is on `PATH`) in the background alongside the Step 3 agents. The script checks availability, bounds the pass with `timeout --kill-after=30 300`, and classifies it by exit status; act on its `status` rather than re-deriving it. Codex is additive and never blocking — every failure mode continues the review with Explore agent findings only.
 
 ---
 
@@ -474,7 +459,7 @@ Create **TodoWrite** entries for all remaining (unfixed) findings, grouped by se
 
 ### 7d. Update review stats
 
-If `context/review-stats.json` exists (or conditional specialists were dispatched), update per-specialist dispatch and finding counts for adaptive gating in future reviews.
+If conditional specialists were dispatched, record one entry per dispatched specialist with its finding count, for example `"${CLAUDE_SKILL_DIR}/../../bin/ccm-review-route" --record testing=3,performance=0`. The script adds 1 dispatch and the findings to `context/review-stats.json`. Skip this when no specialist was dispatched.
 
 ## Step 8: Handle Disputed Findings
 

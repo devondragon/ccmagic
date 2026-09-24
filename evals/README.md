@@ -14,15 +14,17 @@ Add `--no-publish` to keep the report local.
 
 | case | shape | expected routing | outcome graders (weight 1) | format graders (weight 0.5) | invariants |
 |---|---|---|---|---|---|
-| 01-quick-clean-log-fix | slash command, 1 file, comment + log reword | QUICK | llm: no CRITICAL/WARNING, verdict PASS | routing line QUICK | |
-| 02-quick-off-by-one | natural language, 1 file, `<=` loop bound | QUICK | llm: names the bound bug, effect, severity, fix | routing QUICK, verdict not PASS | Edit never called |
-| 03-deep-auth-path-small | slash command, 1 file in `src/auth/`, expiry check deleted | DEEP by risk path | llm: Critical/High on missing expiry, consequence, fix | routing DEEP, confidence % present | Edit never called |
-| 04-deep-sql-injection | natural language, 3 files, concatenated SQL | DEEP by size | llm: Critical injection, example payload, parameterized fix, ranked first | routing DEEP, confidence % present | Edit never called |
-| 05-quick-noise-bait | slash command, 2 files, cosmetic churn only | QUICK | llm: no CRITICAL/WARNING on imports, TODO, JSDoc, whitespace; verdict PASS | routing QUICK | |
+| 01-quick-clean-log-fix | slash command, 1 file, comment + log reword | QUICK | llm: no CRITICAL/WARNING, verdict PASS | routing line QUICK, routing line matches script | |
+| 02-quick-off-by-one | natural language, 1 file, `<=` loop bound | QUICK | llm: names the bound bug, effect, severity, fix | routing QUICK, routing line matches script, verdict not PASS | Edit never called |
+| 03-deep-auth-path-small | slash command, 1 file in `src/auth/`, expiry check deleted | DEEP by risk path | llm: Critical/High on missing expiry, consequence, fix | routing DEEP, routing line matches script, confidence % present | Edit never called |
+| 04-deep-sql-injection | natural language, 3 files, concatenated SQL | DEEP by size | llm: Critical injection, example payload, parameterized fix, ranked first | routing DEEP, routing line matches script, confidence % present | Edit never called |
+| 05-quick-noise-bait | slash command, 2 files, cosmetic churn only | QUICK | llm: no CRITICAL/WARNING on imports, TODO, JSDoc, whitespace; verdict PASS | routing QUICK, routing line matches script | |
 | 06-neg-explain-diff | "explain, no review" | must not fire | llm: short prose, no findings/verdict | | no `ccmagic:review` Skill call, no routing line |
 | 07-neg-write-test | "write a Jest test" | must not fire | regex: Jest test block present | | no `ccmagic:review` Skill call, no routing line |
 
 Fire cases also carry `review-fired`, a display-only `tool_used: Skill` check. It is reported, never scored. Note that a prompt beginning with `/ccmagic:review` is expanded by the harness without a Skill tool call, so that check reads 0 even when the skill ran; the routing-line regex is the trigger evidence for slash-command cases. The check is informative only for the natural-language cases (02, 04).
+
+`routes-match-script` in cases 01 to 05 holds the exact routing line `bin/ccm-review-route --diff-file -` prints for that case's diff, so it passes only when the skill printed the script's decision instead of deriving its own. Those cases allow `Bash` so the skill can pipe the pasted diff to the script. `tests/run.sh` (`route_eval_cases_match_graders`) runs the script on each case's diff and checks the line against these graders and the expected route, so a change to the routing rules that moves a case shows up in the tests before an eval run.
 
 ## Side channels and ceilings
 

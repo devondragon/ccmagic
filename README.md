@@ -265,6 +265,10 @@ Rules that have one right answer are enforced in code, not left to the skill tex
 | `ccm-merge-gate` | May this PR merge: open, mergeable, CI green (or no CI), no reviewer whose latest review requests changes |
 | `ccm-pr-threads` | A PR's review threads (grouped, with an `open` flag), reviews, and conversation comments; `--since-id H` marks reviewer comments newer than a high-water mark. A thread is handled when resolved, or when the author's last reply carries a `ccm-pr-reply` disposition marker; a `fixed` marker counts only once its commit is verified on the branch and touches the thread's file |
 | `ccm-validate` | Do the project's checks pass: runs `format`, `lint`, `types`, `test`, and `build`, one command each from a `validate_<check>` config key or detected from `package.json`, `Makefile`, `go.mod`, `Cargo.toml`, or `pyproject.toml`, and uses each command's exit code as the verdict (`pass`, `fail`, `nothing-to-run`). `--only` runs a subset and `--list` shows the commands without running them. Each check is bounded by `validate_timeout_seconds` |
+| `ccm-review-route` | Should `/ccmagic:review` run QUICK or DEEP for a branch range, PR, or pasted diff (`--diff-file -`): applies the Step 0.5 size, risk-path, new-type, and error-flow rules and prints the routing line. Also reports specialists gated by `context/review-stats.json` and updates that file with `--record name=N,...` |
+| `ccm-post-review` | Posts a `/ccmagic:review-ticket` report to the PR only if it starts with the `# Ticket-Grounded Review: {TICKET-ID}` heading and ends with the fenced `status`/`reason`/`follow_ups` handshake; otherwise exits 1 listing the problems |
+| `ccm-external-review` | Runs the Codex and Gemini review passes in parallel under `timeout --kill-after=30 300` and reports each pass as `findings`, `empty`, `timed-out`, `auth-failed`, `unavailable`, or `failed`, with its output file. Used by `/ccmagic:review` Step 3.5 and `/ccmagic:codex-review` |
+| `ccm-doctor` | The `/ccmagic:doctor` checks (project setup, config, plugin hooks and scripts, git, branch, skills, and `ccm-validate --list`) as JSON lines `{level, area, message, fix}`; exits 1 if any line is `FAIL` |
 | `ccm-pr-reply` | Reply to a review thread with a disposition (`fixed --commit`, `declined`, `answered`, `deferred --ticket`); appends the marker, refuses an unpushed fix commit, and resolves the thread for `fixed` |
 
 **Hooks** (`hooks/hooks.json`):
@@ -278,7 +282,7 @@ Rules that have one right answer are enforced in code, not left to the skill tex
   | Staging or committing a secret-shaped file (`.env`, private keys, credential files) | denied | denied until the user confirms (`CCMAGIC_ALLOW_SENSITIVE=1`); files under `## Always Include` in `context/commit-preferences.md` pass |
   | Commit subject not in conventional-commit format | denied, with the expected format | allowed; the PostToolUse hook warns |
 
-- `SubagentStop` handshake check (`hooks/subagent-stop-handshake.sh`): a `ccmagic:auto-*` step agent whose final message doesn't end with a valid status handshake is sent back once to add it.
+- `SubagentStop` handshake check (`hooks/subagent-stop-handshake.sh`): a `ccmagic:auto-*` step agent whose final message doesn't end with a valid status handshake is sent back once to add it. Its handshake validation lives in `hooks/lib-handshake.sh`, which `ccm-post-review` shares.
 - `PostToolUse` commit-format check (`hooks/post-tool-use-commit.sh`): warns when a commit subject doesn't match the conventional-commit format in `.claude/CLAUDE.md`. It never rejects, so it's safe on repos with non-conventional history.
 
 Tests: `tests/run.sh` (plain bash, with a `gh` stub fed recorded API output). CI runs it and shellcheck on every PR.

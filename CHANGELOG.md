@@ -2,6 +2,24 @@
 
 All notable changes to ccmagic are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.12.0] — 2026-09
+
+### Added
+
+- `bin/ccm-review-route`: applies `/ccmagic:review` Step 0.5 in code (at most 2 files, at most 50 changed lines, no risk-path match, no new types, no error-flow change, otherwise DEEP) for a branch range, PR, or pasted diff, and prints `{route, reason, line, files, lines, risk_matches, ...}`. It also reads and updates `context/review-stats.json` (`--record name=N,...`) and reports which specialists are gated.
+- `bin/ccm-post-review`: `/ccmagic:review-ticket` posts its report through it. It refuses, with exit 1 and a list of problems, a report that doesn't start with the `# Ticket-Grounded Review: {TICKET-ID}` heading or doesn't end with the fenced handshake the merge gate reads (the format #40 and #41 fixed).
+- `bin/ccm-external-review`: runs the Codex and Gemini passes in parallel under `timeout --kill-after=30 300`, writes each pass's output and exit status to a run directory under the git dir (the 10 most recent are kept), and classifies each as `findings`, `empty`, `timed-out`, `auth-failed`, `unavailable`, or `failed`.
+- `bin/ccm-doctor`: the doctor checks for context files, config, plugin hooks and scripts, git, branch and ticket ID, and skills run as a script that prints JSON lines `{level, area, message, fix}`, plus the `ccm-validate --list` plan under a Validation area.
+- `hooks/lib-handshake.sh`: the status-handshake validation, shared by the SubagentStop hook and `ccm-post-review`.
+
+### Changed
+
+- `/ccmagic:review` prints the routing line from `ccm-review-route` and records specialist stats with `--record` instead of editing `context/review-stats.json`. The `auto-review` agent no longer has Write.
+- `/ccmagic:review` Step 3.5 and `/ccmagic:codex-review` call `ccm-external-review` instead of running `codex` and `gemini` by hand; Claude triage stays in the skills. The dimension prompts moved into the script unchanged, and codex-review's per-pass limit drops from 600 to 300 seconds.
+- `/ccmagic:doctor` renders its report from `ccm-doctor` and keeps the MCP and `gh` tracker checks. It warns when a skill listed in `/ccmagic:help` is missing, and a missing `jq` is now FAIL.
+- Eval cases 01 to 05 assert that the routing line matches `ccm-review-route`, and allow Bash so the skill can run it.
+- The routing line uses commas instead of dashes: `Routing → QUICK, reason: ...`.
+
 ## [3.11.0] — 2026-09
 
 ### Added
