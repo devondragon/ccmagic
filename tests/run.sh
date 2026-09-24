@@ -634,6 +634,110 @@ stop_other_agents_ignored() {
   check "$(blocked)" "allow"
 }
 
+# ---- ccm-post-review -----------------------------------------------------------
+
+# run_post_review REPORT [ARGS...]: feed REPORT on stdin to ccm-post-review.
+run_post_review() {
+  local report=$1
+  shift
+  OUT=$(printf '%s' "$report" | "$BIN/ccm-post-review" "$@" 2>"$T/stderr") && RC=0 || RC=$?
+}
+comments_posted() { awk '/^pr comment/ { n++ } END { print n + 0 }' "$GH_FIXTURES/calls.log" 2>/dev/null || echo 0; }
+problems() { jq -r '.problems | join("; ")' <<<"$OUT"; }
+
+REVIEW_BODY=$'# Ticket-Grounded Review: ENG-1\n\n## Ticket\n- **ENG-1**: "Add search"\n\n---\n\nNo findings.\n\n'
+
+postreview_valid_report_posts() {
+  fx pr-comment 'https://github.com/acme/app/pull/7#issuecomment-99'
+  local report=$REVIEW_BODY$'```\nstatus: clean\nreason: no findings\nfollow_ups: []\n```\n'
+  run_post_review "$report" 7
+  check "$RC,$(jqval .posted),$(jqval .url)" "0,true,https://github.com/acme/app/pull/7#issuecomment-99"
+  check "$(jqval .ticket_id),$(jqval .status)" "ENG-1,clean"
+  check "$(grep '^pr comment' "$GH_FIXTURES/calls.log")" "pr comment 7 --body-file -"
+  check "$(cat "$GH_FIXTURES/pr-comment.stdin")" "$(printf '%s' "$report")"
+}
+
+postreview_current_branch_and_list_follow_ups() {
+  fx pr-comment 'https://github.com/acme/app/pull/7#issuecomment-100'
+  run_post_review $'# Ticket-Grounded Review: #42\n\nfindings\n\n```text\nstatus: fixable-findings\nreason: 1 CRITICAL\nfollow_ups:\n  - ENG-9\n```\n\n\n'
+  check "$RC,$(jqval .ticket_id),$(jqval .status)" "0,#42,fixable-findings"
+  check "$(grep '^pr comment' "$GH_FIXTURES/calls.log")" "pr comment --body-file -"
+}
+
+postreview_wrong_first_line_refused() {
+  run_post_review $'Here is the review.\n'"$REVIEW_BODY"$'```\nstatus: clean\nreason: ok\nfollow_ups: []\n```\n' 7
+  check "$RC,$(jqval .posted),$(comments_posted)" "1,false,0"
+  [[ $(problems) == *"first line must be"* ]]
+}
+
+postreview_bad_ticket_id_refused() {
+  run_post_review $'# Ticket-Grounded Review: {TICKET-ID}\n\n```\nstatus: clean\nreason: ok\nfollow_ups: []\n```\n' 7
+  check "$RC,$(comments_posted)" "1,0"
+  [[ $(problems) == *"not a ticket key"* ]]
+}
+
+postreview_unfenced_handshake_refused() {
+  # The drift #40 fixed: the handshake as bare text after a horizontal rule.
+  run_post_review "$REVIEW_BODY"$'---\n\nstatus: clean\nreason: ok\nfollow_ups: []\n' 7
+  check "$RC,$(comments_posted)" "1,0"
+  [[ $(problems) == *"inside a code fence"* ]]
+}
+
+postreview_bad_status_refused() {
+  run_post_review "$REVIEW_BODY"$'```\nstatus: clean | fixable-findings | needs-human\nreason: ok\nfollow_ups: []\n```\n' 7
+  check "$RC,$(comments_posted)" "1,0"
+  [[ $(problems) == *"is not one of: clean fixable-findings needs-human"* ]]
+  run_post_review "$REVIEW_BODY"$'```\nstatus: done\nreason: ok\nfollow_ups: []\n```\n' 7
+  check "$RC,$(comments_posted)" "1,0"
+}
+
+postreview_missing_reason_refused() {
+  run_post_review "$REVIEW_BODY"$'```\nstatus: clean\nfollow_ups: []\n```\n' 7
+  check "$RC,$(comments_posted)" "1,0"
+  [[ $(problems) == *"no \`reason:\` line"* ]]
+}
+
+postreview_missing_follow_ups_refused() {
+  run_post_review "$REVIEW_BODY"$'```\nstatus: needs-human\nreason: tie between reviewers\n```\n' 7
+  check "$RC,$(comments_posted)" "1,0"
+  [[ $(problems) == *"no \`follow_ups:\` line"* ]]
+}
+
+postreview_keys_out_of_order_refused() {
+  run_post_review "$REVIEW_BODY"$'```\nstatus: clean\nfollow_ups: []\nreason: ok\n```\n' 7
+  check "$RC,$(comments_posted)" "1,0"
+  [[ $(problems) == *"in the order"* ]]
+}
+
+postreview_text_after_fence_refused() {
+  run_post_review "$REVIEW_BODY"$'```\nstatus: clean\nreason: ok\nfollow_ups: []\n```\n\nLet me know if you need anything else.\n' 7
+  check "$RC,$(comments_posted)" "1,0"
+  [[ $(problems) == *"nothing after the closing fence"* ]]
+}
+
+postreview_text_after_handshake_inside_fence_refused() {
+  run_post_review "$REVIEW_BODY"$'```\nstatus: clean\nreason: ok\nfollow_ups: []\nall good\n```\n' 7
+  check "$RC,$(comments_posted)" "1,0"
+  [[ $(problems) == *"text after the handshake"* ]]
+}
+
+postreview_reports_every_problem() {
+  run_post_review $'Review:\nstatus: clean\n' 7
+  check "$RC,$(jq '.problems | length' <<<"$OUT")" "1,2"
+}
+
+postreview_gh_failure() {
+  fx_err pr-comment 'no pull requests found for branch "feature/x"' 1
+  run_post_review "$REVIEW_BODY"$'```\nstatus: clean\nreason: ok\nfollow_ups: []\n```\n'
+  check "$RC,$(jqval .posted),$(comments_posted)" "3,false,1"
+  [[ $(jqval .error) == *"no pull requests found"* ]]
+}
+
+postreview_usage_error() {
+  run_post_review "$REVIEW_BODY" 7 8
+  check "$RC" "4"
+}
+
 # ---- ccm-pr-threads ------------------------------------------------------------
 
 seed_threads() {
@@ -901,7 +1005,7 @@ validate_pyproject_needs_tool_config() {
 
 # ---- run -------------------------------------------------------------------
 
-for fn in $(declare -F | awk '{print $3}' | grep -E '^(context|ci|merge_gate|guard|post|stop|threads|reply|validate)_'); do
+for fn in $(declare -F | awk '{print $3}' | grep -E '^(context|ci|merge_gate|guard|post|postreview|stop|threads|reply|validate)_'); do
   t "$fn" "$fn"
 done
 

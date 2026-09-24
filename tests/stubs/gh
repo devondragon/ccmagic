@@ -1,16 +1,18 @@
 #!/usr/bin/env bash
 # Test stub for gh. Answers from files in $GH_FIXTURES, named after the
 # subcommand: pr-view, pr-checks, run-list, repo-view, protection, status,
-# graphql, graphql-resolve, reply.
+# graphql, graphql-resolve, reply, pr-comment.
 # For each name: NAME.json is printed to stdout, NAME.err to stderr, and
 # NAME.rc (default 0) is the exit code. -q/--jq is applied with jq -r.
-# Every call is appended to $GH_FIXTURES/calls.log.
+# Every call is appended to $GH_FIXTURES/calls.log. For pr-comment, stdin
+# (the --body-file - body) is saved to $GH_FIXTURES/pr-comment.stdin.
 set -u
 echo "$*" >>"$GH_FIXTURES/calls.log"
 name=""
 case "$1 ${2:-}" in
   "pr view") name=pr-view ;;
   "pr checks") name=pr-checks ;;
+  "pr comment") name=pr-comment; cat >"$GH_FIXTURES/pr-comment.stdin" ;;
   "run list") name=run-list ;;
   "repo view") name=repo-view ;;
   "api graphql")

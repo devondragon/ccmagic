@@ -1,0 +1,123 @@
+#!/usr/bin/env bash
+# ccm-post-review: post a ticket-grounded review report to a PR, but only if it
+# is in the format the merge gate reads, as JSON.
+#
+# Usage: ccm-post-review [PR] < report.md
+#
+#   PR   PR number (or URL); omitted, the PR for the current branch is used
+#
+# The report is read from stdin. It is posted with `gh pr comment` only when:
+#   - the first line is `# Ticket-Grounded Review: {TICKET-ID}` (a key such as
+#     ENG-123, or a GitHub issue number), with nothing before it;
+#   - the body ends with a fenced code block, with nothing but blank lines
+#     after the closing fence;
+#   - that block holds the handshake in order: `status:` (clean,
+#     fixable-findings, or needs-human), then `reason:`, then `follow_ups:`.
+# Otherwise nothing is posted and `problems` lists what to fix.
+#
+# Output: posted   {posted: true, url, ticket_id, status}
+#         refused  {posted: false, problems: [...]}
+#         failed   {posted: false, error}
+# Exit codes: 0 posted, 1 refused (report format), 3 couldn't post (no PR for
+# the branch, GitHub error), 4 usage error.
+
+set -euo pipefail
+here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck source=bin/ccm-lib.sh
+. "$here/ccm-lib.sh"
+# shellcheck source=hooks/lib-handshake.sh
+. "$here/../hooks/lib-handshake.sh"
+
+ALLOWED="clean fixable-findings needs-human"
+
+usage() { echo "ccm-post-review: $1" >&2; exit 4; }
+
+pr=""
+while [ $# -gt 0 ]; do
+  case $1 in
+    -h|--help) sed -n '2,22p' "$0"; exit 0 ;;
+    -*) usage "unknown flag $1" ;;
+    *) [ -z "$pr" ] || usage "unexpected argument $1"; pr=${1#\#} ;;
+  esac
+  shift
+done
+[ -t 0 ] && usage "pipe the report on stdin"
+
+report=$(cat)
+problems=()
+
+# ---- heading ---------------------------------------------------------------
+
+key_regex=$(ccm_config_get ticket_id_regex 2>/dev/null || true)
+key_regex=${key_regex:-'[A-Z][A-Z0-9]+-[0-9]+'}
+first=$(printf '%s\n' "$report" | head -n 1 | sed -E 's/[[:space:]]+$//')
+ticket=""
+if [[ $first =~ ^'# Ticket-Grounded Review: '(.+)$ ]]; then
+  ticket=${BASH_REMATCH[1]}
+  if ! printf '%s' "$ticket" | grep -qxE "($key_regex|#?[0-9]+)"; then
+    problems+=("the heading's ticket ID \`$ticket\` is not a ticket key or issue number")
+  fi
+else
+  problems+=("the first line must be \`# Ticket-Grounded Review: {TICKET-ID}\` with nothing before it; it is \`${first:0:60}\`")
+fi
+
+# ---- fenced handshake at the end -----------------------------------------------
+
+# Print the lines inside the fenced block that ends the report, or nothing
+# when the last non-blank line is not a closing fence or has no opening one.
+fenced=$(printf '%s\n' "$report" | awk '
+  { lines[NR] = $0 }
+  END {
+    e = NR
+    while (e > 0 && lines[e] ~ /^[[:space:]]*$/) e--
+    if (e == 0 || lines[e] !~ /^```[[:space:]]*$/) exit
+    for (s = e - 1; s > 0; s--) if (lines[s] ~ /^```/) break
+    if (s == 0) exit
+    print "FENCE"
+    for (i = s + 1; i < e; i++) print lines[i]
+  }')
+
+status=""
+if [ -z "$fenced" ]; then
+  last=$(printf '%s\n' "$report" | awk 'NF { l = $0 } END { print l }')
+  problems+=("the report must end with the handshake inside a code fence, with nothing after the closing fence; the last line is \`${last:0:60}\`")
+else
+  block=$(printf '%s\n' "$fenced" | sed '1d')
+  problem=$(printf '%s\n' "$block" | ccm_handshake_problem "$ALLOWED")
+  if [ -n "$problem" ]; then
+    problems+=("the fenced handshake: $problem")
+  else
+    order=$(printf '%s\n' "$block" | awk '
+      NF && !first { first = $0 }
+      /^[[:space:]]*status:/ { s = NR }
+      /^[[:space:]]*reason:/ && s && !r { r = NR }
+      /^[[:space:]]*follow_ups:/ && r && !f { f = NR }
+      END {
+        if (first !~ /^[[:space:]]*status:/) print "`status:` must be the first line of the fenced block"
+        else if (!f) print "the keys must be in the order `status:`, `reason:`, `follow_ups:`"
+      }')
+    if [ -n "$order" ]; then
+      problems+=("the fenced handshake: $order")
+    else
+      status=$(printf '%s\n' "$block" | sed -nE 's/^[[:space:]]*status:[[:space:]]*([^[:space:]]+).*/\1/p' | tail -n 1)
+    fi
+  fi
+fi
+
+if [ "${#problems[@]}" -gt 0 ]; then
+  printf '%s\n' "${problems[@]}" | jq -R . | jq -s '{posted: false, problems: .}'
+  exit 1
+fi
+
+# ---- post --------------------------------------------------------------------
+
+args=(pr comment)
+[ -n "$pr" ] && args+=("$pr")
+if ! out=$(printf '%s\n' "$report" | gh "${args[@]}" --body-file - 2>&1); then
+  jq -n --arg e "$out" '{posted: false, error: ("gh pr comment failed: " + $e)}'
+  exit 3
+fi
+url=$(printf '%s\n' "$out" | grep -Eo 'https://[^[:space:]]+' | tail -n 1 || true)
+
+jq -n --arg u "$url" --arg t "$ticket" --arg s "$status" \
+  '{posted: true, url: (if $u == "" then null else $u end), ticket_id: $t, status: $s}'
