@@ -2,6 +2,12 @@
 
 All notable changes to ccmagic are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.13.1] - 2026-09
+
+### Fixed
+
+- `/ccmagic:review` did not trigger on natural-language requests such as "can you review this before I open the PR?" or "can you code review this?"; only the slash command ran it. The skill's `description` now says when to use it, including a diff pasted inline. In the eval suite, `review-fired` on those two cases went from 0/3 to 3/3, and the negative cases still do not fire (issue #35, trigger half).
+
 ## [3.13.0] - 2026-09
 
 Fixes from the first `/ccmagic:auto-ticket` field run.
