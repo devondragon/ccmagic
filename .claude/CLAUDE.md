@@ -160,7 +160,7 @@ context: fork                  # For heavy skills (subagent isolation)
 ```
 
 - **All skills are user-invocable and model-invocable.**
-- `context: fork` skills: `map-codebase`, `review`, `codex-review`, `validate`, `analyze-impact`, `research`, `doctor`, `design-explore`, `design-qa`, `browser-qa`, `auto-ticket`.
+- `context: fork` skills: `map-codebase`, `codex-review`, `validate`, `analyze-impact`, `research`, `doctor`, `design-explore`, `design-qa`, `browser-qa`, `auto-ticket`.
 - Do **not** use `disable-model-invocation: true` — it's broken for plugin skills (see [#22345](https://github.com/anthropics/claude-code/issues/22345), [#24042](https://github.com/anthropics/claude-code/issues/24042)). Re-evaluate when fixed upstream.
 
 ## Testing locally

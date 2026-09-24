@@ -2,6 +2,12 @@
 
 All notable changes to ccmagic are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.13.2] - 2026-09
+
+### Fixed
+
+- Natural-language review requests now show the full `/ccmagic:review` report, with the routing line and confidence scores, because the skill no longer runs under `context: fork`. Reached through the Skill tool, the forked review returned its report to the parent conversation, which wrote its own summary and dropped the routing line, the report structure, and the confidence percentages. The skill now runs inline and its report is the user-facing message; the DEEP path still isolates the heavy reading in its Explore agents. The QUICK path now reads only the lines around a finding instead of whole files, and the skill says that "stop" returns to the calling skill when `/ccmagic:review-ticket` or `/ccmagic:work-ticket` invoked it (issue #35).
+
 ## [3.13.1] - 2026-09
 
 ### Fixed
