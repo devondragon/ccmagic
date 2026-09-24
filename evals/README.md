@@ -57,6 +57,8 @@ After the issue #37 fix (3 runs per arm, -j 4), case 05-quick-noise-bait scores 
 
 After the issue #35 fix (full suite, 3 runs per arm, -j 4): mean Δ +0.25, $8.37, 764 s. Measured before 3.12.0 added Bash to cases 01 to 05 and the `routes-match-script` grader, so later runs are not directly comparable.
 
+After dropping `context: fork` (3.13.2, cases 02 and 04 only, 3 runs per arm, `evals/run.sh`, 2026-09-24): in every with-plugin run where the skill fired, the routing line reached the final message (02: 1/1, the script's exact line; 04: 2/2, one exact), against 0/3 on `main` with the fork. Mean Δ +0.14 on both cases (`main`: -0.19 and 0.00). `confidence-score-present` on 04 was 2/3 in one run and 0/3 in the next. `review-fired` was 1/3 (02) and 2/3 (04), and `main` measured 2/3 and 1/3 the same day, so the 3/3 recorded after the #35 description fix no longer reproduces on either side; that is a triggering question separate from the fork.
+
 Known conditions of the without-plugin arm: the sandbox still has the built-in `/code-review` skill, and the model used it on several runs. The without arm is therefore "Claude with generic review tooling," not a bare model.
 
 Known findings from the pilots, kept in the suite on purpose:
