@@ -109,6 +109,15 @@ Open questions to settle in a design doc first:
 
 An external driver using `claude -p --output-format json --json-schema` is the alternative if Workflows don't run headless.
 
+### Field run findings
+
+The first field run (one Linear ticket on a Gradle repo, 3.12.0) showed no loop-control failures: loop bounds, pass counting, and routing between steps behaved correctly, so there is still no case for the Workflow rewrite. One push step's hand-back arrived without a handshake and the orchestrator continued on its prose instead of applying the missing-handshake rule; the first fix below removes the cause. It found four other problems, fixed in 3.13.0:
+
+- Step agents handed back through `SubagentHandback` without the handshake, or wrote the tag as text; the agents and contract §3 now say how to hand back.
+- Step agents could not reach the tracker MCP; the orchestrator now passes the ticket content in the grounding block and does every tracker write (contract §8).
+- `ccm-validate` did not detect Gradle or Maven; a JVM build now supplies `test` and `build` ahead of `package.json`.
+- A `clean` review's `follow_ups` item was dropped from the summary; every item is now filed or listed with a reason.
+
 ## Verification for each step
 
 - `bash tests/run.sh` and `HOOK_BASH=/bin/bash bash tests/run.sh` pass; the Docker shellcheck 0.9.0 and Ubuntu 24.04 runs from `.claude/CLAUDE.md` pass.
