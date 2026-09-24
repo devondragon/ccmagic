@@ -67,16 +67,14 @@ pr_open() {
 
 # run CMD...: capture stdout in OUT and exit code in RC.
 run() {
-  OUT=$("$@" 2>"$T/stderr")
-  RC=$?
+  OUT=$("$@" 2>"$T/stderr") && RC=0 || RC=$?
 }
 
 hook() {
   local input
   input=$(jq -n --arg c "$1" --arg a "${2:-}" --arg cwd "$PWD" \
     '{tool_name: "Bash", tool_input: {command: $c}, cwd: $cwd} + (if $a == "" then {} else {agent_type: $a} end)')
-  OUT=$(printf '%s' "$input" | "${HOOK_BASH:-bash}" "$HOOKS/pre-tool-use-guard.sh" 2>"$T/stderr")
-  RC=$?
+  OUT=$(printf '%s' "$input" | "${HOOK_BASH:-bash}" "$HOOKS/pre-tool-use-guard.sh" 2>"$T/stderr") && RC=0 || RC=$?
 }
 
 check() {
@@ -96,7 +94,12 @@ t() {
   shift
   if [ -n "$FILTER" ] && [[ $name != *"$FILTER"* ]]; then return; fi
   setup
-  if ( set -e; "$@" ); then
+  # Not `if ( ... )`: bash ignores set -e inside a condition, which would let
+  # a failed check pass unless it was the test's last command.
+  local rc
+  ( set -e; "$@" )
+  rc=$?
+  if [ "$rc" -eq 0 ]; then
     PASS=$((PASS + 1))
     echo "ok   $name"
   else
@@ -128,6 +131,13 @@ context_argument_wins_and_url_base_picks_tracker() {
   config 'ticket_url_base: https://acme.atlassian.net/browse'
   run "$BIN/ccm-context" --offline PROJ-9
   check "$(jqval .ticket_id),$(jqval .ticket_source),$(jqval .tracker_hint)" "PROJ-9,arg,jira"
+}
+
+context_github_integer_argument() {
+  git checkout -q -b feature/ENG-9-x
+  run "$BIN/ccm-context" --offline '#42'
+  check "$(jqval .ticket_id),$(jqval .ticket_source),$(jqval .ticket_kind),$(jqval .tracker_hint)" \
+    "42,arg,integer,github"
 }
 
 context_config_precedence() {
@@ -550,8 +560,7 @@ guard_merge_subject_exempt() {
 # ---- post-tool-use-commit ----------------------------------------------------
 
 run_post_hook() {
-  OUT=$(jq -n --arg c "$1" '{tool_input: {command: $c}}' | "${HOOK_BASH:-bash}" "$HOOKS/post-tool-use-commit.sh" 2>"$T/stderr")
-  RC=$?
+  OUT=$(jq -n --arg c "$1" '{tool_input: {command: $c}}' | "${HOOK_BASH:-bash}" "$HOOKS/post-tool-use-commit.sh" 2>"$T/stderr") && RC=0 || RC=$?
 }
 
 post_warns_on_bad_subject_in_chain() {
@@ -575,8 +584,7 @@ post_quiet_on_good_subject() {
 run_stop_hook() {
   OUT=$(jq -n --arg m "$1" --arg a "$2" --argjson active "${3:-false}" \
     '{hook_event_name: "SubagentStop", agent_type: $a, last_assistant_message: $m, stop_hook_active: $active}' |
-    ${HOOK_BASH:-bash} "$HOOKS/subagent-stop-handshake.sh" 2>"$T/stderr")
-  RC=$?
+    ${HOOK_BASH:-bash} "$HOOKS/subagent-stop-handshake.sh" 2>"$T/stderr") && RC=0 || RC=$?
 }
 blocked() { [ "$(jq -r '.decision // "allow"' <<<"${OUT:-{\}}")" = block ] && echo block || echo allow; }
 
@@ -770,9 +778,130 @@ threads_graphql_error() {
   check "$RC" "3"
 }
 
+# ---- ccm-validate ----------------------------------------------------------
+
+# seed_pkg SCRIPTS_JSON: a package.json with these scripts, plus npm, pnpm,
+# and yarn stubs on PATH that log the call to $T/pm.log and run the script, so
+# the tests don't depend on Node being installed.
+seed_pkg() {
+  printf '{"name":"x","scripts":%s}\n' "$1" >package.json
+  mkdir -p "$T/bin"
+  local pm
+  for pm in npm pnpm yarn; do
+    # shellcheck disable=SC2016 # the stub expands these, not this shell
+    printf '#!/bin/sh\necho "%s $*" >>"%s/pm.log"\nexec sh -c "$(jq -r --arg s "$2" %s package.json)"\n' \
+      "$pm" "$T" "'.scripts[\$s]'" >"$T/bin/$pm"
+    chmod +x "$T/bin/$pm"
+  done
+  export PATH="$T/bin:$PATH"
+}
+
+# check_status NAME: print the status of one check from OUT.
+check_status() { jq -r --arg n "$1" '.checks[] | select(.name == $n) | .status' <<<"$OUT"; }
+
+validate_pass_and_fail_by_exit_code() {
+  seed_pkg '{"lint":"true","test":"false"}'
+  run "$BIN/ccm-validate"
+  check "$(jqval .status),$RC,$(check_status lint),$(check_status test),$(check_status build)" \
+    "fail,1,passed,failed,skipped"
+  check "$(jq -r '.checks[] | select(.name == "test") | .command' <<<"$OUT")" "npm run test"
+}
+
+validate_failed_lint_is_not_masked_by_later_pass() {
+  seed_pkg '{"lint":"echo lint broke; exit 3","test":"true","build":"true"}'
+  run "$BIN/ccm-validate"
+  check "$(jqval .status),$RC,$(check_status lint),$(check_status build)" "fail,1,failed,passed"
+  check "$(jq -r '.checks[] | select(.name == "lint") | .exit_code' <<<"$OUT")" "3"
+  [[ $(jq -r '.checks[] | select(.name == "lint") | .tail' <<<"$OUT") == *"lint broke"* ]]
+  grep -q "lint broke" "$(jq -r '.checks[] | select(.name == "lint") | .log' <<<"$OUT")"
+}
+
+validate_all_pass() {
+  seed_pkg '{"lint":"true","test":"true"}'
+  run "$BIN/ccm-validate"
+  check "$(jqval .status),$RC,$(jq '[.checks[] | select(.status == "passed")] | length' <<<"$OUT")" "pass,0,2"
+}
+
+validate_config_beats_detection() {
+  seed_pkg '{"lint":"false"}'
+  config 'validate_lint: echo from-config'
+  run "$BIN/ccm-validate" --only lint
+  check "$(jqval .status),$(jqval '.checks[0].command'),$(jqval '.checks[0].source')" \
+    "pass,echo from-config,config"
+}
+
+validate_none_disables_check() {
+  seed_pkg '{"lint":"true","test":"false"}'
+  config 'validate_test: none'
+  run "$BIN/ccm-validate"
+  check "$(jqval .status),$(check_status test)" "pass,skipped"
+  check "$(jq -r '.checks[] | select(.name == "test") | .reason' <<<"$OUT")" "disabled in config"
+}
+
+validate_pnpm_lockfile_selects_pnpm() {
+  seed_pkg '{"lint":"true"}'
+  touch pnpm-lock.yaml
+  run "$BIN/ccm-validate" --only lint
+  check "$(jqval .status),$(jqval '.checks[0].command')" "pass,pnpm run lint"
+  check "$(command cat "$T/pm.log")" "pnpm run lint"
+}
+
+validate_nothing_to_run() {
+  run "$BIN/ccm-validate"
+  check "$(jqval .status),$RC,$(jq -r '[.checks[].reason] | unique | join(",")' <<<"$OUT")" \
+    "nothing-to-run,2,not configured"
+}
+
+validate_timeout_fails_check() {
+  if ! command -v timeout >/dev/null && ! command -v gtimeout >/dev/null; then
+    echo "  (skipped: no timeout binary)"; return 0
+  fi
+  config 'validate_test: sleep 5
+validate_timeout_seconds: 1'
+  run "$BIN/ccm-validate" --only test
+  check "$(jqval .status),$RC,$(jqval '.checks[0].status')" "fail,1,failed"
+  [[ $(jqval '.checks[0].reason') == "timed out"* ]]
+}
+
+validate_only_runs_subset() {
+  seed_pkg '{"lint":"false","test":"true"}'
+  run "$BIN/ccm-validate" --only test
+  check "$(jqval .status),$RC,$(jq -r '[.checks[].name] | join(",")' <<<"$OUT")" "pass,0,test"
+  run "$BIN/ccm-validate" --only lint,bogus
+  check "$RC" "4"
+}
+
+validate_list_does_not_run() {
+  seed_pkg '{"lint":"touch ran","test":"true"}'
+  run "$BIN/ccm-validate" --list
+  check "$(jqval .status),$RC,$(check_status lint),$(check_status format)" "listed,0,planned,skipped"
+  [ ! -e ran ]
+  rm package.json
+  run "$BIN/ccm-validate" --list
+  check "$(jqval .status),$RC" "nothing-to-run,2"
+}
+
+validate_detects_makefile_and_go() {
+  printf 'lint:\n\ttrue\n' >Makefile
+  echo 'module x' >go.mod
+  run "$BIN/ccm-validate" --list
+  # shellcheck disable=SC2016 # the literal command text
+  check "$(jq -r '[.checks[] | .command // "-"] | join("|")' <<<"$OUT")" \
+    'out=$(gofmt -l .) && printf "%s" "$out" && test -z "$out"|make lint|-|go test ./...|go build ./...'
+}
+
+validate_pyproject_needs_tool_config() {
+  printf '[project]\nname = "x"\n\n[tool.pytest.ini_options]\n' >pyproject.toml
+  run "$BIN/ccm-validate" --list
+  check "$(jq -r '[.checks[] | .command // "-"] | join("|")' <<<"$OUT")" '-|-|-|pytest|-'
+  touch ruff.toml
+  run "$BIN/ccm-validate" --list
+  check "$(jq -r '[.checks[] | .command // "-"] | join("|")' <<<"$OUT")" 'ruff format --check|ruff check|-|pytest|-'
+}
+
 # ---- run -------------------------------------------------------------------
 
-for fn in $(declare -F | awk '{print $3}' | grep -E '^(context|ci|merge_gate|guard|post|stop|threads|reply)_'); do
+for fn in $(declare -F | awk '{print $3}' | grep -E '^(context|ci|merge_gate|guard|post|stop|threads|reply|validate)_'); do
   t "$fn" "$fn"
 done
 

@@ -55,7 +55,7 @@ Behavior:
 - **Flags**:
   - `--only a,b` runs a subset. `/ccmagic:test` uses `--only test`.
   - `--list` prints the resolved commands without running them. This lets the skill show the plan, and doctor can use it.
-- **Time limits**: each check runs under `timeout` with `validate_timeout_seconds` (default 600), so a single call can exceed the Bash tool's 10-minute limit. The skill therefore runs `--list` first and then one `--only <check>` call per check, each with the maximum tool timeout. A check that hits its timeout is `failed` with reason "timed out".
+- **Time limits**: each check runs under `timeout` with `validate_timeout_seconds` (default 540, so a check that hits it still reports before the Bash tool's 10-minute limit; values above that let the tool call time out first). The skill therefore runs `--list` first and then one `--only <check>` call per check, each with the maximum tool timeout. A check that hits its timeout is `failed` with reason "timed out".
   - macOS may lack `timeout`; use `gtimeout` if present, otherwise run without a bound and say so in the output. `review/codex-pass.md` already handles this; reuse its approach.
 - **Output**:
   - `{status: pass | fail | nothing-to-run, checks: [{name, command, source: config|detected, status: passed|failed|skipped, exit_code, duration_s, log}]}`.

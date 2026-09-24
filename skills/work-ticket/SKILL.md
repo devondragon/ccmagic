@@ -2,7 +2,7 @@
 name: work-ticket
 description: End-to-end ticket workflow. Detects your tracker (Linear, GitHub Issues, or JIRA), looks up the ticket, assigns it to you, moves it to In Progress, triages the work type, creates a branch, executes the work (delegating to /ccmagic:debug for bugs), validates scope, then commits and opens a PR.
 user-invocable: true
-allowed-tools: Read(*), Write(*), Edit(*), Bash(git:*, gh:*, mkdir:*), Glob(*), Grep(*), Task(*), TodoWrite(*), AskUserQuestion(*), Skill(*)
+allowed-tools: Read(*), Write(*), Edit(*), Bash(git:*, gh:*, mkdir:*), Bash(${CLAUDE_SKILL_DIR}/../../bin/ccm-context *), Glob(*), Grep(*), Task(*), TodoWrite(*), AskUserQuestion(*), Skill(*)
 argument-hint: Ticket ID (e.g. ENG-123, PROJ-456, or a GitHub issue number like 42)
 model: inherit
 ---
@@ -23,22 +23,29 @@ Given a ticket ID, handles the full development lifecycle from ticket lookup thr
 
 ### 0a. Load settings
 
-If `.claude/ccmagic.local.md` exists at the repo root (`git rev-parse --show-toplevel`), read its YAML frontmatter; also read the user-level `~/.claude/ccmagic.local.md` if present, with the project file taking precedence over the user file (both override built-in defaults). Relevant keys:
+Run:
+```bash
+"${CLAUDE_SKILL_DIR}/../../bin/ccm-context" {TICKET-ID}
+```
 
-- `tracker:` — `linear` | `github` | `jira` | `auto` (default `auto`)
-- `ticket_url_base:` — for display links
-- `ticket_id_regex:` — defaults to `[A-Z][A-Z0-9]+-[0-9]+`
-- `github_repo:` — `owner/repo` (only used when tracker is GitHub)
+It prints JSON with the resolved `config` (project `.claude/ccmagic.local.md` over user `~/.claude/ccmagic.local.md` over built-in defaults), the `ticket_id` from the argument (a leading `#` is stripped), its `ticket_kind` (`integer` or `key`), a `tracker_hint`, `gh_available`, the current `branch`, and `base_branch`. Use those values; do not re-read the config files or re-derive them yourself. Relevant `config` keys:
+
+- `tracker` (`linear` | `github` | `jira` | `auto`, default `auto`)
+- `ticket_url_base` (for display links)
+- `ticket_id_regex` (defaults to `[A-Z][A-Z0-9]+-[0-9]+`)
+- `github_repo` (`owner/repo`, only used when tracker is GitHub)
+
+The `ccm-*` scripts are also on the Bash `PATH` while the plugin is enabled. If the `${CLAUDE_SKILL_DIR}/../../bin/` path doesn't resolve (for example, the variable wasn't expanded), call it by bare name: `ccm-context`.
 
 ### 0b. Resolve tracker (cascade — runs when `tracker: auto` or unset)
 
-1. **Arg shape hint:** if the ticket ID is a pure integer (e.g. `42`) and `gh` is available, lean GitHub. If it matches the `ticket_id_regex` (e.g. `ENG-123`), it could be Linear or JIRA.
+1. **Ticket shape hint:** read `tracker_hint` from `ccm-context`. `github` (an integer ID such as `42`) leans GitHub when `gh_available` is true. `linear` or `jira` means a key-shaped ID (such as `ENG-123`) whose `ticket_url_base` points at that tracker; `linear-or-jira` means it could be either.
 2. **MCP probe:** check which tools are available in the current session.
    - Linear MCP: a Linear MCP **server** available to the session — case-insensitive `mcp__*[Ll]inear*__get_issue` (e.g. `mcp__claude_ai_Linear__get_issue`, `mcp__plugin_linear_linear__get_issue`, or Cyrus's lowercase `mcp__linear__get_issue`), **including a server that is registered but still connecting** (see contract §7 for the full availability rule + load-with-retry).
    - Atlassian/JIRA MCP: any tool matching `mcp__*atlassian*__*` or `mcp__*Atlassian*__*`.
    - Pick the first match. If both Linear and JIRA MCPs are available, prefer Linear unless `ticket_url_base` looks JIRA-shaped (`*.atlassian.net`).
 3. **CLI probe:** `command -v gh && gh repo view --json nameWithOwner 2>/dev/null` — if available and inside a repo, GitHub is a candidate.
-4. **Branch hint:** if the current branch matches the `ticket_id_regex`, prefer whichever tracker the URL base points at.
+4. **Branch hint:** if the current `branch` from `ccm-context` matches `config.ticket_id_regex`, prefer whichever tracker `ticket_url_base` points at.
 5. **Ambiguous:** ask the user via `AskUserQuestion`. Offer to write the choice to `.claude/ccmagic.local.md` so they're not asked again.
 6. **Prompt-relay fallback:** if the contract §7 detection rule matches (`skills/auto-ticket/autonomous-contract.md` §7), resolve `tracker: linear` with `transport: prompt-relay` instead of stopping — do not fall through to item 7.
 7. **None available:** stop. Tell the user: "I couldn't find a Linear MCP, GitHub CLI, or Atlassian MCP. Install one or set `tracker:` in `.claude/ccmagic.local.md`."
@@ -51,7 +58,7 @@ Transport resolution depends on how this skill was invoked. **When invoked with 
 
 ## Step 1: Look up the ticket
 
-Validate the ticket ID against `ticket_id_regex` (or the integer fallback for GitHub). Then fetch the ticket using the resolved tracker:
+Validate `ticket_id` against `config.ticket_id_regex`, or accept it when `ticket_kind` is `integer` (GitHub). `ccm-context` takes the argument as given and does not check it against the regex. Then fetch the ticket using the resolved tracker:
 
 ### Linear
 
@@ -204,10 +211,7 @@ The debug skill runs its systematic investigation. After it finishes, **run `/cc
 
 After work is complete (regardless of path), re-read the original ticket title and description. Compare against what was actually built.
 
-**Determine `{base-branch}`** using the same logic as `/ccmagic:pr`:
-1. `gh repo view --json defaultBranchRef -q .defaultBranchRef.name` — use the repo's default branch.
-2. If `gh` isn't available, check for `develop`: `git show-ref --verify --quiet refs/heads/develop || git show-ref --verify --quiet refs/remotes/origin/develop`.
-3. Otherwise fall back to `main`.
+**`{base-branch}`** is the `base_branch` field from the `ccm-context` call in Step 0a: the repo's default branch from `gh`, or `develop` (local or `origin/develop`) when `gh` can't answer, otherwise `main`. Do not re-derive it.
 
 Then run:
 
@@ -244,7 +248,7 @@ If there are multiple logical groups (e.g. model changes, then API changes, then
 ### PR
 
 Invoke `/ccmagic:pr`. The PR skill will:
-- Detect the base branch (via `gh repo view`, falling back to `develop`/`main`).
+- Detect the base branch (the `base_branch` from `ccm-context`, unless `context/branching.md` names another).
 - Compose the PR title and body using the standard template.
 - Include the ticket link as `{ticket_url_base}/{TICKET-ID}` (or the GitHub issue URL).
 

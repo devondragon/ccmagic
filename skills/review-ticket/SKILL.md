@@ -2,7 +2,7 @@
 name: review-ticket
 description: Ticket-grounded code review. Fetches the ticket from Linear, GitHub Issues, or JIRA, then runs /ccmagic:review with the ticket scope as the primary intent source. Adds an explicit Ticket-scope drift section (in-scope / out-of-scope / missing-from-ticket).
 user-invocable: true
-allowed-tools: Read(*), Bash(git diff:*, git log:*, git status:*, git branch:*, git show:*, git show-ref:*, git rev-parse:*, git merge-base:*, git ls-files:*, gh issue view:*, gh issue comment:*, gh pr view:*, gh pr diff:*, gh pr list:*, gh pr comment:*, gh repo view:*), Glob(*), Grep(*), Agent(*), Task(*), TodoWrite(*), AskUserQuestion(*), Skill(*)
+allowed-tools: Read(*), Bash(git diff:*, git log:*, git status:*, git branch:*, git show:*, git show-ref:*, git rev-parse:*, git merge-base:*, git ls-files:*, gh issue view:*, gh issue comment:*, gh pr view:*, gh pr diff:*, gh pr list:*, gh pr comment:*, gh repo view:*), Bash(${CLAUDE_SKILL_DIR}/../../bin/ccm-context *), Glob(*), Grep(*), Agent(*), Task(*), TodoWrite(*), AskUserQuestion(*), Skill(*)
 argument-hint: "[TICKET-ID] [--threshold N]"
 model: inherit
 ---
@@ -26,12 +26,19 @@ Runs a full code review with the **ticket as the ground truth for intent**. The 
 
 Same cascade as `/ccmagic:work-ticket`:
 
-1. Read `.claude/ccmagic.local.md` (if present) for `tracker:`, `ticket_url_base:`, `ticket_id_regex:`, `github_repo:` — and fall back to the user-level `~/.claude/ccmagic.local.md` for any key the project file omits (project overrides user).
-2. If `tracker:` is `auto` or unset, run the detection cascade:
-   - **Arg shape:** integer-only ticket ID → GitHub; `[A-Z][A-Z0-9]+-[0-9]+` → Linear or JIRA.
+1. Run `ccm-context`, passing `$1` as the ticket ID when the first argument is present and is not a flag (does not start with `--`):
+   ```bash
+   "${CLAUDE_SKILL_DIR}/../../bin/ccm-context" {TICKET-ID}   # first argument present and not a flag
+   "${CLAUDE_SKILL_DIR}/../../bin/ccm-context"        # otherwise
+   ```
+   It prints JSON with the resolved `config` (project `.claude/ccmagic.local.md` over user `~/.claude/ccmagic.local.md` over built-in defaults), `ticket_id`, `ticket_source` (`arg` or `branch`), `ticket_kind`, `tracker_hint`, `gh_available`, `branch`, and `base_branch`. Read `config.tracker`, `config.ticket_url_base`, `config.ticket_id_regex`, and `config.github_repo` from it; do not re-read the config files or re-derive these fields. The script is also on the Bash `PATH` as `ccm-context` while the plugin is enabled; use the bare name if the `${CLAUDE_SKILL_DIR}` path doesn't resolve.
+
+   `ccm-context` does not check an argument against the regex. If `ticket_source` is `arg` and the ID neither matches `config.ticket_id_regex` nor has `ticket_kind: integer`, `$1` was not a ticket ID: rerun `ccm-context` with no argument, so it parses the branch, and use that output from here on.
+2. If `config.tracker` is `auto` or unset, run the detection cascade:
+   - **Ticket shape:** `tracker_hint` from `ccm-context`: `github` for an integer ID, `linear` or `jira` when a key-shaped ID meets a `ticket_url_base` pointing at that tracker, `linear-or-jira` otherwise.
    - **MCP probe:** Linear MCP — a server available to the session (case-insensitive `mcp__*[Ll]inear*__get_issue`, incl. Cyrus's `mcp__linear__` and a still-connecting server; see contract §7); Atlassian/JIRA MCP (`mcp__*atlassian*__*` or `mcp__*Atlassian*__*`).
    - **CLI probe:** `command -v gh && gh repo view --json nameWithOwner 2>/dev/null`.
-   - **Branch hint:** match against `ticket_url_base` if ambiguous.
+   - **Branch hint:** if still ambiguous, prefer whichever tracker `ticket_url_base` points at (`tracker_hint` already applies this to the ticket ID).
    - **Prompt-relay fallback:** if the contract §7 detection rule matches (`skills/auto-ticket/autonomous-contract.md` §7), resolve `tracker: linear` with `transport: prompt-relay` instead of stopping.
 3. If none found, stop: tell the user to install a tracker integration or set `tracker:`.
 
@@ -41,9 +48,11 @@ Transport resolution depends on how this skill was invoked. **When invoked with 
 
 ## Step 1: Detect the ticket
 
-1. If `$1` looks like a ticket ID (matches `ticket_id_regex` or is a pure integer), use it.
-2. Otherwise parse the current branch (`git branch --show-current`) for a ticket ID. Strip prefixes like `feature/`, `bugfix/`, `hotfix/`, `chore/`.
-3. If neither yields a ticket ID, ask:
+Use `ticket_id` from the Step 0 `ccm-context` call; do not re-parse the branch yourself.
+
+1. If `ticket_source` is `arg`, the ID came from `$1` (checked in Step 0).
+2. If `ticket_source` is `branch`, the ID was parsed from the segment after the branch prefix (`feature/ENG-123-slug` gives `ENG-123`, `bugfix/42-slug` gives `42`).
+3. If `ticket_id` is null, ask:
    > "I couldn't detect a ticket from the branch (`{branch}`) or arguments. What ticket should I use?"
 
 ---
@@ -92,10 +101,8 @@ If the user disagrees with the inferred AC, ask them to clarify before continuin
 Compute the diff against the base branch:
 
 ```bash
-# Determine base branch (same logic as /ccmagic:pr)
-BASE=$(gh repo view --json defaultBranchRef -q .defaultBranchRef.name 2>/dev/null || \
-       (git show-ref --verify --quiet refs/heads/develop && echo develop) || \
-       echo main)
+# BASE is `base_branch` from the Step 0 ccm-context output; do not re-derive it
+BASE={base_branch}
 
 git diff --name-only $BASE...HEAD
 git diff --stat $BASE...HEAD

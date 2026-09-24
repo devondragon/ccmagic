@@ -1,8 +1,8 @@
 ---
 name: validate
 user-invocable: true
-allowed-tools: Read(*), Bash(*), Glob(*), Task(*), TodoWrite(*)
-description: Comprehensive pre-commit validation with parallel checks
+allowed-tools: Read(*), Bash(*), Bash(${CLAUDE_SKILL_DIR}/../../bin/ccm-validate *), Glob(*), Task(*), TodoWrite(*)
+description: Pre-commit validation that runs the project's format, lint, type, test, and build checks and reports pass or fail
 model: sonnet
 context: fork
 ---
@@ -11,169 +11,45 @@ context: fork
 
 Comprehensive pre-commit validation to ensure code quality, tests pass, and changes are ready for PR.
 
-## Validation Pipeline
+## What decides pass or fail
 
-> **Parallel execution:** When operations are independent, run them simultaneously—linting, type checking, format checking, and security scanning can all run in parallel. Sequential operations (tests, build) run after parallel checks complete. Claude Code will determine when this is safe and helpful.
+`ccm-validate` resolves and runs the checks: `format`, `lint`, `types`, `test`, `build`, in that order. Each check has at most one command, from the config key `validate_<check>` in `ccmagic.local.md` (`none` disables it) or, when the key is absent, detected from `package.json` scripts, `Makefile` targets, `go.mod`, `Cargo.toml`, or `pyproject.toml`. The command's exit code is the verdict. **Do not pick, substitute, or chain commands yourself, and do not re-judge a result**: a check the script reports `failed` has failed, even if the output looks harmless.
 
-## Check Categories (with dependencies):
-1. **Syntax Check**: Ensure code compiles/parses
-2. **Type Checking**: Validate type safety
-3. **Linting**: Check code style and quality
-4. **Format Check**: Verify code formatting
-5. **Test Suite**: Run all tests
-6. **Security Scan**: Check for vulnerabilities
-7. **Documentation**: Verify docs are updated
-8. **Build**: Ensure project builds successfully
+The script is also on the Bash `PATH` as `ccm-validate` while the plugin is enabled; use the bare name if the `${CLAUDE_SKILL_DIR}` path doesn't resolve.
 
 ## Implementation Steps
 
-> **How to read the command blocks below.** These are a catalog, not a script to run verbatim. After Step 1 detects the project's stack and tooling, **select the single command that matches** — do not run them all. Where a block chains alternatives with `||` (e.g. `pylint || flake8 || ruff check`, `npm audit || yarn audit`), the `||` denotes *"whichever of these tools this project actually uses"* — **pick the one that's configured, not a shell fallback**. A check tool exiting non-zero almost always means a real failure (lint errors, failing tests), so chaining past it with `||` would mask that failure by falling through to the next tool. Run one command per check and read its exit code directly.
-
-### 1. Detect Project Type and Tools
+### 1. List the checks
 
 ```bash
-# Check for configuration files
-ls -la | grep -E "package.json|pyproject.toml|Cargo.toml|go.mod|Makefile"
-
-# Check for linter configs
-ls -la | grep -E ".eslintrc|.pylintrc|.rubocop|rustfmt.toml"
-
-# Check for formatter configs
-ls -la | grep -E ".prettierrc|black.toml|.rustfmt"
+"${CLAUDE_SKILL_DIR}/../../bin/ccm-validate" --list
 ```
 
-### 2. Syntax and Compilation Checks
+It prints `{status, timeout_seconds, checks: [{name, command, source, status, reason?}]}` without running anything. `status: planned` checks will run; `skipped` checks carry a `reason` ("not configured" or "disabled in config"). Show the plan to the user as a short table. If the top-level `status` is `nothing-to-run` (exit 2), skip to the report: there is nothing to run, and the user can add `validate_*` keys to `.claude/ccmagic.local.md`.
 
-#### JavaScript/TypeScript
-```bash
-# TypeScript compilation
-npx tsc --noEmit
+### 2. Run each planned check, one call per check
 
-# Plain-JS syntax check (per file; no config needed)
-node --check path/to/file.js
-```
-
-#### Python
-```bash
-# Syntax check (accepts multiple files)
-python -m py_compile **/*.py
-```
-
-#### Go
-```bash
-go build ./...
-```
-
-#### Rust
-```bash
-cargo check
-```
-
-### 3. Type Checking
+For each check with `status: planned`, in the listed order:
 
 ```bash
-# TypeScript
-npx tsc --noEmit
-
-# Python with mypy
-mypy . --ignore-missing-imports
-
-# Python with pyright
-pyright
-
-# Flow for JavaScript
-npx flow check
+"${CLAUDE_SKILL_DIR}/../../bin/ccm-validate" --only <check>
 ```
 
-### 4. Linting
+Give each call the maximum Bash tool timeout (600000 ms). One call per check keeps each under the tool's 10-minute limit; the script enforces its own `validate_timeout_seconds` limit (default 540, which leaves room to report before the tool's limit) and reports a check that hits it as `failed` with reason "timed out". If the output has a `note`, no `timeout` binary was found and the checks ran unbounded; repeat the note in the report. If the Bash call itself times out and prints no JSON, count that check as failed with reason "timed out".
 
-```bash
-# JavaScript/TypeScript
-npm run lint || npx eslint .
+Each call prints `{status: pass | fail, checks: [{name, command, source, status, exit_code, duration_s, log, reason?, tail?}]}` and exits 0 on pass, 1 on fail. A failed check carries the last 40 lines of its output as `tail`; the full output is in the `log` file. Keep going after a failure so the report covers every check, unless the user asked to stop at the first failure.
 
-# Python
-pylint **/*.py || flake8 || ruff check
+### 3. Optional checks (interactive only)
 
-# Go
-golangci-lint run || go vet ./...
+These are outside the script and never change the verdict. Offer them in interactive mode when relevant; skip them in autonomous mode:
 
-# Rust
-cargo clippy -- -D warnings
-```
-
-### 5. Code Formatting
-
-```bash
-# JavaScript/TypeScript
-npx prettier --check . || npm run format:check
-
-# Python
-black --check . || autopep8 --diff -r .
-
-# Go
-gofmt -l . || go fmt ./...
-
-# Rust
-cargo fmt -- --check
-```
-
-### 6. Test Execution
-
-```bash
-# Run tests with coverage — pick the line for the detected stack
-npm test -- --coverage   # JavaScript/TypeScript
-pytest --cov             # Python
-go test -cover ./...     # Go
-cargo test               # Rust
-
-# Then check coverage against the threshold (default 80%; see .validation.json)
-```
-
-### 7. Security Scanning
-
-```bash
-# Node.js dependencies
-npm audit || yarn audit
-
-# Python dependencies
-safety check || pip-audit
-
-# General secrets scanning
-gitleaks detect || trufflehog filesystem .
-
-# SAST scanning
-semgrep --config=auto
-```
-
-### 8. Documentation Checks
-
-```bash
-# Check if docs need updating
-git diff --name-only main...HEAD | grep -E "\.md|\.rst|\.txt"
-
-# Verify README is current
-# Check if API docs need regeneration
-# Validate markdown links
-npx markdown-link-check README.md
-```
-
-### 9. Build Verification
-
-```bash
-# Node.js
-npm run build || yarn build
-
-# Python
-python setup.py build || poetry build
-
-# Go
-go build ./...
-
-# Rust
-cargo build --release
-```
+- **Coverage:** if the user asks for a threshold, run the test command with its coverage flag and compare.
+- **Security scan:** the one dependency audit or secret scanner the project actually uses (`npm audit`, `pip-audit`, `gitleaks detect`, `semgrep`). Run one tool; never chain tools with `||`.
+- **Documentation:** `git diff --name-only <base>...HEAD` to see whether public behavior changed without a docs or CHANGELOG update.
 
 ## Validation Report Format
+
+Fill the report from the JSON of the step 2 calls: one section per check in the listed order, with the command, `duration_s`, and for a failed check the relevant lines of `tail` (read `log` for more when the tail doesn't show the cause). Skipped checks get one line with their `reason`. Optional checks from step 3 go in their own sections, marked as not affecting the result.
 
 ```markdown
 # Validation Report
@@ -186,41 +62,24 @@ Timestamp: [ISO 8601 timestamp]
 
 ## Check Results
 
-### ✅ Syntax Check
-- All files parse correctly
-- No syntax errors found
+### ✅ Format (`npm run format:check`, 3s)
+- Passed
 
-### ✅ Type Checking
-- TypeScript: No type errors
-- Strict mode: Enabled
-
-### ⚠️ Linting (3 warnings)
+### ❌ Lint (`npm run lint`, 12s, exit 1)
 - `src/auth/login.ts:45` - Missing return type
 - `src/utils/helpers.ts:12` - Unused variable 'temp'
-- `src/api/routes.ts:78` - Line too long (125 chars)
 
-### ✅ Formatting
-- All files properly formatted
-- Using Prettier v2.8.0
+### ⏭️ Types
+- Skipped: not configured
 
-### ✅ Tests (145/145 passing)
-- Unit tests: 120/120 ✅
-- Integration: 20/20 ✅
-- E2E: 5/5 ✅
-- Coverage: 87.3% (threshold: 80%)
+### ✅ Tests (`npm run test`, 41s)
+- 145/145 passing
 
-### ✅ Security Scan
+### ✅ Build (`npm run build`, 45s)
+- Passed
+
+### Optional: Security Scan (does not affect the result)
 - No vulnerabilities found
-- Dependencies up to date
-- No secrets detected
-
-### ⚠️ Documentation
-- README needs updating for new API endpoints
-- Changelog not updated
-
-### ✅ Build
-- Build successful in 45.2s
-- Bundle size: 2.1MB (within limit)
 
 ## Required Actions
 1. Fix linting warnings in 3 files
@@ -235,18 +94,8 @@ Timestamp: [ISO 8601 timestamp]
 
 ## Smart Features
 
-### 1. Incremental Validation
-Only validate changed files when possible:
-```bash
-# Get changed files
-git diff --name-only main...HEAD
-
-# Run targeted validation
-eslint --cache [changed-files]
-```
-
-### 2. Auto-fix Mode
-Offer to automatically fix issues:
+### 1. Auto-fix Mode (interactive only)
+Offer to fix simple failures, then rerun that check with `ccm-validate --only <check>` to confirm:
 ```bash
 # Auto-fix linting
 eslint --fix
@@ -258,7 +107,7 @@ prettier --write .
 npx organize-imports-cli
 ```
 
-### 3. Git Hooks Integration
+### 2. Git Hooks Integration
 Set up pre-commit hooks:
 ```bash
 # Install husky
@@ -268,30 +117,19 @@ npx husky install
 npx husky add .husky/pre-commit "npm run validate"
 ```
 
-## Configuration File
+## Configuration
 
-Save validation preferences in `.validation.json`:
-```json
-{
-  "checks": {
-    "syntax": true,
-    "types": true,
-    "lint": true,
-    "format": true,
-    "tests": true,
-    "security": true,
-    "docs": false,
-    "build": true
-  },
-  "thresholds": {
-    "coverage": 80,
-    "maxWarnings": 10,
-    "bundleSize": "5MB"
-  },
-  "autoFix": true,
-  "parallel": true
-}
+Commands and the time limit come from flat keys in the `ccmagic.local.md` frontmatter (project file over user file):
+
+```yaml
+---
+validate_lint: npm run lint:strict   # overrides detection
+validate_types: none                 # disables the check
+validate_timeout_seconds: 900        # per check; default 540
+---
 ```
+
+Keys: `validate_format`, `validate_lint`, `validate_types`, `validate_test`, `validate_build`, `validate_timeout_seconds`. See `docs/ccmagic.local.md.example`.
 
 ## Integration with Other Commands
 
@@ -322,18 +160,22 @@ Autonomous mode is ON when the first present signal (in priority order) resolves
 
 Absent all three, run the interactive path exactly as documented above.
 
-`/ccmagic:validate` has no tracker access; it never moves a ticket. It runs the checks, reports the result, and emits the handshake — the parent skill/orchestrator owns any route-and-stop. Emit `done` when every check passes; emit `needs-human` when one or more checks fail, summarizing the failing checks on the `reason` line (the orchestrator decides whether to fix-and-retry or park). Auto-fix is **off** in autonomous mode — report failures, don't silently rewrite code.
+`/ccmagic:validate` has no tracker access; it never moves a ticket. It runs steps 1 and 2 (not the optional checks), reports the result, and emits the handshake. The parent skill or orchestrator owns any route-and-stop. Auto-fix is **off** in autonomous mode: report failures, don't rewrite code.
 
-**A non-zero exit from any selected check is a failure.** Because this handshake gates a merge decision in `/ccmagic:auto-ticket`, never let a `||` chain convert a real failure into a pass by falling through to another tool (see the note under *Implementation Steps*): run the one command that matches the detected stack and treat its exit code as authoritative. Emit `done` only when *every* selected check exited zero.
+The handshake follows the script's JSON, with no judgment of your own:
+
+- Every step 2 call returned `status: pass`: emit `done` with reason `validation passed`.
+- `--list` returned `nothing-to-run`: emit `done` with reason `no checks configured`.
+- Any step 2 call returned `status: fail`: emit `needs-human` with a reason listing the failed check names from the JSON (for example `failed: lint, test`; add "(timed out)" after a check whose `reason` says so). The orchestrator decides whether to fix-and-retry or park.
 
 ### Handshake (emit last, in autonomous mode)
 
 ```
 status: done | needs-human
-reason: <one line — "validation passed" on done; the failing checks on needs-human>
+reason: <one line: "validation passed" or "no checks configured" on done; the failed check names on needs-human>
 follow_ups: []
 ```
 
 ## Execution
 
-Begin validation immediately without confirmation. Run checks in optimal order (fail fast on critical issues). Provide real-time progress updates. Display clear, actionable results with specific file:line references for issues.
+Begin validation immediately without confirmation. Run the checks in the order `--list` gives, report each result as it arrives, and display clear, actionable results with specific file:line references taken from the failed checks' output.
