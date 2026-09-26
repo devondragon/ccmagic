@@ -11,6 +11,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: shellcheck
-        run: shellcheck -x bin/ccm-* hooks/*.sh tests/run.sh tests/stubs/gh evals/run.sh
+        run: shellcheck -x bin/ccm-* hooks/*.sh tests/run.sh tests/relay-smoke.sh tests/stubs/gh evals/run.sh
       - name: tests
         run: bash tests/run.sh
