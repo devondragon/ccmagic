@@ -60,9 +60,11 @@ The `~~~` fence is deliberate — issue bodies routinely contain backtick fences
 previous_findings:
 ~~~
 - {id/title} — {file}
-- {id/title} — {file}
+- {id/title} — {file}; invariant test: {test file and name}
 ~~~
 ```
+
+The `invariant test:` suffix appears only for a security or invariant finding fixed under §9; the reviewer checks that the test states the invariant and passes, and does not re-derive the invariant from scratch.
 
 A sub-skill that sees `orchestrator:` in its grounding block must **not** park on `needs-human` — it emits the handshake and returns control so the orchestrator performs the single route-and-stop.
 
@@ -247,3 +249,14 @@ In an **orchestrated** run (the grounding block carries `orchestrator: auto-tick
 | `file_followup(desc)` | Record a short description in `follow_ups:`; reply to a deferred PR thread with `ccm-pr-reply ... --ticket requested`. | Files it or lists it with a reason (its *Follow-ups* rule). |
 
 Needs-human parking is already the orchestrator's (§4). Comments on the PR (`gh pr comment`, `ccm-post-review`, `ccm-pr-reply`) are not tracker writes and stay in the steps. A sub-skill invoked without a grounding block (interactive or standalone autonomous) keeps its full tracker behavior; this section changes nothing there.
+
+## 9. Fixing security and invariant findings
+
+This applies wherever an autonomous run fixes a finding: the orchestrator's review-fix loop (`auto-ticket` Step 3, done inline by the orchestrator) and `pr-feedback`'s address-now fixes (the `auto-feedback` step). It covers a finding tagged security (`specialist: security`, or a review comment that reports a vulnerability) and any finding whose correctness depends on an invariant over untrusted input, such as "no filename can produce the fence marker". A few hand-picked cases do not show such a fix is complete, and every gap the next review pass finds costs a full fix, push, and review cycle. So before committing the fix:
+
+1. **Reproduce the verifier's inputs.** Take the triggering inputs from the finding's `reproduction:` field (`skills/review/finding-schema.md`; the review report shows it as **Reproduction**), or from its detail or the review comment when the field is absent. Run each one against the fixed code in a scratch program kept outside the repository (for example under `$TMPDIR`), so it is never committed. Every input must now satisfy the invariant.
+2. **Rerun the corpus.** If the verifier fuzzed or enumerated, rebuild that corpus from its stated generator or rule and run it against the fix. Keep it within the scratch-program limits in `skills/review/agent-instructions.md`: a hard timeout of about 60 seconds (`timeout -k 5 60 ...`, or `gtimeout -k 5 60 ...` on macOS where GNU `timeout` is missing) and the smallest corpus that exercises the behavior. If the verifier's corpus does not fit, sample it down and say so in the commit body. The result is zero failures, or the first failing input.
+3. **State the invariant as a test.** Add a property or parameterized test to the repository that asserts the invariant over the verifier's inputs plus a generated or enumerated set, using the project's existing test framework (a property-testing library only if the project already uses one). Run it with the project's normal targeted test command; the 60-second limit is for scratch programs, not the project's test runner, which can take longer than that on a JVM build. The fix commit includes the test, so the next review pass checks the invariant instead of rediscovering it.
+4. **Do not push a fix that fails.** If any verifier input or corpus input still breaks the invariant, keep fixing within the pass. If the fix cannot be made to pass, do not commit or push it as fixed: the orchestrator route-and-stops (§4), and `pr-feedback` does not reply `fixed` and emits `needs-human`. Either way the reason names the finding and the first failing input, written in its escaped form (as in `reproduction:`) so the handshake `reason:` stays on one line.
+
+When a finding carries no inputs, derive the invariant and inputs from its detail, and name both in the commit body. This section changes nothing for other findings.

@@ -326,14 +326,14 @@ Same file + overlapping line range + same issue type → merge. Keep highest con
 For each Critical/High finding that survived, launch a parallel **verification Explore agent** (capped at 4 concurrent):
 - Reads actual code in context (not just the diff)
 - Checks if issue is mitigated elsewhere (middleware, callers, error handlers)
-- Attempts to construct concrete triggering scenario
+- Attempts to construct concrete triggering scenario, and for a security or invariant finding records the inputs and any fuzz or enumeration approach in `reproduction` (see `triage-instructions.md`)
 - Returns verdict: **CONFIRMED** / **MITIGATED** / **FALSE_POSITIVE**
 - Runs any scratch program under the limits in `## Scratch programs` of `agent-instructions.md` (60-second `timeout`, smallest input, cite rather than re-measure); pass it the measurements already in the finding
 
 This is a fan-out like any other — apply the Step 3.9 collection protocol here too, with its own deadline stamped at dispatch. A verification agent that never reports must not hold the report hostage.
 
 ### 5d. Process verdicts
-- CONFIRMED → keep with "[Verified]" tag
+- CONFIRMED → keep with "[Verified]" tag; if the verifier returned a `reproduction`, put it on the finding
 - MITIGATED → downgrade severity by one level, note the mitigation
 - FALSE_POSITIVE → move to Dismissed Findings section
 - **No verdict (agent did not report before the deadline)** → keep the finding at its original severity, tagged `[Unverified — verification agent did not report]`. Never silently drop a Critical/High finding because its verifier went missing, and never promote an unverified finding to `[Verified]`.
@@ -365,6 +365,7 @@ For each:
 > **Issue**: one-line summary
 > **Detail**: explanation with triggering scenario
 > **Verification**: CONFIRMED — [evidence]
+> **Reproduction**: [the finding's `reproduction` field, verbatim: invariant, triggering inputs, fuzz or enumeration approach; omit the line when absent]
 > **Suggestion**: minimal fix
 
 ## High Priority Issues ({count}) — Verified

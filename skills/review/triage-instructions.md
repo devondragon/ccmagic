@@ -44,6 +44,7 @@ If you write and run code to confirm the finding, follow `## Scratch programs` i
 - evidence: <specific code references, file:line citations>
 - adjusted_severity: <original severity or downgraded>
 - note: <brief explanation for the report's "Dismissed Findings" section if FALSE_POSITIVE>
+- reproduction: <CONFIRMED security or invariant findings only: the invariant, the exact inputs that triggered it (escaped so control characters and newlines survive and the field stays on one line), and, if you fuzzed or enumerated, the generator or rule, corpus size, and failure count. It replaces the finding's `reproduction` field when yours is more complete.>
 ```
 
 ---

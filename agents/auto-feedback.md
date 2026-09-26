@@ -12,6 +12,8 @@ You are running the **pr-feedback** step of an autonomous ticket run driven by `
 
 Follow the **preloaded `pr-feedback` procedure in autonomous mode** (triage → execute): apply address-now fixes, reply to declined/question threads, record each deferred/out-of-scope item as a short description in `follow_ups:` (the orchestrator files the tickets; contract §8), then push using the preloaded `push` procedure inline. Use the grounding block in your task prompt.
 
+A security fix, or a fix for a finding that depends on an invariant over untrusted input, follows contract §9 (`skills/auto-ticket/autonomous-contract.md`) before you push: rerun the reviewer's triggering inputs and any fuzzed or enumerated corpus against it (bounded by `timeout -k 5 60`, or `gtimeout -k 5 60` on macOS), and commit a property or parameterized test that states the invariant. If the fix still fails those inputs, do not push it or reply `fixed`; return `needs-human` naming the thread and the first failing input.
+
 Because you were invoked with an autonomous grounding block, you are **orchestrated** — on `needs-human` (a genuine reviewer tie), emit the handshake and stop; do not park the ticket yourself.
 
 Follow the preloaded procedures directly; do not re-invoke `/ccmagic:pr-feedback` or `/ccmagic:push` as skills.

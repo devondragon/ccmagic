@@ -2,7 +2,7 @@
 name: auto-ticket
 description: Autonomous end-to-end ticket driver. Runs the full work → review → PR-feedback → finish cycle unattended, merging when the work is clean and CI is green, or parking the ticket (needs-human) with a clear note when a decision genuinely requires a human. Detects the tracker (Linear, GitHub Issues, JIRA) and ticket from the argument or current branch.
 user-invocable: true
-allowed-tools: Read(*), Edit(*), Bash(git:*, gh:*), Bash(${CLAUDE_SKILL_DIR}/../../bin/ccm-context *), Bash(${CLAUDE_SKILL_DIR}/../../bin/ccm-ci-status *), Bash(${CLAUDE_SKILL_DIR}/../../bin/ccm-pr-threads *), Glob(*), Grep(*), Task(*), TodoWrite(*), Skill(*)
+allowed-tools: Read(*), Edit(*), Write(*), Bash(git:*, gh:*, timeout:*, gtimeout:*), Bash(${CLAUDE_SKILL_DIR}/../../bin/ccm-context *), Bash(${CLAUDE_SKILL_DIR}/../../bin/ccm-ci-status *), Bash(${CLAUDE_SKILL_DIR}/../../bin/ccm-pr-threads *), Glob(*), Grep(*), Task(*), TodoWrite(*), Skill(*)
 argument-hint: "[TICKET-ID] (detects from the current branch if omitted)"
 model: sonnet
 context: fork
@@ -118,9 +118,9 @@ Run the review-ticket step via `run_step` — `/ccmagic:review-ticket {TICKET-ID
 - `clean` → continue to Step 4.
 - `needs-human` → **route-and-stop** (stage = `review-ticket`).
 - `fixable-findings` → run a **bounded fix loop** (max `max_review_fix_passes` passes, default **3**):
-  1. Apply the CRITICAL findings (and any listed fixable missing-AC items) from the report — edit the code directly. A `systemic:`-tagged finding is fixed **as a class**: apply the fix to every enumerated instance, then re-run the enumeration search yourself to catch stragglers — never point-fix only the reported line.
+  1. Apply the CRITICAL findings (and any listed fixable missing-AC items) from the report — edit the code directly. A `systemic:`-tagged finding is fixed **as a class**: apply the fix to every enumerated instance, then re-run the enumeration search yourself to catch stragglers — never point-fix only the reported line. A security finding, or one whose correctness depends on an invariant over untrusted input, follows contract §9 before the commit: run the verifier's triggering inputs (the finding's **Reproduction**) against the fix, rerun any fuzzed or enumerated corpus within the scratch-program limits (`timeout -k 5 60`, or `gtimeout -k 5 60` on macOS; smallest corpus that shows the behavior), and add a property or parameterized test stating the invariant. If the fix still fails any of those inputs, do not push it as fixed: **route-and-stop** (reason: the finding and the first failing input).
   2. Commit and push via `/ccmagic:push` with the grounding block (run this via `run_step`). If push returns `needs-human`, **route-and-stop**.
-  3. Re-invoke the review-ticket step via `run_step`, adding `review_pass: {n}` to the grounding block (2 on the first re-review, incrementing) so the reviewer produces a delta report (contract §2), and appending a `previous_findings:` section listing the findings just applied (contract §2) so the fresh review subagent knows what to verify.
+  3. Re-invoke the review-ticket step via `run_step`, adding `review_pass: {n}` to the grounding block (2 on the first re-review, incrementing) so the reviewer produces a delta report (contract §2), and appending a `previous_findings:` section listing the findings just applied (contract §2), with the invariant test for each one fixed under contract §9, so the fresh review subagent knows what to verify.
   4. `clean` → continue to Step 4. `fixable-findings` again and passes remain → repeat. Passes exhausted still not clean, or `needs-human` → **route-and-stop** (reason: the outstanding findings).
 
 Only CRITICAL findings and closable missing-AC items gate here. Out-of-scope changes are flagged in the PR (review-ticket already posts them) and do not block.
