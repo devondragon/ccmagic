@@ -331,6 +331,7 @@ Absent all three, run the interactive path exactly as documented above.
 - **Step 5 (Behind remote):** run `git pull --rebase`. If it rebases cleanly, continue and push. If it hits conflicts, stop with `needs-human` — never force-push (the hook denies any force push in an autonomous run).
 - **Commit messages:** the hook denies a commit whose subject doesn't match the conventional-commit format in an autonomous run, and says why. Rewrite the subject and commit again.
 - **Push rejected:** retry once with `git pull --rebase` then re-push; if still rejected → `needs-human`.
+- **Commit notes:** when the grounding block carries a `commit_notes:` section (from `auto-ticket`'s fix pass, contract §3), write each line into the body of the commit that holds the file the line starts with, or into the first commit's body when no commit holds that file. Every line goes into some commit; never drop one.
 
 ### Handshake (emit last, in autonomous mode)
 
