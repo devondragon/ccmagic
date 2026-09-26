@@ -2,6 +2,20 @@
 
 All notable changes to ccmagic are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.13.5] - 2026-09
+
+### Changed
+
+- Skills call the `bin/ccm-*` scripts as `${CLAUDE_PLUGIN_ROOT}/bin/ccm-<name>` instead of `${CLAUDE_SKILL_DIR}/../../bin/ccm-<name>`, and grant both that path and the bare name (`Bash(ccm-<name> *)`) in `allowed-tools` (#59).
+- The `auto-*` step agents call `ccm-*` scripts by bare name, each as its own Bash call. Inside a plugin agent only the session's permission rules apply, not the preloaded skill's `allowed-tools`. `docs/cyrus-deployment.md` lists the rules a harness without plain `Bash` must grant (#59).
+- `tests/relay-smoke.sh --narrow-bash` runs with that rule set instead of plain `Bash`, and fails on any denied `ccm-*` or `rm` call, including subagents' calls (#59).
+
+### Fixed
+
+- In a session without plain `Bash`, every `ccm-*` call was denied: the path rule matched only the literal `../..` text, and the model called the bare name or the normalized path. A narrow-rules `auto-ticket` run stalled on its first `ccm-context` call (#59).
+- Comment, reply, and PR bodies (`ccm-post-review`, `ccm-pr-reply`, `gh pr comment`, `gh pr create`, `gh issue comment`) go on stdin through a quoted heredoc. This drops the `${TMPDIR}` prefix and temp files that narrow grants refuse, and keeps backticks or `$(...)` in a `ccm-pr-reply` body that quotes a review comment from running as commands (#59).
+- `auto-ticket` mints `run_id` with `date +%s` instead of `openssl`, and deletes the prompt-relay handoff file with an unchained `rm` (#59).
+
 ## [3.13.4] - 2026-09
 
 ### Added
