@@ -56,7 +56,7 @@ ticket_content:
 
 The `~~~` fence is deliberate — issue bodies routinely contain backtick fences, so tildes keep the ticket body from prematurely closing the block. Copy the text as written; do not summarize it, because the step agents parse acceptance criteria out of it. Sub-skills in an orchestrated run read the ticket from this section **instead of** fetching it (§8).
 
-`review_pass:` appears only when the orchestrator re-invokes `review-ticket` inside its Step 3 fix loop (2 on the first re-review, incrementing). `review-ticket` uses it to switch to a delta report (see its *Autonomous mode*); all other sub-skills ignore it. On those re-invocations the orchestrator also appends a `previous_findings:` section to the grounding block — a short fenced list of the findings it just applied in the fix loop (id/title + file per finding) — so the fresh review subagent knows exactly what to verify as fixed:
+`review_pass:` appears only when the orchestrator re-invokes `review-ticket` inside its Step 3 fix loop (2 on the first re-review, incrementing). `review-ticket` uses it to switch to a delta report (see its *Autonomous mode*); all other sub-skills ignore it. On those re-invocations the orchestrator also appends a `previous_findings:` section to the grounding block: a short fenced list of the findings the work step's fix pass just applied (its `applied_findings:`, id/title and file per finding), so the fresh review subagent knows exactly what to verify as fixed:
 
 ```
 previous_findings:
@@ -75,11 +75,13 @@ findings_to_fix:
 ~~~
 {review: each CRITICAL finding and fixable missing-AC item, copied from the review report as written,
  with its id, title, file and line, detail, systemic: enumeration, and Reproduction}
-{validate: the failed check names and the validate step's report for them}
+{validate: the validate step's failures: section as reported (§3)}
 ~~~
 ```
 
-On a fix pass `work-ticket` follows its *Fix pass* section instead of Steps 3 to 8: it stays on the PR's branch, applies only the listed items (a `systemic:` finding as a class, a security or invariant finding under §9), runs the narrowest tests that cover them, and leaves the changes **uncommitted**. It does not re-implement the ticket, commit, push, or open a PR: the orchestrator's push step is the one commit and push of the pass, and it runs only after a `done`. All other sub-skills ignore the fix-pass keys.
+On a fix pass `work-ticket` skips its Steps 2 to 4 and follows its *Fix pass* section in place of Steps 5 to 8: it stays on the PR's branch, applies only the listed items (a `systemic:` finding as a class, a security or invariant finding under §9), runs the narrowest tests that cover them, and leaves the changes **uncommitted**. It does not re-implement the ticket, commit, push, or open a PR: the orchestrator's push step is the one commit and push of the pass, and it runs only after a `done`. All other sub-skills ignore the fix-pass keys. The orchestrator checks the git state around each fix pass (its Step 3, *Fix-pass git check*) and parks a pass that committed, switched branch, or changed no files.
+
+The push step's grounding block after a fix pass may carry a `commit_notes:` section, copied from the fix pass's report (§3); only `push` reads it.
 
 A sub-skill that sees `orchestrator:` in its grounding block must **not** park on `needs-human` — it emits the handshake and returns control so the orchestrator performs the single route-and-stop.
 
@@ -117,11 +119,21 @@ applied_findings:
 ~~~
 commit_notes:
 ~~~
-- {a line for the fix commit's body, such as a §9 corpus sampled down or an invariant derived from a finding with no inputs}
+- {file}: {a line for the fix commit's body, such as a §9 corpus sampled down or an invariant derived from a finding with no inputs}
 ~~~
 ```
 
-`applied_findings:` lists every item from `findings_to_fix:`, one line each, in the `previous_findings:` format; for a validate fix the id/title is the check name. The orchestrator copies it into the re-review's `previous_findings:` and treats a missing section, or a missing item, as a failed pass. `commit_notes:` is omitted when there is nothing to note; the orchestrator appends it to the push step's grounding block, and `push` writes its lines into the body of the commit that holds the files they name. The fix pass's handshake is `status: done | needs-human`, `reason: fix pass {n}: applied {k} items` (or on `needs-human`, the item it could not fix; for a §9 fix that still fails, the finding and the first failing input), and `follow_ups:`, with no `requested_state:`.
+`applied_findings:` lists every item from `findings_to_fix:`, one line each, in the `previous_findings:` format; for a validate fix the id/title is the check name. The orchestrator copies it into the re-review's `previous_findings:` and treats a missing section, or a missing item, as a failed pass. `commit_notes:` is omitted when there is nothing to note. Each line starts with the repository file it concerns (for a §9 note, the invariant test). The orchestrator appends the section to the push step's grounding block, and `push` writes each line into the body of the commit that holds that file, or into the first commit's body when no commit holds it, so no note is dropped. The fix pass's handshake is `status: done | needs-human`, `reason: fix pass {n} ({fix_source}): applied {k} items` (or on `needs-human`, the item it could not fix; for a §9 fix that still fails, the finding and the first failing input), and `follow_ups:`, with no `requested_state:`.
+
+When a check fails, the validate step's report carries a `failures:` section just before its handshake, and its `reason` starts with `failed:`. The orchestrator copies the section into a validate fix pass's `findings_to_fix:`:
+
+```
+failures:
+~~~
+- {check}: `{command}`, exit {exit_code}{, timed out}; log: {log path}
+  {the lines of the check's tail that show the cause, indented}
+~~~
+```
 
 Parse the **last** such block in the sub-skill's output. If a sub-skill fails to emit one (crash, tool error), treat it as `needs-human` with `reason: "{skill} produced no handshake"`.
 
@@ -145,9 +157,10 @@ The single routine the orchestrator (or a standalone top-level sub-skill) runs w
    - **Linear** — `mcp__*Linear*__save_issue` transitioning to the state whose name matches `needs_human_state` (case-insensitive). If no such state exists, apply `needs_human_label` via `save_issue` labels and leave the state unchanged.
    - **GitHub** — GitHub issues have no custom states. Apply `needs_human_label` with `gh issue edit {N} --add-label "{label}"` (create the label first with `gh label create` if missing). Leave the issue open.
    - **JIRA** — transition to the matching status via the Atlassian MCP; if no transition matches, apply `needs_human_label` as a label and leave the status unchanged.
-3. **Comment the reason** on both surfaces (skip a surface only if it doesn't exist):
+3. **List uncommitted changes.** Run `git status --porcelain`. A non-empty result is work that was not pushed, such as a fix pass that failed; it goes in the parked comment's **Uncommitted changes** line so a human reviews it before anything re-runs. Leave the files as they are.
+4. **Comment the reason** on both surfaces (skip a surface only if it doesn't exist):
    - PR comment (`gh pr comment {PR} --body ...`) and ticket comment (`save_comment` / `gh issue comment` / Atlassian MCP), using the parked-comment template below.
-4. **Emit the run's final status** (see the orchestrator's Step 6 summary) and exit cleanly. Never wait for input.
+5. **Emit the run's final status** (see the orchestrator's Step 6 summary) and exit cleanly. Never wait for input.
 
 ### Parked-comment template
 
@@ -159,6 +172,7 @@ The single routine the orchestrator (or a standalone top-level sub-skill) runs w
 **Waiting on:** {the one-line reason from the sub-skill's handshake}
 **Stage:** {work-ticket | review-ticket | pr-feedback | validate | finish-ticket}
 **PR:** {pr_url or "not created"}
+**Uncommitted changes:** {the files from step 3, with "left in the working tree, not pushed; review or discard them before re-running"; omit this line when the tree is clean}
 **State moved to:** {needs_human_state, or "unchanged — applied label `{needs_human_label}`" | prompt-relay: "not moved — Requested state: {needs_human_state}"}
 
 **Autonomous decisions so far:**
@@ -171,7 +185,7 @@ The single routine the orchestrator (or a standalone top-level sub-skill) runs w
 {"ccmagic": {"version": 1, "run_id": "{run_id}", "ticket": "{TICKET-ID}", "outcome": "parked", "classification": "{class}", "merge_owner": "{self | reeve}", "pr": {pr_number or null}, "review_passes": {n}, "feedback_passes": {n}, "ci_attempts": {n}, "findings": {"critical": {n}, "high": {n}}, "steps": [{"step": "work-ticket", "status": "done"}, {"step": "review-ticket", "status": "needs-human", "reason": "{one line}"}], "follow_ups": []}}
 ```
 
-Nothing was merged. Resolve the item above, then re-run `/ccmagic:auto-ticket {TICKET-ID}` (or continue manually).
+Nothing was merged. Resolve the item above (and any uncommitted changes), then re-run `/ccmagic:auto-ticket {TICKET-ID}` (or continue manually).
 ````
 
 The keys and rules are the same as the Step 6 `### Run record` block (contract §2's grounding block feeds `merge_owner`; see `skills/auto-ticket/SKILL.md` Step 6). This block is what lets Reeve's `parseRunRecord` read a parked run: it matches on a comment containing "Autonomous run summary" and reads that comment's final ```json fence, so the heading above must keep that exact phrase.
@@ -181,7 +195,7 @@ The keys and rules are the same as the Step 6 `### Run record` block (contract �
 When the run is on the **prompt-relay transport** (§7), the park routine changes at two points, and the parked-comment template above renders its **State moved to** and **Follow-ups** lines per their prompt-relay alternatives:
 
 - **Step 2 (state move) is skipped.** There is no Linear API in the environment, so the ticket state is not moved — the harness/human owns the transition. A park that can't move state is **never** a failure. Emit `Requested state: {needs_human_state}` as an intent line in the final output so the tracker (and the human reading the relay) knows where the ticket should go.
-- **Step 3 (comment)** still posts the parked-comment template to the **PR** via `gh pr comment` (the GitHub side is intact). It is *additionally* emitted as the orchestrator's final top-level output, wrapped in the §7 final-message delimiters, so the relay delivers the parked note to the tracker as the run's single Linear-facing message.
+- **Step 4 (comment)** still posts the parked-comment template to the **PR** via `gh pr comment` (the GitHub side is intact). It is *additionally* emitted as the orchestrator's final top-level output, wrapped in the §7 final-message delimiters, so the relay delivers the parked note to the tracker as the run's single Linear-facing message.
 
 ## 5. Config keys
 

@@ -2,7 +2,7 @@
 name: work-ticket
 description: End-to-end ticket workflow. Detects your tracker (Linear, GitHub Issues, or JIRA), looks up the ticket, assigns it to you, moves it to In Progress, triages the work type, creates a branch, executes the work (delegating to /ccmagic:debug for bugs), validates scope, then commits and opens a PR.
 user-invocable: true
-allowed-tools: Read(*), Write(*), Edit(*), Bash(git:*, gh:*, mkdir:*), Bash(${CLAUDE_SKILL_DIR}/../../bin/ccm-context *), Glob(*), Grep(*), Task(*), TodoWrite(*), AskUserQuestion(*), Skill(*)
+allowed-tools: Read(*), Write(*), Edit(*), Bash(git:*, gh:*, mkdir:*, timeout:*, gtimeout:*), Bash(${CLAUDE_SKILL_DIR}/../../bin/ccm-context *), Glob(*), Grep(*), Task(*), TodoWrite(*), AskUserQuestion(*), Skill(*)
 argument-hint: Ticket ID (e.g. ENG-123, PROJ-456, or a GitHub issue number like 42)
 model: inherit
 ---
@@ -343,13 +343,13 @@ When the grounding block carries `fix_pass:`, `/ccmagic:auto-ticket` is sending 
 3. **Apply contract §9 to a security finding**, or to any finding whose correctness depends on an invariant over untrusted input: run the verifier's triggering inputs (the finding's **Reproduction**) against the fix, rerun any fuzzed or enumerated corpus within the scratch-program limits (`timeout -k 5 60`, or `gtimeout -k 5 60` on macOS; the smallest corpus that shows the behavior), and add a property or parameterized test stating the invariant. If the fix still fails any of those inputs, keep fixing within the pass; if it cannot be made to pass, stop with `needs-human` (the `reason` names the finding and the first failing input, escaped as in `reproduction:`).
 4. **Run the narrowest tests that cover the changes** (see *Build and test runs*), plus the invariant tests from item 3.
 5. **Leave the changes uncommitted.** No `git add`, `git commit`, `git push`, or `gh pr` command: the orchestrator's push step commits and pushes the pass, and only after a `done`.
-6. **Report** an `applied_findings:` section (one line per listed item, `- {id/title}: {file}`, with `; invariant test: {test file and name}` for an item fixed under §9) and, when there is something for the commit body (a §9 corpus sampled down, an invariant derived from a finding with no inputs), a `commit_notes:` section, both `~~~`-fenced, just before the handshake (contract §3).
+6. **Report** an `applied_findings:` section (one line per listed item, `- {id/title}: {file}`, with `; invariant test: {test file and name}` for an item fixed under §9) and, when there is something for the commit body (a §9 corpus sampled down, an invariant derived from a finding with no inputs), a `commit_notes:` section with lines of the form `- {file}: {note}`, naming the repository file the note concerns (for a §9 note, the invariant test), both `~~~`-fenced, just before the handshake (contract §3).
 
 An item that cannot be fixed within the ticket's scope → `needs-human` naming it. The handshake on a fix pass has no `requested_state:`:
 
 ```
 status: done | needs-human
-reason: <"fix pass {n}: applied {k} items" on done; the item that could not be fixed on needs-human>
+reason: <"fix pass {n} ({fix_source}): applied {k} items" on done; the item that could not be fixed on needs-human>
 follow_ups: [<anything noticed outside the listed items>]
 ```
 

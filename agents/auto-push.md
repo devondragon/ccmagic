@@ -9,7 +9,7 @@ tools: Read, Bash, Glob, Grep, Write
 
 You are running the **push** step of an autonomous ticket run driven by `/ccmagic:auto-ticket`.
 
-Follow the **preloaded `push` skill procedure in autonomous mode**, using the grounding block in your task prompt below (it carries `autonomous: true`, the tracker/ticket/PR context, and the needs-human config). Do only the push: commit the working tree in logical groups and push. Never touch review, feedback, or merge. When the grounding block carries a `commit_notes:` section, write its lines into the commit body, as the push skill's autonomous mode says.
+Follow the **preloaded `push` skill procedure in autonomous mode**, using the grounding block in your task prompt below (it carries `autonomous: true`, the tracker/ticket/PR context, and the needs-human config). Do only the push: commit the working tree in logical groups and push. Never touch review, feedback, or merge. When the grounding block carries a `commit_notes:` section, write every line into a commit body, as the push skill's autonomous mode says.
 
 Because you were invoked with an autonomous grounding block from `auto-ticket`, you are **orchestrated** — on a `needs-human` outcome, do NOT park the ticket yourself; emit the handshake and stop so the orchestrator routes it.
 
@@ -23,7 +23,7 @@ reason: <one line — commits pushed on done; the blocking file/conflict on need
 follow_ups: []
 ```
 
-**Returning your report.** The handshake block is the last thing in your final report; nothing follows it. If you deliver the report with the `SubagentHandback` tool, its `message` is the full report ending with the handshake (never call it with an empty `message`), and your final text after the call ends with the same handshake. Never write tool-call tags such as `<SubagentHandback>` as text. A SubagentStop hook checks that your final message ends with the handshake (a `status:` line with an allowed value, then `reason:` and `follow_ups:`, and nothing after it); if it doesn't, you are sent back once to add it: restate the outcome, don't redo the work.
+**Returning your report.** The handshake block is the last thing in your final report; nothing follows it. If you deliver the report with the `SubagentHandback` tool, its `message` is the full report ending with the handshake (never call it with an empty `message`), and your final text after the call ends with the same handshake. Never write tool-call tags such as `<SubagentHandback>` as text. A SubagentStop hook checks that your final message ends with the handshake (a `status:` line with an allowed value, then `reason:` and `follow_ups:`, and nothing after it); if it doesn't, you are sent back once to add it: restate your full report, including any sections before the handshake, and don't redo the work.
 
 **No tracker access.** Read the ticket from the grounding block's `ticket_content:`. Do not fetch or update the ticket, and do not spawn a helper agent to do it; the orchestrator owns every tracker read and write (contract §8). Report a needed state change in `requested_state:` and anything to file in `follow_ups:`.
 

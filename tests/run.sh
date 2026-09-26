@@ -637,6 +637,19 @@ stop_handback_tag_as_text_blocked() {
   [[ $(jq -r .reason <<<"$OUT") == *"SubagentHandback tool, its message must be your full report ending with this block"* ]]
 }
 
+# A fix pass reports fenced sections before its handshake (contract §3).
+stop_fix_pass_sections_before_handshake_pass() {
+  run_stop_hook $'Applied both.\n\napplied_findings:\n~~~\n- F1 path traversal: src/a.ts; invariant test: test/a.test.ts\n~~~\ncommit_notes:\n~~~\n- test/a.test.ts: corpus sampled to 500 inputs\n~~~\n\nstatus: done\nreason: fix pass 1 (review): applied 1 items\nfollow_ups: []' ccmagic:auto-work
+  check "$(blocked)" "allow"
+}
+
+# The send-back must not lead a fix pass to drop applied_findings: when it restates.
+stop_send_back_asks_for_full_report() {
+  run_stop_hook $'applied_findings:\n~~~\n- F1: src/a.ts\n~~~\nstatus: done\nreason: fix pass 1 (review): applied 1 items\nfollow_ups: []\nDone.' ccmagic:auto-work
+  check "$(blocked)" "block"
+  [[ $(jq -r .reason <<<"$OUT") == *"Restate your full final report, including any sections that came before the handshake"* ]]
+}
+
 stop_second_attempt_released() {
   run_stop_hook 'still no handshake' ccmagic:auto-finish true
   check "$(blocked)" "allow"

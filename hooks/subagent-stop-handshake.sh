@@ -51,6 +51,6 @@ status: ${allowed// / | }
 reason: <one line>
 follow_ups: [<ticket ids or short descriptions, or empty>]
 
-Add a requested_state: line after follow_ups: when your step needs a tracker state change. If you deliver your report with the SubagentHandback tool, its message must be your full report ending with this block, and your final text must end with the block too. Never write tool-call tags such as <SubagentHandback> as text. Do not redo any work; only restate your outcome in this form." \
+Add a requested_state: line after follow_ups: when your step needs a tracker state change. If you deliver your report with the SubagentHandback tool, its message must be your full report ending with this block, and your final text must end with the block too. Never write tool-call tags such as <SubagentHandback> as text. Do not redo any work. Restate your full final report, including any sections that came before the handshake (such as applied_findings:, commit_notes:, or failures:), and end it with this block." \
   '{decision: "block", reason: $r}'
 exit 0

@@ -166,7 +166,7 @@ The handshake follows the script's JSON, with no judgment of your own:
 
 - Every step 2 call returned `status: pass`: emit `done` with reason `validation passed`.
 - `--list` returned `nothing-to-run`: emit `done` with reason `no checks configured`.
-- Any step 2 call returned `status: fail`: emit `needs-human` with a reason listing the failed check names from the JSON (for example `failed: lint, test`; add "(timed out)" after a check whose `reason` says so). The orchestrator decides whether to fix-and-retry or park.
+- Any step 2 call returned `status: fail`: emit `needs-human` with a reason listing the failed check names from the JSON (for example `failed: lint, test`; add "(timed out)" after a check whose `reason` says so). Just before the handshake, emit a `failures:` section (contract §3) with one entry per failed check: its `command`, `exit_code`, `log` path, and the lines of its `tail` that show the cause, copied from the JSON. The orchestrator decides whether to fix-and-retry or park, and hands that section to the fix pass.
 
 ### Handshake (emit last, in autonomous mode)
 
