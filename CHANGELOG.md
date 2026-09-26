@@ -2,6 +2,18 @@
 
 All notable changes to ccmagic are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.13.3] - 2026-09
+
+Fixes from the AIE-303 `/ccmagic:auto-ticket` run, which spent about 17 minutes of a 31-minute review pass on hung or oversized repro programs, two extra fix and review cycles on a security fix, and about 5 minutes on compile-only Gradle runs.
+
+### Fixed
+
+- Review and verification agents run every scratch program (repro script, test harness, benchmark) under `timeout -k 5 60` (`gtimeout -k 5 60` on macOS, or a perl `alarm` fallback), report a timeout as evidence instead of retrying with a longer limit, keep inputs to the smallest size that shows the behavior (for a complexity claim, time two or three small sizes and extrapolate), and cite a measurement another agent already made in the same pass instead of re-measuring. The rules live in `## Scratch programs` in `skills/review/agent-instructions.md` (#50).
+- A fix for a security finding, or for any finding whose correctness depends on an invariant over untrusted input, now reruns the verifier's triggering inputs and any fuzzed or enumerated corpus against the fix within the scratch-program limits, and commits a property or parameterized test stating the invariant. A fix that still fails is not pushed as fixed: the orchestrator's review-fix loop route-and-stops, and `pr-feedback` returns `needs-human` without a `fixed` reply. The procedure is contract §9 (#51).
+- Review findings carry an optional `reproduction:` field (the invariant, the escaped triggering inputs, and any fuzz or enumeration rule, corpus size, and failure count). The verifier fills it and the report prints it as **Reproduction**, so the fix step has the inputs to rerun (#51).
+- `auto-ticket` and `pr-feedback` grant `Write(*)` and `Bash(timeout:*, gtimeout:*)`, so the fix step can add the invariant test and run bounded scratch programs (#51).
+- On JVM projects, `work-ticket` and `auto-work` skip separate compile-only runs (`compileJava`, `compileTestJava`, `mvn compile`) when a test run follows, go straight to the narrowest `./gradlew test --tests <pattern>` or `mvn test -Dtest=<pattern>`, batch related test classes into one run, and use a compile-only run at most once, only while scaffolding (#52).
+
 ## [3.13.2] - 2026-09
 
 ### Fixed
