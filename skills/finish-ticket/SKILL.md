@@ -2,7 +2,7 @@
 name: finish-ticket
 description: Closes out a development ticket end-to-end. Detects the tracker (Linear, GitHub Issues, or JIRA) and the ticket from the current branch, sanity-checks the PR, confirms disposition (Done by default, or QA when configured/requested), merges the PR, and updates the ticket with a comment, PR link, and final status.
 user-invocable: true
-allowed-tools: Read(*), Edit(*), Bash(git:*, gh:*), Bash(${CLAUDE_SKILL_DIR}/../../bin/ccm-context *), Bash(${CLAUDE_SKILL_DIR}/../../bin/ccm-merge-gate *), Bash(${CLAUDE_SKILL_DIR}/../../bin/ccm-ci-status *), Glob(*), Grep(*), AskUserQuestion(*), Skill(*)
+allowed-tools: Read(*), Edit(*), Bash(git:*, gh:*), Bash(${CLAUDE_PLUGIN_ROOT}/bin/ccm-context *), Bash(ccm-context *), Bash(${CLAUDE_PLUGIN_ROOT}/bin/ccm-merge-gate *), Bash(ccm-merge-gate *), Bash(${CLAUDE_PLUGIN_ROOT}/bin/ccm-ci-status *), Bash(ccm-ci-status *), Glob(*), Grep(*), AskUserQuestion(*), Skill(*)
 argument-hint: "[--qa]"
 model: sonnet
 ---
@@ -59,7 +59,7 @@ Transport resolution depends on how this skill was invoked. **When invoked with 
 
 Run:
 ```bash
-"${CLAUDE_SKILL_DIR}/../../bin/ccm-context"
+"${CLAUDE_PLUGIN_ROOT}/bin/ccm-context"
 ```
 
 It prints JSON with the current `branch`, the `ticket_id` parsed from it with `ticket_id_regex` (or an integer segment for GitHub), the open `pr`, whether this is a linked `worktree`, and the resolved `config`. Use those values; do not re-parse the branch yourself. Examples of what it extracts:
@@ -68,7 +68,7 @@ It prints JSON with the current `branch`, the `ticket_id` parsed from it with `t
 - `bugfix/PROJ-456-fix-cart` → `PROJ-456` (Linear/JIRA)
 - `bugfix/42-fix-cart-total` → `42` (GitHub)
 
-The `ccm-*` scripts are also on the Bash `PATH` while the plugin is enabled. If the `${CLAUDE_SKILL_DIR}/../../bin/` path doesn't resolve (for example, the variable wasn't expanded), call them by bare name: `ccm-context`, `ccm-merge-gate`, `ccm-ci-status`.
+The `ccm-*` scripts are also on the Bash `PATH` while the plugin is enabled. If the `${CLAUDE_PLUGIN_ROOT}/bin/` path doesn't resolve (for example, the variable wasn't expanded), call them by bare name: `ccm-context`, `ccm-merge-gate`, `ccm-ci-status`.
 
 If `ticket_id` is null, ask the user:
 
@@ -126,7 +126,7 @@ Stop. Tell the user:
 Run the merge gate. It decides these three criteria in code, so do not re-derive them from `gh` output:
 
 ```bash
-"${CLAUDE_SKILL_DIR}/../../bin/ccm-merge-gate" {pr_number}
+"${CLAUDE_PLUGIN_ROOT}/bin/ccm-merge-gate" {pr_number}
 ```
 
 It exits 0 when the PR may merge and 1 when it may not, and prints JSON:
@@ -138,7 +138,7 @@ It exits 0 when the PR may merge and 1 when it may not, and prints JSON:
 If `ci.status` is `pending` or `not-registered`, wait for CI rather than reporting it as a blocker yet:
 
 ```bash
-"${CLAUDE_SKILL_DIR}/../../bin/ccm-ci-status" {pr_number} --watch --wait-key finish-{pr_number}
+"${CLAUDE_PLUGIN_ROOT}/bin/ccm-ci-status" {pr_number} --watch --wait-key finish-{pr_number}
 ```
 
 Each call returns within ten minutes. If it returns `"call_again": true`, run the same command again; the total wait is bounded by `ci_timeout_minutes` through the wait-key's deadline file, so you don't count anything. Once it settles, re-run `ccm-merge-gate`. A final `timeout` status is a blocker.
@@ -374,11 +374,12 @@ Compose the closing comment first (same body for all trackers):
 ### GitHub
 
 ```bash
-TMPPREFIX="${TMPDIR:-/tmp}/zsh"; gh issue comment {N} --body "$(cat <<'EOF'
+gh issue comment {N} --body-file - <<'EOF'
 {closing comment content}
 EOF
-)"
 ```
+
+The quoted heredoc passes the comment through unexpanded. If it fails because zsh can't write its temp file under `/tmp` in a sandboxed Bash, run it again prefixed with `TMPPREFIX="${TMPDIR:-/tmp}/zsh"; `.
 
 Then:
 - **Done path:** `gh issue close {N}` — PR merge with `Closes #N` may already have closed it; verify.

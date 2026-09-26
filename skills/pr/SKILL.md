@@ -1,7 +1,7 @@
 ---
 name: pr
 user-invocable: true
-allowed-tools: Read(*), Bash(git:*), Bash(gh:*), Bash(glab:*), Bash(${CLAUDE_SKILL_DIR}/../../bin/ccm-context *), Glob(*), Task(*)
+allowed-tools: Read(*), Bash(git:*), Bash(gh:*), Bash(glab:*), Bash(${CLAUDE_PLUGIN_ROOT}/bin/ccm-context *), Bash(ccm-context *), Glob(*), Task(*)
 description: Create pull request with platform detection and smart description generation
 argument-hint: "[--draft] (optional)"
 model: sonnet
@@ -23,10 +23,10 @@ This command uses built-in git tools and does not require MCP tools. All functio
 
 Run:
 ```bash
-"${CLAUDE_SKILL_DIR}/../../bin/ccm-context"
+"${CLAUDE_PLUGIN_ROOT}/bin/ccm-context"
 ```
 
-It prints JSON with the current `branch`, the `ticket_id` parsed from it, the open `pr` for this branch (or null), and `base_branch`: the repo's default branch from `gh`, or `develop` (local or `origin/develop`) when `gh` can't answer, otherwise `main`. Use `base_branch` as `$BASE_BRANCH`; do not re-derive it. The script is also on the Bash `PATH` as `ccm-context` while the plugin is enabled; use the bare name if the `${CLAUDE_SKILL_DIR}` path doesn't resolve.
+It prints JSON with the current `branch`, the `ticket_id` parsed from it, the open `pr` for this branch (or null), and `base_branch`: the repo's default branch from `gh`, or `develop` (local or `origin/develop`) when `gh` can't answer, otherwise `main`. Use `base_branch` as `$BASE_BRANCH`; do not re-derive it. The script is also on the Bash `PATH` as `ccm-context` while the plugin is enabled; use the bare name if the `${CLAUDE_PLUGIN_ROOT}` path doesn't resolve.
 
 `ccm-context` does not read the branching strategy. If `context/branching.md` exists, read the strategy (A, B, or C) from it as `$STRATEGY`, and if it names a base branch, that name overrides `base_branch`. Without the file, use Strategy B (direct to `$BASE_BRANCH`).
 
@@ -152,14 +152,18 @@ fi
 # Using GitHub CLI (gh)
 gh pr create \
   --title "[TASK-XXX] Feature description" \
-  --body "$(cat pr-description.md)" \
-  --base "$TARGET_BRANCH" \
+  --base {target_branch} \
   --assignee @me \
-  --label "enhancement,needs-review"
+  --label "enhancement,needs-review" \
+  --body-file - <<'CCM_PR_BODY_EOF'
+{PR description}
+CCM_PR_BODY_EOF
 
 # Add reviewers if team members are configured
 gh pr create --reviewer teammate1,teammate2
 ```
+
+Fill `{target_branch}` with the `TARGET_BRANCH` value worked out above, written literally, and pass the description on stdin through the quoted heredoc. Don't use `--body "..."` or a temp file: backticks in a double-quoted body run as commands, a session with narrow Bash grants refuses `$VAR` expansions, and it may not be able to delete a temp file afterward.
 
 ### GitLab
 ```bash

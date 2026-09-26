@@ -2,9 +2,11 @@
 # tests/relay-smoke.sh: run /ccmagic:auto-ticket end to end on the prompt-relay
 # transport against a sandbox GitHub repo, then check the relay contract.
 #
-# Usage: tests/relay-smoke.sh [--repo OWNER/NAME] [--budget USD] [--keep]
+# Usage: tests/relay-smoke.sh [--repo OWNER/NAME] [--budget USD] [--narrow-bash] [--keep]
 #   --repo         sandbox repo (default devondragon/ccmagic-relay-sandbox, or $CCM_RELAY_REPO)
 #   --budget       --max-budget-usd for the claude run (default 25)
+#   --narrow-bash  grant only narrow Bash rules instead of plain Bash, so the run
+#                  checks the skills' own allowed-tools grants
 #   --keep         leave the PR open and the clone on disk for inspection
 #
 # What it does: clones the sandbox under a throwaway HOME (no user plugins, no
@@ -14,13 +16,18 @@
 # Linear ticket. The top-level session writes .ccmagic-ticket.md and invokes
 # /ccmagic:auto-ticket, as Cyrus does. The sandbox's .claude/ccmagic.local.md
 # pins tracker: linear and merge_owner: reeve, so the run hands off without
-# merging. Tools are granted as Cyrus grants them (plain Bash included), so the
-# run does not test the skills' own narrower allowed-tools grants.
+# merging. By default tools are granted as Cyrus grants them (plain Bash
+# included), so the run does not test the skills' own narrower allowed-tools
+# grants. --narrow-bash grants Bash only as git, gh, make, and the ccm-*
+# scripts by bare name (the set docs/cyrus-deployment.md lists for a harness
+# without plain Bash), so anything else a skill runs, such as the handoff-file
+# rm, must be granted by that skill.
 #
 # Checks: no Linear tool or server in the session; the handoff file is deleted
 # and in no commit; a PR was opened; the final output carries the relay block
-# and a Requested state: line; no rm was denied. The sandbox PR is closed and
-# its branch deleted afterward unless --keep. The stream-json log is kept.
+# and a Requested state: line; no rm was denied; with --narrow-bash, no ccm-*
+# script call was denied. The sandbox PR is closed and its branch deleted
+# afterward unless --keep. The stream-json log is kept.
 #
 # Not run by tests/run.sh or CI: it calls the model and pushes to GitHub, and a
 # run takes several minutes. It can't check what Cyrus itself does with the
@@ -39,13 +46,15 @@ root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 repo=${CCM_RELAY_REPO:-devondragon/ccmagic-relay-sandbox}
 budget=25
 keep=false
+narrow=false
 
 while [ $# -gt 0 ]; do
   case $1 in
     --repo) repo=$2; shift 2 ;;
     --budget) budget=$2; shift 2 ;;
     --keep) keep=true; shift ;;
-    -h|--help) sed -n '2,40p' "$0"; exit 0 ;;
+    --narrow-bash) narrow=true; shift ;;
+    -h|--help) sed -n '2,/^[^#]/{/^#/p;}' "$0" | cut -c3-; exit 0 ;;
     *) echo "relay-smoke: unknown option $1" >&2; exit 3 ;;
   esac
 done
@@ -125,7 +134,18 @@ Reproduce the contents of that block verbatim as your own final message.
 Do not summarize, paraphrase, or add commentary around it."
 
 # The tools Cyrus grants (docs/cyrus-deployment.md), minus its MCP servers.
+# --narrow-bash swaps plain Bash for the rules a locked-down harness grants
+# (the sandbox's checks run through make) plus the other commands and every
+# ccm-* script by bare name, as docs/cyrus-deployment.md lists them.
 allowed=(Read Edit Write Bash Glob Grep Task Skill TodoWrite)
+if [ "$narrow" = true ]; then
+  allowed=(Read Edit Write 'Bash(git:*)' 'Bash(gh:*)' 'Bash(make:*)' 'Bash(timeout:*)' 'Bash(gtimeout:*)'
+    'Bash(mkdir:*)' 'Bash(mktemp:*)' 'Bash(codex:*)' Glob Grep Task Skill TodoWrite)
+  for script in "$root"/bin/ccm-*; do
+    case $script in *.sh) continue ;; esac
+    allowed+=("Bash($(basename "$script") *)")
+  done
+fi
 
 # Same PATH handling as evals/run.sh: this checkout's bin/ first, installed
 # plugins' bin/ directories dropped.
@@ -141,7 +161,7 @@ echo "relay-smoke: running auto-ticket (several minutes)..."
     --permission-mode default \
     --allowedTools "${allowed[@]}" \
     --output-format stream-json --verbose \
-    --max-budget-usd "$budget"
+    --max-budget-usd "$budget" </dev/null
 ) >"$log" 2>&1 || echo "relay-smoke: claude exited non-zero; checking what it left"
 
 failed=0
@@ -158,7 +178,21 @@ trim() {
 init=$(jq -c 'select(.type == "system" and .subtype == "init")' "$log" 2>/dev/null | head -1)
 last_result=$(jq -cs '[.[] | select(.type == "result")] | last // {}' "$log" 2>/dev/null || echo '{}')
 result=$(jq -r '.result // empty' <<<"$last_result")
-denials=$(jq -c '.permission_denials // []' <<<"$last_result")
+# denied_commands: the command of every denied Bash call, subagents' included.
+# The log has a permission_denied event per call but not its command, and a
+# subagent's calls are only in its transcript under the throwaway HOME.
+denied_commands() {
+  local ids
+  ids=$(jq -R -c -s '[split("\n")[] | fromjson? | select(.type == "system" and .subtype == "permission_denied" and .tool_name == "Bash") | .tool_use_id]' "$log" 2>/dev/null) || return 0
+  [ "$ids" != "[]" ] || return 0
+  { cat "$log"; find "$home/.claude/projects" -name '*.jsonl' -exec cat {} + 2>/dev/null; } |
+    jq -R -r --argjson ids "$ids" 'fromjson? | select(.type == "assistant") | .message.content[]?
+      | select(.type == "tool_use" and (.id as $i | any($ids[]; . == $i))) | "\(.id)\t\(.input.command)"' 2>/dev/null |
+    awk -F'\t' '!seen[$1]++ { sub(/^[^\t]*\t/, ""); print }' || true
+}
+# The result message's permission_denials covers the top-level session, in case
+# a build emits no permission_denied events.
+denied=$( { denied_commands; jq -r '(.permission_denials // [])[] | select(.tool_name == "Bash") | .tool_input.command // empty' <<<"$last_result" 2>/dev/null; } | awk '!seen[$0]++')
 # The relay block is in auto-ticket's own output, which the top-level session
 # gets back as a tool result. Match the delimiters as whole lines, so a Read of
 # the contract (which quotes them with line numbers) doesn't count, and keep the
@@ -211,11 +245,15 @@ else
   fail "auto-ticket output carries the relay block"
 fi
 
-rm_denied=$(jq -r '.[] | select(.tool_name == "Bash") | .tool_input.command // empty' <<<"${denials:-[]}" | grep -E '(^|[;&|[:space:]])rm[[:space:]]' || true)
+rm_denied=$(grep -E '(^|[;&|[:space:]])rm[[:space:]]' <<<"$denied" || true)
 if [ -z "$rm_denied" ]; then pass "no rm denied"; else fail "no rm denied: $rm_denied"; fi
 
-other=$(jq -r '.[] | "\(.tool_name): \(.tool_input.command // .tool_input.file_path // "")"' <<<"${denials:-[]}")
-[ -z "$other" ] || printf 'info permission denials:\n%s\n' "$other"
+if [ "$narrow" = true ]; then
+  ccm_denied=$(grep -E '(^|[/;&|[:space:]])ccm-[a-z-]+' <<<"$denied" || true)
+  if [ -z "$ccm_denied" ]; then pass "no ccm-* script denied"; else fail "no ccm-* script denied: $ccm_denied"; fi
+fi
+
+[ -z "$denied" ] || printf 'info denied Bash commands:\n%s\n' "$denied"
 outcome=$(grep -o '"outcome": *"[a-z-]*"' <<<"$block" | tail -1 || true)
 printf 'info run outcome: %s\n' "${outcome:-not found in the relay block}"
 

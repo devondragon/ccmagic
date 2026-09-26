@@ -34,7 +34,7 @@ requested_state: <In Review on done; omit on needs-human and on a fix pass>
 **No tracker access.** Read the ticket from the grounding block's `ticket_content:`. Do not fetch or update the ticket, and do not spawn a helper agent to do it; the orchestrator owns every tracker read and write (contract §8). Report a needed state change in `requested_state:` and anything to file in `follow_ups:`.
 
 
-The `ccm-*` scripts the skill calls are also on the Bash `PATH`; if a `${CLAUDE_SKILL_DIR}/../../bin/` path doesn't resolve here, call them by bare name.
+Call the `ccm-*` scripts the skill calls by bare name (`ccm-context`, not the `${CLAUDE_PLUGIN_ROOT}/bin/ccm-context` path the procedure shows); plugin `bin/` is on the Bash `PATH`. Here only the session's permission rules apply, not the skill's `allowed-tools`, and a harness that grants Bash narrowly grants these scripts by bare name (`docs/cyrus-deployment.md`). Run each script as its own Bash call, with nothing chained to it: a compound command is refused as a whole when any other part of it is. If a bare name is not found, fall back to the path form.
 
 **Keep every call in the foreground.** You are a subagent, and a subagent returns to the orchestrator the moment it ends its turn. Pass `run_in_background: false` on every `Task` (Agent) call and every Bash call you make, including the ones a preloaded procedure tells you to launch in parallel: put a parallel batch in one message, and each result comes back in that message. A background task reports only through a completion notification, which arrives after you have already returned, so its work is lost and your handshake is missing.
 

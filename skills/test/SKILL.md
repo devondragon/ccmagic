@@ -1,7 +1,7 @@
 ---
 name: test
 user-invocable: true
-allowed-tools: Read(*), Bash(*), Bash(${CLAUDE_SKILL_DIR}/../../bin/ccm-validate *), Glob(*), Grep(*), Task(*), TodoWrite(*)
+allowed-tools: Read(*), Bash(*), Bash(${CLAUDE_PLUGIN_ROOT}/bin/ccm-validate *), Bash(ccm-validate *), Glob(*), Grep(*), Task(*), TodoWrite(*)
 description: Run tests with framework auto-detection, smart selection, coverage analysis, and failure diagnosis
 argument-hint: "[test-pattern] [--coverage] [--watch] [--affected]"
 model: sonnet
@@ -32,10 +32,10 @@ Multiple flags can be combined: `--affected --coverage src/auth`
 The full-suite command comes from `ccm-validate`, the same script `/ccmagic:validate` uses:
 
 ```bash
-"${CLAUDE_SKILL_DIR}/../../bin/ccm-validate" --list --only test
+"${CLAUDE_PLUGIN_ROOT}/bin/ccm-validate" --list --only test
 ```
 
-The `test` entry has the `command` and its `source`: `config` (the `validate_test` key in `ccmagic.local.md`) or `detected` (the `package.json` `test` script with the lockfile's package manager, a `Makefile` `test` target, `go test ./...`, `cargo test`, or `pytest` when it is configured in `pyproject.toml` or `pytest.ini`). Do not pick a different full-suite command yourself. The script is also on the Bash `PATH` as `ccm-validate`; use the bare name if the `${CLAUDE_SKILL_DIR}` path doesn't resolve.
+The `test` entry has the `command` and its `source`: `config` (the `validate_test` key in `ccmagic.local.md`) or `detected` (the `package.json` `test` script with the lockfile's package manager, a `Makefile` `test` target, `go test ./...`, `cargo test`, or `pytest` when it is configured in `pyproject.toml` or `pytest.ini`). Do not pick a different full-suite command yourself. The script is also on the Bash `PATH` as `ccm-validate`; use the bare name if the `${CLAUDE_PLUGIN_ROOT}` path doesn't resolve.
 
 If the check is `skipped` with reason "not configured":
 > "No test command detected. What command runs your tests? I can save it as `validate_test:` in `.claude/ccmagic.local.md` so `/ccmagic:test` and `/ccmagic:validate` both use it."
@@ -100,7 +100,7 @@ Run test suites in parallel when they are independent:
 **Full suite** (no pattern, no `--affected`, no `--coverage`):
 
 ```bash
-"${CLAUDE_SKILL_DIR}/../../bin/ccm-validate" --only test
+"${CLAUDE_PLUGIN_ROOT}/bin/ccm-validate" --only test
 ```
 
 Give the call the maximum Bash tool timeout (600000 ms). The JSON's check `status` is the verdict: `passed` (exit 0) or `failed` (exit 1). Exit 2 with top-level `status: nothing-to-run` means the test check was `skipped`; handle it as in Step 1 by its `reason` ("not configured": ask for the command; "disabled in config": say so and stop), and do not report it as a pass. A failed check carries `exit_code`, `duration_s`, the last 40 lines as `tail`, and the full output in the `log` file; read `log` for Step 4. A check that hit `validate_timeout_seconds` (default 540) fails with reason "timed out"; report it as a hang or a slow suite and suggest raising the key or adding a framework timeout flag.

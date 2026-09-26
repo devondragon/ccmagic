@@ -2,7 +2,7 @@
 name: work-ticket
 description: End-to-end ticket workflow. Detects your tracker (Linear, GitHub Issues, or JIRA), looks up the ticket, assigns it to you, moves it to In Progress, triages the work type, creates a branch, executes the work (delegating to /ccmagic:debug for bugs), validates scope, then commits and opens a PR.
 user-invocable: true
-allowed-tools: Read(*), Write(*), Edit(*), Bash(git:*, gh:*, mkdir:*, timeout:*, gtimeout:*), Bash(${CLAUDE_SKILL_DIR}/../../bin/ccm-context *), Glob(*), Grep(*), Task(*), TodoWrite(*), AskUserQuestion(*), Skill(*)
+allowed-tools: Read(*), Write(*), Edit(*), Bash(git:*, gh:*, mkdir:*, timeout:*, gtimeout:*), Bash(${CLAUDE_PLUGIN_ROOT}/bin/ccm-context *), Bash(ccm-context *), Glob(*), Grep(*), Task(*), TodoWrite(*), AskUserQuestion(*), Skill(*)
 argument-hint: Ticket ID (e.g. ENG-123, PROJ-456, or a GitHub issue number like 42)
 model: inherit
 ---
@@ -25,7 +25,7 @@ Given a ticket ID, handles the full development lifecycle from ticket lookup thr
 
 Run:
 ```bash
-"${CLAUDE_SKILL_DIR}/../../bin/ccm-context" {TICKET-ID}
+"${CLAUDE_PLUGIN_ROOT}/bin/ccm-context" {TICKET-ID}
 ```
 
 It prints JSON with the resolved `config` (project `.claude/ccmagic.local.md` over user `~/.claude/ccmagic.local.md` over built-in defaults), the `ticket_id` from the argument (a leading `#` is stripped), its `ticket_kind` (`integer` or `key`), a `tracker_hint`, `gh_available`, the current `branch`, and `base_branch`. Use those values; do not re-read the config files or re-derive them yourself. Relevant `config` keys:
@@ -35,7 +35,7 @@ It prints JSON with the resolved `config` (project `.claude/ccmagic.local.md` ov
 - `ticket_id_regex` (defaults to `[A-Z][A-Z0-9]+-[0-9]+`)
 - `github_repo` (`owner/repo`, only used when tracker is GitHub)
 
-The `ccm-*` scripts are also on the Bash `PATH` while the plugin is enabled. If the `${CLAUDE_SKILL_DIR}/../../bin/` path doesn't resolve (for example, the variable wasn't expanded), call it by bare name: `ccm-context`.
+The `ccm-*` scripts are also on the Bash `PATH` while the plugin is enabled. If the `${CLAUDE_PLUGIN_ROOT}/bin/` path doesn't resolve (for example, the variable wasn't expanded), call it by bare name: `ccm-context`.
 
 ### 0b. Resolve tracker (cascade — runs when `tracker: auto` or unset)
 

@@ -4,10 +4,10 @@ Supporting detail for **Step 3.5** of the `review` skill. Optional and always no
 
 ## Launching the pass
 
-`ccm-external-review` runs the pass: it checks that Codex and a `timeout` binary are installed, creates a run-scoped directory under the git dir, runs the adversarial prompt under `timeout --kill-after=30 300`, and classifies the result. The script is also on the Bash `PATH` as `ccm-external-review` while the plugin is enabled; use the bare name if the `${CLAUDE_SKILL_DIR}` path doesn't resolve.
+`ccm-external-review` runs the pass: it checks that Codex and a `timeout` binary are installed, creates a run-scoped directory under the git dir, runs the adversarial prompt under `timeout --kill-after=30 300`, and classifies the result. The script is also on the Bash `PATH` as `ccm-external-review` while the plugin is enabled; use the bare name if the `${CLAUDE_PLUGIN_ROOT}` path doesn't resolve.
 
 ```bash
-"${CLAUDE_SKILL_DIR}/../../bin/ccm-external-review" --tools codex --dimensions adversarial
+"${CLAUDE_PLUGIN_ROOT}/bin/ccm-external-review" --tools codex --dimensions adversarial
 ```
 
 Add `--base <branch>` when the review's base branch is not `main` (the prompt tells Codex to run `git diff <base>...HEAD`).

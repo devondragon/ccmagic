@@ -1,7 +1,7 @@
 ---
 name: merge
 user-invocable: true
-allowed-tools: Read(*), Bash(git:*), Bash(gh:*), Bash(glab:*), Bash(curl:*), Bash(${CLAUDE_SKILL_DIR}/../../bin/ccm-merge-gate *), Bash(${CLAUDE_SKILL_DIR}/../../bin/ccm-ci-status *), Glob(*)
+allowed-tools: Read(*), Bash(git:*), Bash(gh:*), Bash(glab:*), Bash(curl:*), Bash(${CLAUDE_PLUGIN_ROOT}/bin/ccm-merge-gate *), Bash(ccm-merge-gate *), Bash(${CLAUDE_PLUGIN_ROOT}/bin/ccm-ci-status *), Bash(ccm-ci-status *), Glob(*)
 description: Safely merge approved PRs with strategy-aware branch handling
 argument-hint: "[PR-number] (optional)"
 model: sonnet
@@ -48,16 +48,16 @@ fi
 ### GitHub: run the merge gate
 
 ```bash
-"${CLAUDE_SKILL_DIR}/../../bin/ccm-merge-gate" [PR-NUMBER]
+"${CLAUDE_PLUGIN_ROOT}/bin/ccm-merge-gate" [PR-NUMBER]
 ```
 
-It exits 0 when the PR may merge and prints JSON with `blockers` (not open, conflicting or unknown mergeability, CI not green, a reviewer's latest review is `CHANGES_REQUESTED`), `warnings` (no approving review), and the full CI result under `ci`. Report the blockers and warnings as given; do not re-derive them from `gh pr view`. If `ci.status` is `pending` or `not-registered`, wait with `"${CLAUDE_SKILL_DIR}/../../bin/ccm-ci-status" [PR-NUMBER] --watch --wait-key merge-[PR-NUMBER]` (repeat while it returns `"call_again": true`), then run the gate again.
+It exits 0 when the PR may merge and prints JSON with `blockers` (not open, conflicting or unknown mergeability, CI not green, a reviewer's latest review is `CHANGES_REQUESTED`), `warnings` (no approving review), and the full CI result under `ci`. Report the blockers and warnings as given; do not re-derive them from `gh pr view`. If `ci.status` is `pending` or `not-registered`, wait with `"${CLAUDE_PLUGIN_ROOT}/bin/ccm-ci-status" [PR-NUMBER] --watch --wait-key merge-[PR-NUMBER]` (repeat while it returns `"call_again": true`), then run the gate again.
 
 If the gate fails, show the blockers and stop. Merge anyway only if the user explicitly says to. When `merge_guard: on` is set, the PreToolUse hook denies the merge command while the gate fails; after the user's explicit choice, prefix the merge command with `CCMAGIC_MERGE_OVERRIDE=1`.
 
 Conflicts are reported by the gate from GitHub's own mergeability check. Do not test for conflicts by running `git merge` in the working checkout.
 
-The `ccm-*` scripts are also on the Bash `PATH` while the plugin is enabled. If the `${CLAUDE_SKILL_DIR}/../../bin/` path doesn't resolve (for example, the variable wasn't expanded), call them by bare name: `ccm-merge-gate`, `ccm-ci-status`.
+The `ccm-*` scripts are also on the Bash `PATH` while the plugin is enabled. If the `${CLAUDE_PLUGIN_ROOT}/bin/` path doesn't resolve (for example, the variable wasn't expanded), call them by bare name: `ccm-merge-gate`, `ccm-ci-status`.
 
 ### GitLab / Bitbucket
 

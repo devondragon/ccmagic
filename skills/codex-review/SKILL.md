@@ -1,7 +1,7 @@
 ---
 name: codex-review
 user-invocable: true
-allowed-tools: Read(*), Write(*), Bash(*), Bash(${CLAUDE_SKILL_DIR}/../../bin/ccm-external-review *), Glob(*), Grep(*), Task(*), TodoWrite(*), AskUserQuestion(*)
+allowed-tools: Read(*), Write(*), Bash(*), Bash(${CLAUDE_PLUGIN_ROOT}/bin/ccm-external-review *), Bash(ccm-external-review *), Glob(*), Grep(*), Task(*), TodoWrite(*), AskUserQuestion(*)
 description: Multi-model code review (Codex + Gemini + Claude triage) with dimension-focused passes
 argument-hint: "[branch|full|PR#] [--model MODEL] [--focus DIMENSION] [--threshold N]"
 model: sonnet
@@ -31,10 +31,10 @@ Parse `$ARGUMENTS`:
 `ccm-external-review` runs every external pass (Step 4) and decides which tools can run. Ask it first, before doing any scoping work; `--check` runs nothing:
 
 ```bash
-"${CLAUDE_SKILL_DIR}/../../bin/ccm-external-review" --check
+"${CLAUDE_PLUGIN_ROOT}/bin/ccm-external-review" --check
 ```
 
-The script is also on the Bash `PATH` as `ccm-external-review` while the plugin is enabled; use the bare name if the `${CLAUDE_SKILL_DIR}` path doesn't resolve. It prints `{tools: [{tool, available, reason?}]}`. A tool with `available: false` carries a `reason`: the CLI is not on `PATH`, or neither `timeout` nor `gtimeout` is installed. In the second case print the reason (it says `brew install coreutils`) and run with Claude-side analysis only; an unbounded external CLI call is the stall the deadline exists to prevent.
+The script is also on the Bash `PATH` as `ccm-external-review` while the plugin is enabled; use the bare name if the `${CLAUDE_PLUGIN_ROOT}` path doesn't resolve. It prints `{tools: [{tool, available, reason?}]}`. A tool with `available: false` carries a `reason`: the CLI is not on `PATH`, or neither `timeout` nor `gtimeout` is installed. In the second case print the reason (it says `brew install coreutils`) and run with Claude-side analysis only; an unbounded external CLI call is the stall the deadline exists to prevent.
 
 **Tool availability determines the review strategy:**
 - **Both available**: Run Codex + Gemini in parallel, Claude triages and reconciles. Multi-model agreement boosts confidence.
@@ -165,7 +165,7 @@ One call runs every selected dimension through every available tool (Step 1), in
 
 ```bash
 # Branch mode
-"${CLAUDE_SKILL_DIR}/../../bin/ccm-external-review" --tools {codex,gemini} --dimensions {dim,dim,...} \
+"${CLAUDE_PLUGIN_ROOT}/bin/ccm-external-review" --tools {codex,gemini} --dimensions {dim,dim,...} \
   [--conventions {RUN_DIR}/conventions.md] [--model MODEL]
 # PR mode: add --pr {N}
 # Full mode: add one --module {name}={RUN_DIR}/codex-module-{name}.txt per module
