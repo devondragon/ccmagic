@@ -242,7 +242,7 @@ Each agent receives:
 - The actual diff or file contents
 - The `{PROJECT_CONVENTIONS}` string
 - Instructions to use the finding schema exactly
-- The **Universal reporting rules (all agents)** section from agent-instructions.md, prepended verbatim
+- The **Universal reporting rules (all agents)** and **Scratch programs** sections from agent-instructions.md, prepended verbatim
 
 ### Conditional Specialist Agents
 
@@ -328,6 +328,7 @@ For each Critical/High finding that survived, launch a parallel **verification E
 - Checks if issue is mitigated elsewhere (middleware, callers, error handlers)
 - Attempts to construct concrete triggering scenario
 - Returns verdict: **CONFIRMED** / **MITIGATED** / **FALSE_POSITIVE**
+- Runs any scratch program under the limits in `## Scratch programs` of `agent-instructions.md` (60-second `timeout`, smallest input, cite rather than re-measure); pass it the measurements already in the finding
 
 This is a fan-out like any other — apply the Step 3.9 collection protocol here too, with its own deadline stamped at dispatch. A verification agent that never reports must not hold the report hostage.
 

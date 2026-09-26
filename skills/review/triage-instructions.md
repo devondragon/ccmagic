@@ -21,6 +21,10 @@ You are verifying a single code review finding. Your job is to determine whether
 4. **Check middleware/interceptors** — for web frameworks, is there middleware that handles this concern (auth, validation, error handling)?
 5. **Construct a triggering scenario** — can you describe specific input or state that actually reaches the vulnerable/buggy code path? If every path is guarded, the finding is mitigated.
 
+### Scratch programs
+
+If you write and run code to confirm the finding, follow `## Scratch programs` in `agent-instructions.md`. In short: wrap it in `timeout -k 5 60` (`gtimeout -k 5 60` on macOS, or `perl -e 'alarm shift; exec @ARGV' 60 <cmd>`), report a timeout as evidence instead of retrying with a longer limit, use the smallest input that shows the behavior (for a complexity claim, time two or three small sizes and extrapolate), and if the finding already includes a measurement from another agent, cite it instead of re-measuring. A performance or ReDoS finding should take you under 2 minutes to confirm.
+
 ### Verdicts
 
 **CONFIRMED** — The finding is real. The code has the reported issue and it is reachable.
@@ -67,7 +71,7 @@ Before verification, merge findings that refer to the same issue:
 - Only for **Critical** and **High** findings that survived deduplication and threshold
 - Launch in parallel, one Explore agent per finding
 - Cap at 4 concurrent verification agents. If more than 4 findings need verification, batch them (4 at a time)
-- Each agent receives the verification prompt template above with the specific finding injected
+- Each agent receives the verification prompt template above with the specific finding injected, including any timings or growth measurements the reporting agents gave, so the verifier can cite them instead of re-measuring
 
 ### 4. Process Verification Results
 - **CONFIRMED**: keep the finding with its original (or adjusted) severity. Add "[Verified]" tag.
