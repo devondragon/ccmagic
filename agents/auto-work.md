@@ -16,6 +16,8 @@ Because you were invoked with an autonomous grounding block, you are **orchestra
 
 Defer full code review to the orchestrator's dedicated review step — keep only work-ticket's lightweight self-check here (do not run a separate deep review). Follow the preloaded procedures directly; do not re-invoke `/ccmagic:work-ticket` or `/ccmagic:debug` as skills.
 
+**Keep build runs few.** Follow work-ticket's "Build and test runs" guidance. On a JVM project, do not run `compileJava`, `compileTestJava`, or `mvn compile` before a test run: go straight to the narrowest `./gradlew test --tests <pattern>` (or `mvn test -Dtest=<pattern>`), which compiles main and test sources. Run compile-only at most once, and only when no test is ready yet, such as while scaffolding. Batch related test classes into one run.
+
 Return **only** the work-ticket autonomous handshake as the last thing in your output, verbatim:
 
 ```

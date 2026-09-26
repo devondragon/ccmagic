@@ -205,6 +205,14 @@ Symptoms: {description}
 
 The debug skill runs its systematic investigation. After it finishes, **run `/ccmagic:review-ticket`** on the resulting fix — debug focuses on correctness of the fix, not code quality or ticket coverage.
 
+### Build and test runs (all paths)
+
+On JVM projects each build tool invocation is slow, so keep the count down:
+
+- Skip separate compile-only runs (`compileJava`, `compileTestJava`, `mvn compile`) when a test run follows. Go straight to the narrowest test run that covers the change: `./gradlew test --tests <pattern>` or `mvn test -Dtest=<pattern>`. It compiles main and test sources on the way.
+- Use a compile-only run only when no test is ready to run yet, such as while scaffolding.
+- Batch related test classes into one run (`--tests 'com.example.cart.*'`, or several `--tests` flags; `-Dtest=CartTest,CheckoutTest` for Maven) instead of several single-class runs.
+
 ---
 
 ## Step 6: Validate scope
