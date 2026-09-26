@@ -23,7 +23,7 @@ You are verifying a single code review finding. Your job is to determine whether
 
 ### Scratch programs
 
-If you write and run code to confirm the finding, follow `## Scratch programs` in `agent-instructions.md`. In short: wrap it in `timeout 60` (`gtimeout 60` on macOS, or `perl -e 'alarm shift; exec @ARGV' 60 <cmd>`), report a timeout as evidence instead of retrying with a longer limit, use the smallest input that shows the behavior (for a complexity claim, time two or three small sizes and extrapolate), and if the finding already includes a measurement from another agent, cite it instead of re-measuring. A performance or ReDoS finding should take you under 2 minutes to confirm.
+If you write and run code to confirm the finding, follow `## Scratch programs` in `agent-instructions.md`. In short: wrap it in `timeout -k 5 60` (`gtimeout -k 5 60` on macOS, or `perl -e 'alarm shift; exec @ARGV' 60 <cmd>`), report a timeout as evidence instead of retrying with a longer limit, use the smallest input that shows the behavior (for a complexity claim, time two or three small sizes and extrapolate), and if the finding already includes a measurement from another agent, cite it instead of re-measuring. A performance or ReDoS finding should take you under 2 minutes to confirm.
 
 ### Verdicts
 

@@ -20,7 +20,7 @@ These rules bind every agent in this file — core, specialist, and full-codebas
 
 These limits bind every agent that writes and runs a scratch program (a repro script, a test harness, a benchmark) to confirm a finding: every agent in this file, the Step 5c verification agents (`triage-instructions.md`), and any other step that points here. Include this section in each such agent's prompt.
 
-1. **Hard timeout of 60 seconds.** Run every scratch program as `timeout 60 <cmd>`. On macOS without GNU coreutils, use `gtimeout 60 <cmd>`, or `perl -e 'alarm shift; exec @ARGV' 60 <cmd>` if neither exists. Never start a scratch program without one of these wrappers.
+1. **Hard timeout of 60 seconds.** Run every scratch program as `timeout -k 5 60 <cmd>`; the `-k 5` sends SIGKILL 5 seconds after the SIGTERM, for a program that ignores SIGTERM. On macOS without GNU coreutils, use `gtimeout -k 5 60 <cmd>`, or `perl -e 'alarm shift; exec @ARGV' 60 <cmd>` if neither exists. Never start a scratch program without one of these wrappers.
 2. **A timeout is evidence.** Report it as a result, for example "does not terminate within 60 s on input X". Do not rerun with a longer limit.
 3. **Smallest input that shows the behavior.** For a complexity claim (ReDoS, quadratic loop, N+1), time two or three small sizes (for example n = 1,000, 2,000, 4,000), report the growth rate, and extrapolate to the large case instead of running it.
 4. **Do not re-measure.** If another agent in the same review pass already measured the behavior (the finding's evidence includes timings or a growth curve), cite that measurement instead of running your own. Run a program only to answer a question the existing measurement leaves open, under the same limits.
