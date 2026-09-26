@@ -109,7 +109,7 @@ Which values each sub-skill can emit:
 | `push` | `done` \| `needs-human` |
 | `finish-ticket` | `done` \| `needs-human` (with `merge_owner: reeve`, `done` carries `reason: handed off to reeve; ...` and the PR is not merged) |
 
-On a fix pass (§2) the work step's report carries two fenced sections just **before** the handshake block, so the handshake stays last:
+On a fix pass (§2) the work step's report carries an `applied_findings:` section and, when there is something to note, a `commit_notes:` section, both fenced and just **before** the handshake block, so the handshake stays last:
 
 ```
 applied_findings:
