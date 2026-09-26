@@ -2,6 +2,25 @@
 
 All notable changes to ccmagic are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.13.4] - 2026-09
+
+### Added
+
+- `tests/relay-smoke.sh`: a manual end-to-end test of the prompt-relay flow. It runs `/ccmagic:auto-ticket` with the Cyrus prompt template against a private sandbox repo, with no Linear MCP, and checks the handoff file, the PR, and that the final message reproduces the relay block verbatim. See `docs/cyrus-deployment.md` (#58).
+
+### Changed
+
+- `auto-ticket` no longer edits code. Review findings (Step 3) and failed local checks (Step 4b) go back to the work step's agent (`auto-work`, on opus) as a fix pass, with `fix_pass:`, `fix_source:`, and a `findings_to_fix:` section in the grounding block. The fix pass applies only the listed items, fixes a `systemic:` finding as a class, applies contract §9 to security and invariant findings, and leaves its changes uncommitted. It reports `applied_findings:`, which becomes the re-review's `previous_findings:`, and optional `commit_notes:` lines (`- {file}: {note}`), which `push` writes into the commit body. `auto-ticket` drops `Edit`, `Write`, and `Bash(timeout:*, gtimeout:*)` from `allowed-tools`; `work-ticket` gains `Bash(timeout:*, gtimeout:*)` (#57).
+
+### Fixed
+
+- A finding still open after a fix pass is resent with its full text from the report that first raised it, including its Reproduction. Delta reports list surviving findings as one-liners only (#57).
+- The orchestrator checks the git state around each fix pass and parks a pass that committed, switched branch, or changed no files (#57).
+- `validate` reports a `failures:` section (command, exit code, log path, and the relevant output lines) for the fix pass. A validate `needs-human` that isn't a check failure, such as a crash, parks instead of starting a fix pass (#57).
+- The SubagentStop hook's send-back asks for the full report, so a restated fix pass keeps its `applied_findings:` section (#57).
+- A parked run lists any uncommitted files it left in the working tree in the parked comment (#57).
+- `auto-ticket` grants `Bash(rm -f .ccmagic-ticket.md)`, so it can delete the prompt-relay handoff file as Step 0 says (#58).
+
 ## [3.13.3] - 2026-09
 
 Fixes from the AIE-303 `/ccmagic:auto-ticket` run, which spent about 17 minutes of a 31-minute review pass on hung or oversized repro programs, two extra fix and review cycles on a security fix, and about 5 minutes on compile-only Gradle runs.
