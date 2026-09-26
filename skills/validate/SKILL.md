@@ -1,7 +1,7 @@
 ---
 name: validate
 user-invocable: true
-allowed-tools: Read(*), Bash(*), Bash(${CLAUDE_SKILL_DIR}/../../bin/ccm-validate *), Glob(*), Task(*), TodoWrite(*)
+allowed-tools: Read(*), Bash(*), Bash(${CLAUDE_PLUGIN_ROOT}/bin/ccm-validate *), Bash(ccm-validate *), Glob(*), Task(*), TodoWrite(*)
 description: Pre-commit validation that runs the project's format, lint, type, test, and build checks and reports pass or fail
 model: sonnet
 context: fork
@@ -15,14 +15,14 @@ Comprehensive pre-commit validation to ensure code quality, tests pass, and chan
 
 `ccm-validate` resolves and runs the checks: `format`, `lint`, `types`, `test`, `build`, in that order. Each check has at most one command, from the config key `validate_<check>` in `ccmagic.local.md` (`none` disables it) or, when the key is absent, detected from `package.json` scripts, `Makefile` targets, Gradle or Maven builds, `go.mod`, `Cargo.toml`, or `pyproject.toml`. When a Gradle (`build.gradle*`, `settings.gradle*`) or Maven (`pom.xml`) build exists, it is the primary build: it supplies `test` and `build` (Gradle: `./gradlew test` and `./gradlew build`; Maven: `./mvnw -B test` and `./mvnw -B verify`; `gradle` or `mvn` without a wrapper) ahead of `package.json` and the `Makefile`, which still supply `format`, `lint`, and `types`. The command's exit code is the verdict. **Do not pick, substitute, or chain commands yourself, and do not re-judge a result**: a check the script reports `failed` has failed, even if the output looks harmless.
 
-The script is also on the Bash `PATH` as `ccm-validate` while the plugin is enabled; use the bare name if the `${CLAUDE_SKILL_DIR}` path doesn't resolve.
+The script is also on the Bash `PATH` as `ccm-validate` while the plugin is enabled; use the bare name if the `${CLAUDE_PLUGIN_ROOT}` path doesn't resolve.
 
 ## Implementation Steps
 
 ### 1. List the checks
 
 ```bash
-"${CLAUDE_SKILL_DIR}/../../bin/ccm-validate" --list
+"${CLAUDE_PLUGIN_ROOT}/bin/ccm-validate" --list
 ```
 
 It prints `{status, timeout_seconds, checks: [{name, command, source, status, reason?}]}` without running anything. `status: planned` checks will run; `skipped` checks carry a `reason` ("not configured" or "disabled in config"). Show the plan to the user as a short table. If the top-level `status` is `nothing-to-run` (exit 2), skip to the report: there is nothing to run, and the user can add `validate_*` keys to `.claude/ccmagic.local.md`.
@@ -32,7 +32,7 @@ It prints `{status, timeout_seconds, checks: [{name, command, source, status, re
 For each check with `status: planned`, in the listed order:
 
 ```bash
-"${CLAUDE_SKILL_DIR}/../../bin/ccm-validate" --only <check>
+"${CLAUDE_PLUGIN_ROOT}/bin/ccm-validate" --only <check>
 ```
 
 Give each call the maximum Bash tool timeout (600000 ms). One call per check keeps each under the tool's 10-minute limit; the script enforces its own `validate_timeout_seconds` limit (default 540, which leaves room to report before the tool's limit) and reports a check that hits it as `failed` with reason "timed out". If the output has a `note`, no `timeout` binary was found and the checks ran unbounded; repeat the note in the report. If the Bash call itself times out and prints no JSON, count that check as failed with reason "timed out".

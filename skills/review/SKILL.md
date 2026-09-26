@@ -1,7 +1,7 @@
 ---
 name: review
 user-invocable: true
-allowed-tools: Read(*), Edit(*), Bash(git diff:*, git log:*, git status:*, git branch:*, git show:*, git rev-parse:*, git merge-base:*, git ls-files:*, git blame:*, gh pr view:*, gh pr diff:*, gh pr list:*, gh repo view:*, codex:*, which:*, command:*, timeout:*, gtimeout:*, echo:*, date:*, mktemp:*), Bash(${CLAUDE_SKILL_DIR}/../../bin/ccm-review-route *), Bash(${CLAUDE_SKILL_DIR}/../../bin/ccm-external-review *), Glob(*), Grep(*), Agent(*), Task(*), TodoWrite(*), AskUserQuestion(*), mcp__pal__codereview(*)
+allowed-tools: Read(*), Edit(*), Bash(git diff:*, git log:*, git status:*, git branch:*, git show:*, git rev-parse:*, git merge-base:*, git ls-files:*, git blame:*, gh pr view:*, gh pr diff:*, gh pr list:*, gh repo view:*, codex:*, which:*, command:*, timeout:*, gtimeout:*, echo:*, date:*, mktemp:*), Bash(${CLAUDE_PLUGIN_ROOT}/bin/ccm-review-route *), Bash(ccm-review-route *), Bash(${CLAUDE_PLUGIN_ROOT}/bin/ccm-external-review *), Bash(ccm-external-review *), Glob(*), Grep(*), Agent(*), Task(*), TodoWrite(*), AskUserQuestion(*), mcp__pal__codereview(*)
 description: Use when the user asks for a code review of a change, diff, branch, or PR, including a diff pasted inline and phrasings like "review this before I open the PR", "can you code review this?", or "look over this change". Auto-routes between a fast inline checklist (QUICK) and the full multi-agent pipeline (DEEP), biased toward depth, with confidence scoring and convention awareness.
 argument-hint: "[branch|full|PR#] [--quick|--deep] [--fix] [--threshold N]"
 model: sonnet
@@ -47,14 +47,14 @@ If on `main` with no changes and no argument:
 In branch and PR mode, always run the router script and act on its JSON. It applies the routing rules (QUICK only for at most 2 files and 50 changed lines, no risk-path match, no new type declaration, no error-flow change; `-h` prints them) and reads the review stats. Do not count files or lines or check paths yourself.
 
 ```bash
-"${CLAUDE_SKILL_DIR}/../../bin/ccm-review-route"      # branch mode (main...HEAD)
-"${CLAUDE_SKILL_DIR}/../../bin/ccm-review-route" 42   # PR mode
-TMPPREFIX="${TMPDIR:-/tmp}/zsh"; "${CLAUDE_SKILL_DIR}/../../bin/ccm-review-route" --diff-file - <<'CCM_DIFF_END'
+"${CLAUDE_PLUGIN_ROOT}/bin/ccm-review-route"      # branch mode (main...HEAD)
+"${CLAUDE_PLUGIN_ROOT}/bin/ccm-review-route" 42   # PR mode
+"${CLAUDE_PLUGIN_ROOT}/bin/ccm-review-route" --diff-file - <<'CCM_DIFF_END'
 <the pasted diff, verbatim, when there is no checkout>
 CCM_DIFF_END
 ```
 
-The script is also on the Bash `PATH` as `ccm-review-route`; use the bare name if the `${CLAUDE_SKILL_DIR}` path doesn't resolve. The `TMPPREFIX=` assignment keeps zsh (the default macOS shell) writing its heredoc temp file under `$TMPDIR`; without it zsh uses `/tmp`, which a sandboxed Bash may refuse, and the heredoc fails before the script runs. It is harmless in bash. Keep its `gated` list for Step 3. Exit 3 means it couldn't read the diff: route DEEP and print `Routing → DEEP, reason: router failed: <error>`.
+The script is also on the Bash `PATH` as `ccm-review-route`; use the bare name if the `${CLAUDE_PLUGIN_ROOT}` path doesn't resolve. If the heredoc fails before the script runs because zsh (the default macOS shell) can't write its temp file under `/tmp` in a sandboxed Bash, run it again prefixed with `TMPPREFIX="${TMPDIR:-/tmp}/zsh"; `, which moves that file under `$TMPDIR`. Don't use the prefix by default: a session with only narrow Bash grants refuses the expansion ("Contains expansion"). Keep its `gated` list for Step 3. Exit 3 means it couldn't read the diff: route DEEP and print `Routing → DEEP, reason: router failed: <error>`.
 
 Then pick the route, first match wins:
 
@@ -290,7 +290,7 @@ After the review completes, record the counts as in Step 7d.
 
 Load `${CLAUDE_SKILL_DIR}/codex-pass.md` and follow it. It covers running the pass with `ccm-external-review` and acting on the status it reports.
 
-In short: run `"${CLAUDE_SKILL_DIR}/../../bin/ccm-external-review" --tools codex --dimensions adversarial` (bare name `ccm-external-review` also works; plugin `bin/` is on `PATH`) in the background alongside the Step 3 agents in an interactive run, or in the foreground with a 600000 ms timeout when running autonomously. The script checks availability, bounds the pass with `timeout --kill-after=30 300`, and classifies it by exit status; act on its `status` rather than re-deriving it. Codex is additive and never blocking — every failure mode continues the review with Explore agent findings only.
+In short: run `"${CLAUDE_PLUGIN_ROOT}/bin/ccm-external-review" --tools codex --dimensions adversarial` (bare name `ccm-external-review` also works; plugin `bin/` is on `PATH`) in the background alongside the Step 3 agents in an interactive run, or in the foreground with a 600000 ms timeout when running autonomously. The script checks availability, bounds the pass with `timeout --kill-after=30 300`, and classifies it by exit status; act on its `status` rather than re-deriving it. Codex is additive and never blocking — every failure mode continues the review with Explore agent findings only.
 
 ---
 
@@ -462,7 +462,7 @@ Create **TodoWrite** entries for all remaining (unfixed) findings, grouped by se
 
 ### 7d. Update review stats
 
-If conditional specialists were dispatched, record one entry per dispatched specialist with its finding count, for example `"${CLAUDE_SKILL_DIR}/../../bin/ccm-review-route" --record testing=3,performance=0`. The script adds 1 dispatch and the findings to `context/review-stats.json`. Skip this when no specialist was dispatched.
+If conditional specialists were dispatched, record one entry per dispatched specialist with its finding count, for example `"${CLAUDE_PLUGIN_ROOT}/bin/ccm-review-route" --record testing=3,performance=0`. The script adds 1 dispatch and the findings to `context/review-stats.json`. Skip this when no specialist was dispatched.
 
 ## Step 8: Handle Disputed Findings
 

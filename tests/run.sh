@@ -1649,12 +1649,71 @@ extreview_prompt_shape_and_conventions() {
   grep -qx "Use tabs." "$T/codex.stdin"
 }
 
+# ---- skill grants ----------------------------------------------------------
+
+# allowed_tools FILE: the skill's allowed-tools frontmatter line.
+allowed_tools() { grep -m1 '^allowed-tools:' "$1"; }
+
+# A rule matches only the exact command text, so each ccm-* script a skill
+# grants by path must be granted by bare name too.
+skills_grant_bare_names() {
+  local f line name missing=
+  for f in "$ROOT"/skills/*/SKILL.md; do
+    line=$(allowed_tools "$f")
+    while read -r name; do
+      grep -qF "Bash($name *)" <<<"$line" || missing+=" ${f#"$ROOT"/}:$name"
+    done < <(grep -o 'bin/ccm-[a-z-]*' <<<"$line" | sed 's|bin/||' | sort -u)
+  done
+  check "${missing# }" ""
+}
+
+# The model normalizes a ${CLAUDE_SKILL_DIR}/../../bin path before running it,
+# and the normalized path matches no grant. Skills and agents use
+# ${CLAUDE_PLUGIN_ROOT}/bin instead.
+skills_use_plugin_root_bin() {
+  check "$(grep -rlF 'CLAUDE_SKILL_DIR}/../../bin' "$ROOT/skills" "$ROOT/agents" || true)" ""
+}
+
+# docs/cyrus-deployment.md lists the bare-name rules a harness without plain
+# Bash must grant; tests/relay-smoke.sh --narrow-bash grants every bin/ccm-*.
+skills_harness_rules_list_every_script() {
+  local script name missing=
+  for script in "$BIN"/ccm-*; do
+    name=$(basename "$script")
+    [ "$name" = ccm-lib.sh ] && continue
+    grep -qF "\"Bash($name *)\"" "$ROOT/docs/cyrus-deployment.md" || missing+=" $name"
+  done
+  check "${missing# }" ""
+}
+
+# A skill without plain Bash(*) must grant every ccm-* script its files call:
+# by bare name for a command line starting with it, and by path too for a
+# ${CLAUDE_PLUGIN_ROOT}/bin/ccm-x call. Support files a skill loads count.
+skills_grant_called_scripts() {
+  local dir line call name missing=
+  for dir in "$ROOT"/skills/*/; do
+    line=$(allowed_tools "$dir/SKILL.md")
+    grep -qF 'Bash(*)' <<<"$line" && continue
+    while read -r call; do
+      name=${call##*/}
+      name=${name##*[[:space:]]}
+      [ -x "$BIN/$name" ] || continue
+      grep -qF "Bash($name *)" <<<"$line" || missing+=" ${dir#"$ROOT"/}:$name"
+      case $call in
+        bin/*) grep -qF "Bash(\${CLAUDE_PLUGIN_ROOT}/bin/$name *)" <<<"$line" || missing+=" ${dir#"$ROOT"/}:path:$name" ;;
+      esac
+    done < <(for f in "$dir"*.md; do sed '1,/^---$/{/^allowed-tools:/d;}' "$f"; done |
+      grep -oE 'bin/ccm-[a-z-]+|^[[:space:]]*ccm-[a-z-]+' | sort -u)
+  done
+  check "${missing# }" ""
+}
+
 # ---- run -------------------------------------------------------------------
 
 MIRRORS=$(mktemp -d)
 trap 'rm -rf "$MIRRORS"' EXIT
 
-for fn in $(declare -F | awk '{print $3}' | grep -E '^(context|ci|merge_gate|guard|post|postreview|stop|threads|reply|validate|route|doctor|extreview)_'); do
+for fn in $(declare -F | awk '{print $3}' | grep -E '^(context|ci|merge_gate|guard|post|postreview|stop|threads|reply|validate|route|doctor|extreview|skills)_'); do
   t "$fn" "$fn"
 done
 

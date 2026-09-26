@@ -1,7 +1,7 @@
 ---
 name: doctor
 user-invocable: true
-allowed-tools: Read(*), Glob(*), Bash(*), Bash(${CLAUDE_SKILL_DIR}/../../bin/ccm-doctor *)
+allowed-tools: Read(*), Glob(*), Bash(*), Bash(${CLAUDE_PLUGIN_ROOT}/bin/ccm-doctor *), Bash(ccm-doctor *)
 description: Diagnose CCMagic setup issues and validate installation
 model: sonnet
 context: fork
@@ -18,10 +18,10 @@ Run all steps, then produce the report at the end. Don't stop on the first failu
 ### 1. Run the checks script
 
 ```bash
-"${CLAUDE_SKILL_DIR}/../../bin/ccm-doctor"
+"${CLAUDE_PLUGIN_ROOT}/bin/ccm-doctor"
 ```
 
-The script is also on the Bash `PATH` as `ccm-doctor` while the plugin is enabled; use the bare name if the `${CLAUDE_SKILL_DIR}` path doesn't resolve. In quick mode (below) run it with `--quick`.
+The script is also on the Bash `PATH` as `ccm-doctor` while the plugin is enabled; use the bare name if the `${CLAUDE_PLUGIN_ROOT}` path doesn't resolve. In quick mode (below) run it with `--quick`.
 
 It prints one JSON object per line: `{level, area, message, fix}`, where `level` is `OK`, `WARN`, `INFO` or `FAIL`, and `fix` is one next step or `null`. The areas are:
 

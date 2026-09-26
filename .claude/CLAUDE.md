@@ -171,7 +171,7 @@ context: fork                  # For heavy skills (subagent isolation)
 
 Scripts and hooks: `bash tests/run.sh` (add a case there for any change to `bin/` or `hooks/`), and `shellcheck -x bin/ccm-* hooks/*.sh tests/run.sh tests/relay-smoke.sh tests/stubs/gh evals/run.sh`. CI runs both, with Ubuntu's shellcheck 0.9.0, which flags some rules newer versions don't; to match it locally: `docker run --rm -v "$PWD:/mnt" -w /mnt koalaman/shellcheck:v0.9.0 -x bin/ccm-* hooks/*.sh tests/run.sh tests/relay-smoke.sh tests/stubs/gh evals/run.sh`. CI's jq is 1.7; to run the tests as CI does: `docker run --rm -v "$PWD:/src:ro" ubuntu:24.04 bash -c 'apt-get update -qq && apt-get install -y -qq jq git perl >/dev/null && cp -r /src /w && cd /w && git config --global --add safe.directory "*" && bash tests/run.sh'`.
 
-When a rule has exactly one right answer (a CI verdict, a config value, a merge precondition), put it in a `bin/ccm-*` script or a hook, and have the skill call the script and act on its JSON. Keep judgment in the skill. Skills reference scripts as `"${CLAUDE_SKILL_DIR}/../../bin/ccm-<name>"`, grant that path in `allowed-tools`, and say the bare name works too (plugin `bin/` is on `PATH`), for contexts where the variable isn't expanded.
+When a rule has exactly one right answer (a CI verdict, a config value, a merge precondition), put it in a `bin/ccm-*` script or a hook, and have the skill call the script and act on its JSON. Keep judgment in the skill. Skills reference scripts as `"${CLAUDE_PLUGIN_ROOT}/bin/ccm-<name>"`, grant both that path and the bare name in `allowed-tools` (`Bash(${CLAUDE_PLUGIN_ROOT}/bin/ccm-<name> *), Bash(ccm-<name> *)`), and say the bare name works too (plugin `bin/` is on `PATH`). A rule matches only the exact command text, so in a session without plain `Bash` a bare-name call needs the bare-name grant. Use `${CLAUDE_PLUGIN_ROOT}`, not `${CLAUDE_SKILL_DIR}/../..`: the model tends to normalize a `../..` path before running it, and the normalized path matches neither rule. Avoid `$VAR` or `${VAR}` expansions in commands the skill prescribes; narrow grants refuse them ("Contains expansion").
 
 ```bash
 # Test the plugin locally
@@ -205,5 +205,5 @@ claude --plugin-dir ./
 - Consider token usage when designing skills that read many files.
 - `$ARGUMENTS` works in skills for dynamic values.
 - `${CLAUDE_SKILL_DIR}` references supporting files in the skill directory.
-- `${CLAUDE_PLUGIN_ROOT}` references the plugin root (used in `hooks/hooks.json`).
+- `${CLAUDE_PLUGIN_ROOT}` references the plugin root (used in `hooks/hooks.json` and in skills' `bin/ccm-*` call sites and grants).
 - The `agents/auto-*.md` step agents have no tracker access: in an `/ccmagic:auto-ticket` run the orchestrator does every tracker read and write (`skills/auto-ticket/autonomous-contract.md` §8). Keep their "Returning your report" and "No tracker access" paragraphs identical across all six agents.

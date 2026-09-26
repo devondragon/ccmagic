@@ -1,7 +1,7 @@
 ---
 name: pr-feedback
 user-invocable: true
-allowed-tools: Read(*), Bash(git:*, gh:*, timeout:*, gtimeout:*), Write(*), Bash(${CLAUDE_SKILL_DIR}/../../bin/ccm-context *), Bash(${CLAUDE_SKILL_DIR}/../../bin/ccm-pr-threads *), Bash(${CLAUDE_SKILL_DIR}/../../bin/ccm-pr-reply *), Glob(*), Grep(*), Task(*), TodoWrite(*), AskUserQuestion(*), Edit(*), Skill(*)
+allowed-tools: Read(*), Bash(git:*, gh:*, timeout:*, gtimeout:*), Write(*), Bash(${CLAUDE_PLUGIN_ROOT}/bin/ccm-context *), Bash(ccm-context *), Bash(${CLAUDE_PLUGIN_ROOT}/bin/ccm-pr-threads *), Bash(ccm-pr-threads *), Bash(${CLAUDE_PLUGIN_ROOT}/bin/ccm-pr-reply *), Bash(ccm-pr-reply *), Glob(*), Grep(*), Task(*), TodoWrite(*), AskUserQuestion(*), Edit(*), Skill(*)
 description: Review PR comments and plan fixes for valid concerns
 model: sonnet
 argument-hint: "[PR#]"
@@ -40,10 +40,10 @@ Collect into `{PROJECT_CONVENTIONS}`. These are used in Step 4 to evaluate wheth
 Retrieve all feedback with one call:
 
 ```bash
-"${CLAUDE_SKILL_DIR}/../../bin/ccm-pr-threads" {PR_NUMBER}
+"${CLAUDE_PLUGIN_ROOT}/bin/ccm-pr-threads" {PR_NUMBER}
 ```
 
-(The script is also on the Bash `PATH` as `ccm-pr-threads` while the plugin is enabled; use the bare name if the `${CLAUDE_SKILL_DIR}` path doesn't resolve.)
+(The script is also on the Bash `PATH` as `ccm-pr-threads` while the plugin is enabled; use the bare name if the `${CLAUDE_PLUGIN_ROOT}` path doesn't resolve.)
 
 It prints JSON with:
 
@@ -222,7 +222,7 @@ Autonomous mode is ON when the first present signal (in priority order) resolves
 
 Absent all three, run the interactive plan-only path exactly as documented above.
 
-**Tracker for follow-ups.** Reuse `tracker:` / `ticket:` / `transport:` if the grounding block carries them (trust the grounding block's `transport:` rather than re-detecting). Otherwise run `"${CLAUDE_SKILL_DIR}/../../bin/ccm-context"` (bare `ccm-context` works too, since plugin `bin/` is on `PATH`) and read its JSON: `config.tracker` when it is pinned (`linear`, `github`, or `jira`), else `tracker_hint` (from the ticket ID parsed from the branch, and `config.ticket_url_base`), `gh_available`, and `config.github_repo`. Do not re-read the config files or re-parse the branch. The MCP probe and the rest of the cascade stay as in `/ccmagic:work-ticket` Step 0b, because a shell can't see MCP servers. **Under prompt-relay** (contract §7), **or when orchestrated** (`orchestrator:` in the grounding block, contract §8, any transport): skip tracker resolution for follow-ups, because this skill files no tickets there; see the defer/out-of-scope rule below for how deferred items are recorded instead. **Orchestrated vs. standalone** works as in `/ccmagic:work-ticket` → *Autonomous mode*.
+**Tracker for follow-ups.** Reuse `tracker:` / `ticket:` / `transport:` if the grounding block carries them (trust the grounding block's `transport:` rather than re-detecting). Otherwise run `"${CLAUDE_PLUGIN_ROOT}/bin/ccm-context"` (bare `ccm-context` works too, since plugin `bin/` is on `PATH`) and read its JSON: `config.tracker` when it is pinned (`linear`, `github`, or `jira`), else `tracker_hint` (from the ticket ID parsed from the branch, and `config.ticket_url_base`), `gh_available`, and `config.github_repo`. Do not re-read the config files or re-parse the branch. The MCP probe and the rest of the cascade stay as in `/ccmagic:work-ticket` Step 0b, because a shell can't see MCP servers. **Under prompt-relay** (contract §7), **or when orchestrated** (`orchestrator:` in the grounding block, contract §8, any transport): skip tracker resolution for follow-ups, because this skill files no tickets there; see the defer/out-of-scope rule below for how deferred items are recorded instead. **Orchestrated vs. standalone** works as in `/ccmagic:work-ticket` → *Autonomous mode*.
 
 ### What changes: triage → execute
 
@@ -233,12 +233,11 @@ Run Steps 1–5 exactly as written (load conventions, fetch threads, classify, v
 3. **Push**: invoke `/ccmagic:push` with the autonomous grounding block prepended (it commits the grouped fixes and pushes; if push returns `needs-human`, propagate that and skip step 4). Replies come after the push because a `fixed` reply must cite a pushed commit.
 4. **Reply on every triaged thread with `ccm-pr-reply`**, using the response templates in `${CLAUDE_SKILL_DIR}/triage-guide.md` for the body. The script appends the disposition marker that `ccm-pr-threads` reads, replies to the thread's root comment, and resolves the thread for `fixed`:
    ```bash
-   R="${CLAUDE_SKILL_DIR}/../../bin/ccm-pr-reply"   # or bare `ccm-pr-reply` on PATH
-   "$R" {PR} {comment_id} --disposition fixed    --commit {sha that fixed it} --body "..."
-   "$R" {PR} {comment_id} --disposition declined --body "..."
-   "$R" {PR} {comment_id} --disposition answered --body "..."
-   "$R" {PR} {comment_id} --disposition deferred --ticket {TICKET-ID} --body "..."
+   ccm-pr-reply {PR} {comment_id} --disposition fixed    --commit {sha that fixed it} --body - <<'CCM_REPLY_EOF'
+   {reply body}
+   CCM_REPLY_EOF
    ```
+   The other dispositions take the same form: `--disposition declined` or `--disposition answered` with no extra flag, and `--disposition deferred --ticket {TICKET-ID}`. Always pass the body on stdin through the quoted heredoc, never as `--body "..."`: a reply quotes review comments, and backticks or `$(...)` inside double quotes run as commands. The bare name works because plugin `bin/` is on `PATH`; if it isn't found, use `"${CLAUDE_PLUGIN_ROOT}/bin/ccm-pr-reply"` as written.
    Find the fixing commit with `git log --format=%H -1 -- {path}` after the push. The `--commit` must touch the thread's file; if the fix landed only in another file, cite a commit that touches the thread's file too, or reply `answered` and explain where the fix is. The thread then stays open for the orchestrator to see, which is the honest state. A non-zero exit means the reply was refused or failed; the thread stays open, and the orchestrator's next pass sees it. Never hand-write the marker or reply with plain `gh api` in autonomous mode: a reply without a marker leaves the thread open by design.
 
    Questions and comments in the general PR conversation (not line threads) get a normal `gh pr comment` reply; they don't count toward open threads.

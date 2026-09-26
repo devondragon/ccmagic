@@ -2,7 +2,7 @@
 name: review-ticket
 description: Ticket-grounded code review. Fetches the ticket from Linear, GitHub Issues, or JIRA, then runs /ccmagic:review with the ticket scope as the primary intent source. Adds an explicit Ticket-scope drift section (in-scope / out-of-scope / missing-from-ticket).
 user-invocable: true
-allowed-tools: Read(*), Bash(git diff:*, git log:*, git status:*, git branch:*, git show:*, git show-ref:*, git rev-parse:*, git merge-base:*, git ls-files:*, gh issue view:*, gh issue comment:*, gh pr view:*, gh pr diff:*, gh pr list:*, gh pr comment:*, gh repo view:*), Bash(${CLAUDE_SKILL_DIR}/../../bin/ccm-context *), Bash(${CLAUDE_SKILL_DIR}/../../bin/ccm-post-review *), Glob(*), Grep(*), Agent(*), Task(*), TodoWrite(*), AskUserQuestion(*), Skill(*)
+allowed-tools: Read(*), Bash(git diff:*, git log:*, git status:*, git branch:*, git show:*, git show-ref:*, git rev-parse:*, git merge-base:*, git ls-files:*, gh issue view:*, gh issue comment:*, gh pr view:*, gh pr diff:*, gh pr list:*, gh pr comment:*, gh repo view:*), Bash(${CLAUDE_PLUGIN_ROOT}/bin/ccm-context *), Bash(ccm-context *), Bash(${CLAUDE_PLUGIN_ROOT}/bin/ccm-post-review *), Bash(ccm-post-review *), Glob(*), Grep(*), Agent(*), Task(*), TodoWrite(*), AskUserQuestion(*), Skill(*)
 argument-hint: "[TICKET-ID] [--threshold N]"
 model: inherit
 ---
@@ -28,10 +28,10 @@ Same cascade as `/ccmagic:work-ticket`:
 
 1. Run `ccm-context`, passing `$1` as the ticket ID when the first argument is present and is not a flag (does not start with `--`):
    ```bash
-   "${CLAUDE_SKILL_DIR}/../../bin/ccm-context" {TICKET-ID}   # first argument present and not a flag
-   "${CLAUDE_SKILL_DIR}/../../bin/ccm-context"        # otherwise
+   "${CLAUDE_PLUGIN_ROOT}/bin/ccm-context" {TICKET-ID}   # first argument present and not a flag
+   "${CLAUDE_PLUGIN_ROOT}/bin/ccm-context"        # otherwise
    ```
-   It prints JSON with the resolved `config` (project `.claude/ccmagic.local.md` over user `~/.claude/ccmagic.local.md` over built-in defaults), `ticket_id`, `ticket_source` (`arg` or `branch`), `ticket_kind`, `tracker_hint`, `gh_available`, `branch`, and `base_branch`. Read `config.tracker`, `config.ticket_url_base`, `config.ticket_id_regex`, and `config.github_repo` from it; do not re-read the config files or re-derive these fields. The script is also on the Bash `PATH` as `ccm-context` while the plugin is enabled; use the bare name if the `${CLAUDE_SKILL_DIR}` path doesn't resolve.
+   It prints JSON with the resolved `config` (project `.claude/ccmagic.local.md` over user `~/.claude/ccmagic.local.md` over built-in defaults), `ticket_id`, `ticket_source` (`arg` or `branch`), `ticket_kind`, `tracker_hint`, `gh_available`, `branch`, and `base_branch`. Read `config.tracker`, `config.ticket_url_base`, `config.ticket_id_regex`, and `config.github_repo` from it; do not re-read the config files or re-derive these fields. The script is also on the Bash `PATH` as `ccm-context` while the plugin is enabled; use the bare name if the `${CLAUDE_PLUGIN_ROOT}` path doesn't resolve.
 
    `ccm-context` does not check an argument against the regex. If `ticket_source` is `arg` and the ID neither matches `config.ticket_id_regex` nor has `ticket_kind: integer`, `$1` was not a ticket ID: rerun `ccm-context` with no argument, so it parses the branch, and use that output from here on.
 2. If `config.tracker` is `auto` or unset, run the detection cascade:
@@ -236,12 +236,12 @@ Absent all three, run the interactive path exactly as documented above. Also rea
 
   Post it with `ccm-post-review`, never with `gh pr comment` directly. It reads the report on stdin, checks the heading and the fenced handshake, and only then posts. Pass the PR number from the Step 0 `ccm-context` output (`pr.number`), or omit it to use the current branch's PR:
   ```bash
-  TMPPREFIX="${TMPDIR:-/tmp}/zsh"; "${CLAUDE_SKILL_DIR}/../../bin/ccm-post-review" {PR} <<'CCM_REVIEW_EOF'
+  "${CLAUDE_PLUGIN_ROOT}/bin/ccm-post-review" {PR} <<'CCM_REVIEW_EOF'
   # Ticket-Grounded Review: {TICKET-ID}
   ...
   CCM_REVIEW_EOF
   ```
-  The script is also on the Bash `PATH` as `ccm-post-review` while the plugin is enabled; use the bare name if the `${CLAUDE_SKILL_DIR}` path doesn't resolve. The `TMPPREFIX=` assignment keeps zsh (the default macOS shell) writing its heredoc temp file under `$TMPDIR`; without it zsh uses `/tmp`, which a sandboxed Bash may refuse, and the heredoc fails before the script runs. It is harmless in bash. Act on its exit code:
+  The script is also on the Bash `PATH` as `ccm-post-review` while the plugin is enabled; use the bare name if the `${CLAUDE_PLUGIN_ROOT}` path doesn't resolve. If the heredoc fails before the script runs because zsh (the default macOS shell) can't write its temp file under `/tmp` in a sandboxed Bash, run it again prefixed with `TMPPREFIX="${TMPDIR:-/tmp}/zsh"; `, which moves that file under `$TMPDIR`. Don't use the prefix by default: a session with only narrow Bash grants refuses the expansion ("Contains expansion"). Act on its exit code:
   - **0:** posted; the JSON has the comment `url`.
   - **1:** refused, nothing posted. `problems` lists what is wrong with the report's format. Fix the report and run it again; do not post it any other way.
   - **3:** the post itself failed (no PR for the branch, GitHub error). Say so in your output and continue. A later delta pass then leans on the grounding block's `previous_findings:` alone (the prior-comment reference is a convenience, not a dependency).

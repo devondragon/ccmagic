@@ -159,7 +159,7 @@ The single routine the orchestrator (or a standalone top-level sub-skill) runs w
    - **JIRA** — transition to the matching status via the Atlassian MCP; if no transition matches, apply `needs_human_label` as a label and leave the status unchanged.
 3. **List uncommitted changes.** Run `git status --porcelain`. A non-empty result is work that was not pushed, such as a fix pass that failed; it goes in the parked comment's **Uncommitted changes** line so a human reviews it before anything re-runs. Leave the files as they are.
 4. **Comment the reason** on both surfaces (skip a surface only if it doesn't exist):
-   - PR comment (`gh pr comment {PR} --body ...`) and ticket comment (`save_comment` / `gh issue comment` / Atlassian MCP), using the parked-comment template below.
+   - PR comment (`gh pr comment {PR} --body-file - <<'CCM_COMMENT_EOF'`, the body on stdin through the quoted heredoc; never a temp file, which a session with narrow Bash grants can't write under `/tmp` or delete from the repo) and ticket comment (`save_comment` / `gh issue comment` / Atlassian MCP), using the parked-comment template below.
 5. **Emit the run's final status** (see the orchestrator's Step 6 summary) and exit cleanly. Never wait for input.
 
 ### Parked-comment template
