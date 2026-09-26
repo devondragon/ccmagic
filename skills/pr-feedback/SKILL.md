@@ -1,7 +1,7 @@
 ---
 name: pr-feedback
 user-invocable: true
-allowed-tools: Read(*), Bash(git:*, gh:*), Bash(${CLAUDE_SKILL_DIR}/../../bin/ccm-context *), Bash(${CLAUDE_SKILL_DIR}/../../bin/ccm-pr-threads *), Bash(${CLAUDE_SKILL_DIR}/../../bin/ccm-pr-reply *), Glob(*), Grep(*), Task(*), TodoWrite(*), AskUserQuestion(*), Edit(*), Skill(*)
+allowed-tools: Read(*), Bash(git:*, gh:*, timeout:*), Write(*), Bash(${CLAUDE_SKILL_DIR}/../../bin/ccm-context *), Bash(${CLAUDE_SKILL_DIR}/../../bin/ccm-pr-threads *), Bash(${CLAUDE_SKILL_DIR}/../../bin/ccm-pr-reply *), Glob(*), Grep(*), Task(*), TodoWrite(*), AskUserQuestion(*), Edit(*), Skill(*)
 description: Review PR comments and plan fixes for valid concerns
 model: sonnet
 argument-hint: "[PR#]"
@@ -228,7 +228,7 @@ Absent all three, run the interactive plan-only path exactly as documented above
 
 Run Steps 1–5 exactly as written (load conventions, fetch threads, classify, verify, detect conflicts, group). Then, instead of building a plan and stopping (Steps 6–7), do these in order:
 
-1. **address-now** → apply the fix with `Edit`, grouped by file per Steps 5–6.
+1. **address-now** → apply the fix with `Edit`, grouped by file per Steps 5–6. For a thread that reports a security issue, or one whose correctness depends on an invariant over untrusted input, follow contract §9 (`skills/auto-ticket/autonomous-contract.md`) before the push: run the reviewer's triggering inputs and any fuzzed or enumerated corpus against the fix within the scratch-program limits (`timeout 60`), and add a property or parameterized test stating the invariant. A fix that still fails those inputs is not pushed or replied to as `fixed`; emit `needs-human` naming the thread and the first failing input.
 2. **defer / out-of-scope** → file **one follow-up ticket per item** in the active tracker (Linear via `mcp__*Linear*__save_issue`, GitHub via `gh issue create`, JIRA via the Atlassian MCP) and record its ID in `follow_ups`. **Under prompt-relay or when orchestrated** (contract §7 `file_followup`, §8): do not file a ticket; record a short description of the item in `follow_ups` (contract §3's handshake accepts "ticket ids or short descriptions"); the reply in step 4 uses `--ticket requested`. The orchestrator files these, or lists them with a reason, in its final summary.
 3. **Push**: invoke `/ccmagic:push` with the autonomous grounding block prepended (it commits the grouped fixes and pushes; if push returns `needs-human`, propagate that and skip step 4). Replies come after the push because a `fixed` reply must cite a pushed commit.
 4. **Reply on every triaged thread with `ccm-pr-reply`**, using the response templates in `${CLAUDE_SKILL_DIR}/triage-guide.md` for the body. The script appends the disposition marker that `ccm-pr-threads` reads, replies to the thread's root comment, and resolves the thread for `fixed`:
