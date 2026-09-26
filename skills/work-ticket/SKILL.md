@@ -334,6 +334,25 @@ Also read these keys from `.claude/ccmagic.local.md`: `needs_human_state:`, `nee
 - **Step 7 (PR confirmation):** create the PR without pausing.
 - **Sub-skills:** when invoking `/ccmagic:review`, `/ccmagic:review-ticket`, `/ccmagic:debug`, or `/ccmagic:push`, prepend the same autonomous grounding block so they don't pause either. Address CRITICAL review findings before proceeding; if a CRITICAL finding can't be resolved in-scope → `needs-human`.
 
+### Fix pass (orchestrated)
+
+When the grounding block carries `fix_pass:`, `/ccmagic:auto-ticket` is sending back findings on the work already in the PR (contract §2, *Fix passes*): review findings from its Step 3 (`fix_source: review`) or failed local checks from its Step 4b (`fix_source: validate`), listed in the `findings_to_fix:` section. Do not re-implement the ticket. Read the ticket from `ticket_content:` for scope, skip Steps 2 to 4 (no classification; stay on the current branch, the PR's head, and create or switch no branch), and in place of Steps 5 to 8:
+
+1. **Apply every listed item, and only those.** For a review finding, apply its fix; for a missing-AC item, close the gap. For a validate failure, fix the cause of the failing check; never disable, skip, or loosen a check or test to make it pass. Change nothing the items don't need.
+2. **Fix a `systemic:` finding as a class.** Apply the fix to every enumerated instance, then re-run the enumeration search yourself, across every mechanism that could carry the pattern and not only the syntax of the reported instance, to catch stragglers. Never point-fix only the reported line.
+3. **Apply contract §9 to a security finding**, or to any finding whose correctness depends on an invariant over untrusted input: run the verifier's triggering inputs (the finding's **Reproduction**) against the fix, rerun any fuzzed or enumerated corpus within the scratch-program limits (`timeout -k 5 60`, or `gtimeout -k 5 60` on macOS; the smallest corpus that shows the behavior), and add a property or parameterized test stating the invariant. If the fix still fails any of those inputs, keep fixing within the pass; if it cannot be made to pass, stop with `needs-human` (the `reason` names the finding and the first failing input, escaped as in `reproduction:`).
+4. **Run the narrowest tests that cover the changes** (see *Build and test runs*), plus the invariant tests from item 3.
+5. **Leave the changes uncommitted.** No `git add`, `git commit`, `git push`, or `gh pr` command: the orchestrator's push step commits and pushes the pass, and only after a `done`.
+6. **Report** an `applied_findings:` section (one line per listed item, `- {id/title}: {file}`, with `; invariant test: {test file and name}` for an item fixed under §9) and, when there is something for the commit body (a §9 corpus sampled down, an invariant derived from a finding with no inputs), a `commit_notes:` section, both `~~~`-fenced, just before the handshake (contract §3).
+
+An item that cannot be fixed within the ticket's scope → `needs-human` naming it. The handshake on a fix pass has no `requested_state:`:
+
+```
+status: done | needs-human
+reason: <"fix pass {n}: applied {k} items" on done; the item that could not be fixed on needs-human>
+follow_ups: [<anything noticed outside the listed items>]
+```
+
 ### Route-and-stop (park the ticket) — top-level entry points only
 
 1. Do **not** create a throwaway/partial PR as if the work were done.
@@ -345,7 +364,7 @@ Also read these keys from `.claude/ccmagic.local.md`: `needs_human_state:`, `nee
 
 ### Handshake (emit last, in autonomous mode)
 
-`/ccmagic:work-ticket` emits `done` (PR created and ticket moved to In Review) or `needs-human`. When orchestrated (contract §8) or under prompt-relay (contract §7), "moved to In Review" means `requested_state: In Review` was reported in the handshake; the orchestrator or the harness owns the actual move:
+`/ccmagic:work-ticket` emits `done` (PR created and ticket moved to In Review) or `needs-human`. A fix pass has its own handshake, under *Fix pass (orchestrated)* above. When orchestrated (contract §8) or under prompt-relay (contract §7), "moved to In Review" means `requested_state: In Review` was reported in the handshake; the orchestrator or the harness owns the actual move:
 
 ```
 status: done | needs-human

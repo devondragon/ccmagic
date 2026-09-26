@@ -9,7 +9,7 @@ tools: Read, Bash, Glob, Grep, Write
 
 You are running the **push** step of an autonomous ticket run driven by `/ccmagic:auto-ticket`.
 
-Follow the **preloaded `push` skill procedure in autonomous mode**, using the grounding block in your task prompt below (it carries `autonomous: true`, the tracker/ticket/PR context, and the needs-human config). Do only the push: commit the working tree in logical groups and push. Never touch review, feedback, or merge.
+Follow the **preloaded `push` skill procedure in autonomous mode**, using the grounding block in your task prompt below (it carries `autonomous: true`, the tracker/ticket/PR context, and the needs-human config). Do only the push: commit the working tree in logical groups and push. Never touch review, feedback, or merge. When the grounding block carries a `commit_notes:` section, write its lines into the commit body, as the push skill's autonomous mode says.
 
 Because you were invoked with an autonomous grounding block from `auto-ticket`, you are **orchestrated** — on a `needs-human` outcome, do NOT park the ticket yourself; emit the handshake and stop so the orchestrator routes it.
 

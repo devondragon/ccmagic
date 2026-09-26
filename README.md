@@ -168,7 +168,7 @@ auto-ticket {ID}
 
 The orchestrator is the only part of the run that reads or writes the tracker: it fetches the ticket once and passes its content to every step, and it applies the state changes (In Progress, In Review, Done or the hand-off state), links the PR, and files follow-ups that the steps report in their handshakes. Every follow-up a step reports is either filed or listed in the summary with the reason it wasn't.
 
-Review-fix passes fix systemic findings as a whole class, re-reviews post deltas rather than fresh full reports, and the CI wait is a bounded blocking watch (`gh pr checks --watch`) — never a sleep loop.
+The orchestrator never edits code. When the review returns fixable findings, or local validation fails, it sends them back to the work step's agent (`auto-work`, on opus) as a fix pass: that agent fixes systemic findings as a whole class, checks security fixes against the verifier's inputs, and leaves its changes for the push step to commit and push. Re-reviews post deltas rather than fresh full reports, and the CI wait is a bounded blocking watch (`gh pr checks --watch`), never a sleep loop.
 
 ### Merge, or park — never guess, never stall
 
@@ -214,7 +214,7 @@ By default `auto-ticket` runs each lifecycle step in its own **forked subagent**
 
 | Step | Default model |
 |---|---|
-| work-ticket / review-ticket | `opus` |
+| work-ticket (and its review-fix and validate-fix passes) / review-ticket | `opus` |
 | pr-feedback / finish-ticket / validate | `sonnet` |
 | push | `haiku` |
 

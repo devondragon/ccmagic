@@ -35,6 +35,8 @@ merge_owner: {self | reeve}
 merge_handoff_state: {value}
 max_feedback_passes: {n}
 review_pass: {n — only on Step 3 re-reviews; absent on the first review pass}
+fix_pass: {n, only on a fix pass of the work step (Step 3 or 4b); absent otherwise}
+fix_source: {review | validate, only with fix_pass}
 ```
 
 `merge_owner` and `merge_handoff_state` come from config (§5) with defaults `self` and `Awaiting Merge`; only `finish-ticket` acts on them.
@@ -59,12 +61,25 @@ The `~~~` fence is deliberate — issue bodies routinely contain backtick fences
 ```
 previous_findings:
 ~~~
-- {id/title} — {file}
-- {id/title} — {file}; invariant test: {test file and name}
+- {id/title}: {file}
+- {id/title}: {file}; invariant test: {test file and name}
 ~~~
 ```
 
-The `invariant test:` suffix appears only for a security or invariant finding fixed under §9; the reviewer checks that the test states the invariant and passes, and does not re-derive the invariant from scratch.
+The `invariant test:` suffix appears only for a security or invariant finding fixed under §9; the reviewer checks that the test states the invariant and passes, and does not re-derive the invariant from scratch. The list is the `applied_findings:` section the work step's fix pass reported (below), copied as reported.
+
+**Fix passes.** The orchestrator never edits code. When a review returns `fixable-findings` (its Step 3) or local validation fails (its Step 4b), it runs the work step (`auto-work`) again as a **fix pass**: the grounding block carries `fix_pass:` and `fix_source:` and a `findings_to_fix:` section, and no `review_pass:` or `previous_findings:`:
+
+```
+findings_to_fix:
+~~~
+{review: each CRITICAL finding and fixable missing-AC item, copied from the review report as written,
+ with its id, title, file and line, detail, systemic: enumeration, and Reproduction}
+{validate: the failed check names and the validate step's report for them}
+~~~
+```
+
+On a fix pass `work-ticket` follows its *Fix pass* section instead of Steps 3 to 8: it stays on the PR's branch, applies only the listed items (a `systemic:` finding as a class, a security or invariant finding under §9), runs the narrowest tests that cover them, and leaves the changes **uncommitted**. It does not re-implement the ticket, commit, push, or open a PR: the orchestrator's push step is the one commit and push of the pass, and it runs only after a `done`. All other sub-skills ignore the fix-pass keys.
 
 A sub-skill that sees `orchestrator:` in its grounding block must **not** park on `needs-human` — it emits the handshake and returns control so the orchestrator performs the single route-and-stop.
 
@@ -85,12 +100,28 @@ Which values each sub-skill can emit:
 
 | Sub-skill | Emits |
 |-----------|-------|
-| `work-ticket` | `done` \| `needs-human` |
+| `work-ticket` | `done` \| `needs-human` (on a fix pass, `done` means every listed item was applied and is uncommitted) |
 | `review-ticket` | `clean` \| `fixable-findings` \| `needs-human` |
 | `pr-feedback` | `done` \| `needs-human` |
 | `validate` | `done` \| `needs-human` |
 | `push` | `done` \| `needs-human` |
 | `finish-ticket` | `done` \| `needs-human` (with `merge_owner: reeve`, `done` carries `reason: handed off to reeve; ...` and the PR is not merged) |
+
+On a fix pass (§2) the work step's report carries two fenced sections just **before** the handshake block, so the handshake stays last:
+
+```
+applied_findings:
+~~~
+- {id/title}: {file}
+- {id/title}: {file}; invariant test: {test file and name}
+~~~
+commit_notes:
+~~~
+- {a line for the fix commit's body, such as a §9 corpus sampled down or an invariant derived from a finding with no inputs}
+~~~
+```
+
+`applied_findings:` lists every item from `findings_to_fix:`, one line each, in the `previous_findings:` format; for a validate fix the id/title is the check name. The orchestrator copies it into the re-review's `previous_findings:` and treats a missing section, or a missing item, as a failed pass. `commit_notes:` is omitted when there is nothing to note; the orchestrator appends it to the push step's grounding block, and `push` writes its lines into the body of the commit that holds the files they name. The fix pass's handshake is `status: done | needs-human`, `reason: fix pass {n}: applied {k} items` (or on `needs-human`, the item it could not fix; for a §9 fix that still fails, the finding and the first failing input), and `follow_ups:`, with no `requested_state:`.
 
 Parse the **last** such block in the sub-skill's output. If a sub-skill fails to emit one (crash, tool error), treat it as `needs-human` with `reason: "{skill} produced no handshake"`.
 
@@ -252,11 +283,11 @@ Needs-human parking is already the orchestrator's (§4). Comments on the PR (`gh
 
 ## 9. Fixing security and invariant findings
 
-This applies wherever an autonomous run fixes a finding: the orchestrator's review-fix loop (`auto-ticket` Step 3, done inline by the orchestrator) and `pr-feedback`'s address-now fixes (the `auto-feedback` step). It covers a finding tagged security (`specialist: security`, or a review comment that reports a vulnerability) and any finding whose correctness depends on an invariant over untrusted input, such as "no filename can produce the fence marker". A few hand-picked cases do not show such a fix is complete, and every gap the next review pass finds costs a full fix, push, and review cycle. So before committing the fix:
+This applies wherever an autonomous run fixes a finding: the work step's fix pass in the review-fix loop (`auto-ticket` Step 3, run by `auto-work`, §2) and `pr-feedback`'s address-now fixes (the `auto-feedback` step). It covers a finding tagged security (`specialist: security`, or a review comment that reports a vulnerability) and any finding whose correctness depends on an invariant over untrusted input, such as "no filename can produce the fence marker". A few hand-picked cases do not show such a fix is complete, and every gap the next review pass finds costs a full fix, push, and review cycle. So before committing the fix:
 
 1. **Reproduce the verifier's inputs.** Take the triggering inputs from the finding's `reproduction:` field (`skills/review/finding-schema.md`; the review report shows it as **Reproduction**), or from its detail or the review comment when the field is absent. Run each one against the fixed code in a scratch program kept outside the repository (for example under `$TMPDIR`), so it is never committed. Every input must now satisfy the invariant.
-2. **Rerun the corpus.** If the verifier fuzzed or enumerated, rebuild that corpus from its stated generator or rule and run it against the fix. Keep it within the scratch-program limits in `skills/review/agent-instructions.md`: a hard timeout of about 60 seconds (`timeout -k 5 60 ...`, or `gtimeout -k 5 60 ...` on macOS where GNU `timeout` is missing) and the smallest corpus that exercises the behavior. If the verifier's corpus does not fit, sample it down and say so in the commit body. The result is zero failures, or the first failing input.
+2. **Rerun the corpus.** If the verifier fuzzed or enumerated, rebuild that corpus from its stated generator or rule and run it against the fix. Keep it within the scratch-program limits in `skills/review/agent-instructions.md`: a hard timeout of about 60 seconds (`timeout -k 5 60 ...`, or `gtimeout -k 5 60 ...` on macOS where GNU `timeout` is missing) and the smallest corpus that exercises the behavior. If the verifier's corpus does not fit, sample it down and say so in the commit body (on a fix pass, in `commit_notes:`, §3, which the push step writes there). The result is zero failures, or the first failing input.
 3. **State the invariant as a test.** Add a property or parameterized test to the repository that asserts the invariant over the verifier's inputs plus a generated or enumerated set, using the project's existing test framework (a property-testing library only if the project already uses one). Run it with the project's normal targeted test command; the 60-second limit is for scratch programs, not the project's test runner, which can take longer than that on a JVM build. The fix commit includes the test, so the next review pass checks the invariant instead of rediscovering it.
-4. **Do not push a fix that fails.** If any verifier input or corpus input still breaks the invariant, keep fixing within the pass. If the fix cannot be made to pass, do not commit or push it as fixed: the orchestrator route-and-stops (§4), and `pr-feedback` does not reply `fixed` and emits `needs-human`. Either way the reason names the finding and the first failing input, written in its escaped form (as in `reproduction:`) so the handshake `reason:` stays on one line.
+4. **Do not push a fix that fails.** If any verifier input or corpus input still breaks the invariant, keep fixing within the pass. If the fix cannot be made to pass, do not commit or push it as fixed: the fix pass emits `needs-human` and the orchestrator route-and-stops (§4) without running the push step, and `pr-feedback` does not reply `fixed` and emits `needs-human`. Either way the reason names the finding and the first failing input, written in its escaped form (as in `reproduction:`) so the handshake `reason:` stays on one line.
 
-When a finding carries no inputs, derive the invariant and inputs from its detail, and name both in the commit body. This section changes nothing for other findings.
+When a finding carries no inputs, derive the invariant and inputs from its detail, and name both in the commit body (on a fix pass, in `commit_notes:`). This section changes nothing for other findings.

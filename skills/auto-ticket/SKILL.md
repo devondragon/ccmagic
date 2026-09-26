@@ -2,7 +2,7 @@
 name: auto-ticket
 description: Autonomous end-to-end ticket driver. Runs the full work → review → PR-feedback → finish cycle unattended, merging when the work is clean and CI is green, or parking the ticket (needs-human) with a clear note when a decision genuinely requires a human. Detects the tracker (Linear, GitHub Issues, JIRA) and ticket from the argument or current branch.
 user-invocable: true
-allowed-tools: Read(*), Edit(*), Write(*), Bash(git:*, gh:*, timeout:*, gtimeout:*), Bash(${CLAUDE_SKILL_DIR}/../../bin/ccm-context *), Bash(${CLAUDE_SKILL_DIR}/../../bin/ccm-ci-status *), Bash(${CLAUDE_SKILL_DIR}/../../bin/ccm-pr-threads *), Glob(*), Grep(*), Task(*), TodoWrite(*), Skill(*)
+allowed-tools: Read(*), Bash(git:*, gh:*), Bash(${CLAUDE_SKILL_DIR}/../../bin/ccm-context *), Bash(${CLAUDE_SKILL_DIR}/../../bin/ccm-ci-status *), Bash(${CLAUDE_SKILL_DIR}/../../bin/ccm-pr-threads *), Glob(*), Grep(*), Task(*), TodoWrite(*), Skill(*)
 argument-hint: "[TICKET-ID] (detects from the current branch if omitted)"
 model: sonnet
 context: fork
@@ -38,13 +38,13 @@ Call `Task` with `run_in_background: false` for every step, and keep every Bash 
 
 There is no inline mode: a forked orchestrator cannot invoke a `context: fork` skill, and the steps reach forked skills (`validate` itself, and `analyze-impact` from `work-ticket`), so running steps inline in this orchestrator's own context is not achievable. (`review` also ran forked until 3.13.2; it now runs inline.) Per-step isolation and per-step models are the whole point of this skill.
 
-**Every step below runs through `run_step`**, including the `/ccmagic:push` commit-and-push call sites in the Step 3 review-fix loop and Step 4b validate-fix. Nothing else about the flow (route-and-stop, loops, bounds) changes.
+**Every step below runs through `run_step`**, including the `/ccmagic:push` commit-and-push call sites and the fix passes in the Step 3 review-fix loop and Step 4b validate-fix. **This skill never edits code.** Every change to the repository in a run is made by a step agent: the work itself, review fixes, and validate fixes by `auto-work` (a fix pass, contract §2), and PR-feedback fixes by `auto-feedback`. This skill parses reports, builds the grounding for each step, and counts passes.
 
 ### Per-step agent registry
 
 | Step | Agent | Default model | Config override |
 |------|-------|---------------|-----------------|
-| work-ticket | `auto-work` | `opus` | `model_work_ticket` |
+| work-ticket, and the fix passes in Steps 3 and 4b | `auto-work` | `opus` | `model_work_ticket` |
 | review-ticket | `auto-review` | `opus` | `model_review_ticket` |
 | pr-feedback | `auto-feedback` | `sonnet` | `model_pr_feedback` |
 | validate | `auto-validate` | `sonnet` | `model_validate` |
@@ -117,11 +117,14 @@ Run the review-ticket step via `run_step` — `/ccmagic:review-ticket {TICKET-ID
 
 - `clean` → continue to Step 4.
 - `needs-human` → **route-and-stop** (stage = `review-ticket`).
-- `fixable-findings` → run a **bounded fix loop** (max `max_review_fix_passes` passes, default **3**):
-  1. Apply the CRITICAL findings (and any listed fixable missing-AC items) from the report — edit the code directly. A `systemic:`-tagged finding is fixed **as a class**: apply the fix to every enumerated instance, then re-run the enumeration search yourself to catch stragglers — never point-fix only the reported line. A security finding, or one whose correctness depends on an invariant over untrusted input, follows contract §9 before the commit: run the verifier's triggering inputs (the finding's **Reproduction**) against the fix, rerun any fuzzed or enumerated corpus within the scratch-program limits (`timeout -k 5 60`, or `gtimeout -k 5 60` on macOS; smallest corpus that shows the behavior), and add a property or parameterized test stating the invariant. If the fix still fails any of those inputs, do not push it as fixed: **route-and-stop** (reason: the finding and the first failing input).
-  2. Commit and push via `/ccmagic:push` with the grounding block (run this via `run_step`). If push returns `needs-human`, **route-and-stop**.
-  3. Re-invoke the review-ticket step via `run_step`, adding `review_pass: {n}` to the grounding block (2 on the first re-review, incrementing) so the reviewer produces a delta report (contract §2), and appending a `previous_findings:` section listing the findings just applied (contract §2), with the invariant test for each one fixed under contract §9, so the fresh review subagent knows what to verify.
-  4. `clean` → continue to Step 4. `fixable-findings` again and passes remain → repeat. Passes exhausted still not clean, or `needs-human` → **route-and-stop** (reason: the outstanding findings).
+- `fixable-findings` → run a **bounded fix loop** (max `max_review_fix_passes` passes, default **3**). Do not edit the code yourself; the fixes run on the work step's model:
+  1. **Build the fix grounding.** Copy each CRITICAL finding and each listed fixable missing-AC item from the review report into a `findings_to_fix:` section, exactly as written: id, title, file and line, detail, the `systemic:` tag and its enumeration, and the **Reproduction** when there is one. Add `fix_pass: {n}` (1 on the first pass, incrementing) and `fix_source: review` to the grounding block (contract §2).
+  2. **Apply the fixes** via `run_step` on the work step (`auto-work`) with that grounding. It follows `work-ticket`'s *Fix pass*: it fixes a `systemic:` finding as a class and re-runs the enumeration search, applies contract §9 to a security or invariant finding, and leaves its changes uncommitted. On `needs-human` → **route-and-stop** (stage = `review-ticket`) with its reason; for a §9 fix that still fails, the reason names the finding and the first failing input, and nothing is pushed. On `done`, read the `applied_findings:` and `commit_notes:` sections above its handshake (contract §3). If `applied_findings:` is missing or leaves out an item you sent, **route-and-stop** (reason: "fix pass {n} did not report {item}").
+  3. **Commit and push** via `/ccmagic:push` (run this via `run_step`), appending the work step's `commit_notes:` section to the push grounding when it reported one. This is the pass's only commit and push. If push returns `needs-human`, **route-and-stop**.
+  4. **Re-review.** Re-invoke the review-ticket step via `run_step`, adding `review_pass: {n + 1}` to the grounding block (2 on the first re-review) so the reviewer produces a delta report (contract §2), and a `previous_findings:` section that copies the fix pass's `applied_findings:` list as reported, including the invariant test named for each finding fixed under contract §9, so the fresh review subagent knows what to verify.
+  5. `clean` → continue to Step 4. `fixable-findings` again and passes remain → repeat from item 1 with the new report's findings. Passes exhausted still not clean, or `needs-human` → **route-and-stop** (reason: the outstanding findings).
+
+The fix-pass keys (`fix_pass:`, `fix_source:`, `findings_to_fix:`) go only to the work step's fix pass, and `previous_findings:` only to the re-review; leave them out of every other step's grounding block.
 
 Only CRITICAL findings and closable missing-AC items gate here. Out-of-scope changes are flagged in the PR (review-ticket already posts them) and do not block.
 
@@ -144,7 +147,7 @@ Everything this pass pushes is measured against `H`, so bot reviews triggered *b
 **4a. Apply feedback.** Run the pr-feedback step via `run_step` — `/ccmagic:pr-feedback {PR_NUMBER}` with the grounding block. Autonomous `pr-feedback` applies address-now fixes, replies to declined/question threads, records each defer/out-of-scope item as a short description in `follow_ups` (it files no tickets in an orchestrated run; Step 6 does), and pushes. Collect its handshake counts; its `follow_ups` go on the run's list like every step's.
   - `needs-human` (e.g. a genuine reviewer tie) → **route-and-stop** (stage = `pr-feedback`).
 
-**4b. Validate locally before trusting CI.** Run the validate step via `run_step` — `/ccmagic:validate`. If it fails, fix the regressions (bounded: `max_validate_attempts` attempts, default **2**, editing + re-validating), then commit/push via `/ccmagic:push` (run this via `run_step`). If it still fails after the attempts → **route-and-stop** (reason: "local validation fails: {summary}"). Doing this locally keeps CI + bot-review round-trips rare.
+**4b. Validate locally before trusting CI.** Run the validate step via `run_step`: `/ccmagic:validate`. `done` → continue to 4c. `needs-human` (a check failed) → fix the regressions in up to `max_validate_attempts` attempts (default **2**). Each attempt runs a fix pass on the work step via `run_step`, as in Step 3 items 1 and 2, with `fix_source: validate`, `fix_pass: {attempt}`, and a `findings_to_fix:` section holding the failed check names and the validate step's report for them; then runs the validate step again. A fix pass that returns `needs-human` → **route-and-stop** (stage = `validate`) with its reason. Once validate returns `done`, commit and push via `/ccmagic:push` (run this via `run_step`, with the fix passes' `commit_notes:` when they reported any); if push returns `needs-human`, **route-and-stop**. If validation still fails after the attempts → **route-and-stop** (reason: "local validation fails: {summary}"). Doing this locally keeps CI + bot-review round-trips rare.
 
 **4c. Wait for CI and new reviews.** This pass's push(es) already happened (in 4a via `pr-feedback`, and possibly again in 4b); `H` was captured before them at the top of the pass. Now that they've landed:
   - **Wait for CI to settle** with one command, repeated only while it says so:
@@ -230,7 +233,7 @@ Under prompt-relay there is no create API, so list every item under "to file" fo
 ```
 ````
 
-`steps` lists every sub-skill invocation of this run in order, one entry each, with the handshake `status` it returned; include `reason` whenever the sub-skill emitted one. Repeated review passes are separate entries. `follow_ups` has one entry per item on the run's follow-up list (empty array when there were none): `ticket` is the filed ID or null, and `reason` says why it wasn't filed (null when filed). The block is emitted on every outcome and under every transport. It is the machine-readable record an external gate reads, so its keys are fixed and must not be renamed; `follow_ups` was added in 3.13.0 as an additive key, and readers that don't know it ignore it.
+`steps` lists every sub-skill invocation of this run in order, one entry each, with the handshake `status` it returned; include `reason` whenever the sub-skill emitted one. Repeated review passes are separate entries, and each fix pass is a `work-ticket` entry whose `reason` starts with `fix pass {n}`. `follow_ups` has one entry per item on the run's follow-up list (empty array when there were none): `ticket` is the filed ID or null, and `reason` says why it wasn't filed (null when filed). The block is emitted on every outcome and under every transport. It is the machine-readable record an external gate reads, so its keys are fixed and must not be renamed; `follow_ups` was added in 3.13.0 as an additive key, and readers that don't know it ignore it.
 
 **Idempotency guard:** before posting to any surface, list its existing comments (`gh pr view {PR_NUMBER} --json comments --jq '.comments[].body'` for the PR; the tracker's comment list for the ticket) and **skip that surface** if a `🤖 Autonomous run summary` comment carrying this `run_id` already exists. Re-running Step 6 **within a single orchestrator context** — the same forked run reaching this step more than once — must never double-post. (Any fresh invocation of `/ccmagic:auto-ticket` — including a restart after a crash — mints a new `run_id` in Step 0 and posts its own summary; that is intentional — each run leaves its own audit trail.)
 
@@ -270,6 +273,7 @@ There is no stalled outcome. Never hang waiting for input.
 | A sub-skill emits no handshake (crash/tool error) | Treat as `needs-human` → route-and-stop with reason "{skill} produced no handshake". |
 | `work-ticket` → `needs-human` | route-and-stop (stage `work-ticket`). |
 | `review-ticket` → `needs-human`, or `fixable-findings` unresolved after the bounded loop | route-and-stop (stage `review-ticket`). |
+| A fix pass on the work step (Step 3 or 4b) returns `needs-human`, or does not report an item it was sent | route-and-stop (stage `review-ticket` or `validate`); nothing from that pass is pushed. |
 | `pr-feedback` → `needs-human` (genuine reviewer tie) | route-and-stop (stage `pr-feedback`). |
 | Local `/ccmagic:validate` can't be made green within the bounded attempts | route-and-stop (reason: validation failures). |
 | CI never settles within `ci_timeout_minutes` (watch loop cap) | route-and-stop (reason: CI timeout). |
