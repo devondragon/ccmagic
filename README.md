@@ -162,6 +162,7 @@ auto-ticket {ID}
   → review-ticket    scope-drift + code review; fix CRITICAL findings, re-review
   → pr-feedback loop  apply fixes · reply · note follow-ups · push · validate
                       · wait for CI + bot reviews · recompute "clean"   (× up to max_feedback_passes)
+                      · re-review the pushed head when the pass pushed
   → finish-ticket    merge gate: mergeable + CI green + no unaddressed change-requests
   → summary          follow-ups filed or listed; posted to the PR and the ticket
 ```
@@ -183,7 +184,7 @@ Every autonomous run ends in exactly one of three states: **merged**, **handed-o
 
 ### Handing off to an external merge gate
 
-A repo whose merges belong to an external gate sets `merge_owner: reeve`. The run implements, reviews, and addresses feedback as usual, then `finish-ticket` runs its merge gate as a preflight and hands the open PR off instead of merging, and the orchestrator updates the ticket: on Linear/JIRA it moves the ticket to `merge_handoff_state` (default `Awaiting Merge`); on GitHub Issues, which have no custom states, it applies the `awaiting-merge` label instead and leaves the issue open; under the prompt-relay transport it reports the requested state in the handshake rather than transitioning it directly. Every run summary now ends with a fenced JSON run record that such a gate can parse. The record is at `version: 2`, which names the `repo`, the `pr`, and the PR's `head_sha` beside the `ticket`, and the review report's handshake carries a `head:` line with the commit the review read, so the gate can tie both to the PR head it would merge.
+A repo whose merges belong to an external gate sets `merge_owner: reeve`. The run implements, reviews, and addresses feedback as usual, then `finish-ticket` runs its merge gate as a preflight and hands the open PR off instead of merging, and the orchestrator updates the ticket: on Linear/JIRA it moves the ticket to `merge_handoff_state` (default `Awaiting Merge`); on GitHub Issues, which have no custom states, it applies the `awaiting-merge` label instead and leaves the issue open; under the prompt-relay transport it reports the requested state in the handshake rather than transitioning it directly. Every run summary now ends with a fenced JSON run record that such a gate can parse. The record is at `version: 2`, which names the `repo`, the `pr`, and the PR's `head_sha` beside the `ticket`, and the review report's handshake carries a `head:` line with the commit the review read, so the gate can tie both to the PR head it would merge. A push in the PR-feedback loop (a feedback fix or a validate fix) after the last clean review moves the PR head, so the run re-reviews the pushed head before finishing, within the existing `max_feedback_passes` and `max_review_fix_passes` limits, and parks rather than finish on a stale review. When the run can't read `repo` or the PR head, it writes a `version: 1` record instead, with a one-line `fallback_reason` naming the failed command and its first error line, and says so in its final message.
 
 ### Turning it on
 
