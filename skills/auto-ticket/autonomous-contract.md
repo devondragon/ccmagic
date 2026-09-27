@@ -34,7 +34,7 @@ needs_human_label: {value}
 merge_owner: {self | reeve}
 merge_handoff_state: {value}
 max_feedback_passes: {n}
-review_pass: {n — only on Step 3 re-reviews; absent on the first review pass}
+review_pass: {n, only on re-reviews (Step 3 fix loop, Step 4f late push); absent on the first review pass}
 fix_pass: {n, only on a fix pass of the work step (Step 3 or 4b); absent otherwise}
 fix_source: {review | validate, only with fix_pass}
 ```
@@ -56,7 +56,7 @@ ticket_content:
 
 The `~~~` fence is deliberate — issue bodies routinely contain backtick fences, so tildes keep the ticket body from prematurely closing the block. Copy the text as written; do not summarize it, because the step agents parse acceptance criteria out of it. Sub-skills in an orchestrated run read the ticket from this section **instead of** fetching it (§8).
 
-`review_pass:` appears only when the orchestrator re-invokes `review-ticket` inside its Step 3 fix loop (2 on the first re-review, incrementing). `review-ticket` uses it to switch to a delta report (see its *Autonomous mode*); all other sub-skills ignore it. On those re-invocations the orchestrator also appends a `previous_findings:` section to the grounding block: a short fenced list of the findings the work step's fix pass just applied (its `applied_findings:`, id/title and file per finding), so the fresh review subagent knows exactly what to verify as fixed:
+`review_pass:` appears only when the orchestrator re-invokes `review-ticket`: inside its Step 3 fix loop, or in its Step 4f re-review after a late push (a push in Step 4a or 4b after the last clean review). It is 2 on the first re-review and counts up across the run. `review-ticket` uses it to switch to a delta report (see its *Autonomous mode*); all other sub-skills ignore it. On those re-invocations the orchestrator also appends a `previous_findings:` section to the grounding block: a short fenced list of the findings the work step's fix pass just applied (its `applied_findings:`, id/title and file per finding), so the fresh review subagent knows exactly what to verify as fixed. On a late-push re-review the list holds each Step 4b fix pass's `applied_findings:` and one `- {short sha} {subject}` line per commit pushed since the last clean review:
 
 ```
 previous_findings:
@@ -179,7 +179,7 @@ The single routine the orchestrator (or a standalone top-level sub-skill) runs w
 **State moved to:** {needs_human_state, or "unchanged — applied label `{needs_human_label}`" | prompt-relay: "not moved — Requested state: {needs_human_state}"}
 
 **Autonomous decisions so far:**
-{bullet list — classification, minor choices made, drift flagged}
+{bullet list: classification, minor choices made, drift flagged, and on a v1 fallback "Run record fell back to version 1: {fallback_reason}"}
 
 **Follow-ups:** {filed ticket ids with one-liners; items not filed with the reason; under prompt-relay, "to file:" short descriptions; or "none"}
 
@@ -191,7 +191,7 @@ The single routine the orchestrator (or a standalone top-level sub-skill) runs w
 Nothing was merged. Resolve the item above (and any uncommitted changes), then re-run `/ccmagic:auto-ticket {TICKET-ID}` (or continue manually).
 ````
 
-The keys and rules are the same as the Step 6 `### Run record` block (contract §2's grounding block feeds `merge_owner`; see `skills/auto-ticket/SKILL.md` Step 6, which says where `repo`, `pr`, and `head_sha` come from; a run parked before opening a PR writes `"pr": null, "head_sha": null`). This block is what lets Reeve's `parseRunRecord` read a parked run: it matches on a comment containing "Autonomous run summary" and reads that comment's final ```json fence, so the heading above must keep that exact phrase.
+The keys and rules are the same as the Step 6 `### Run record` block (contract §2's grounding block feeds `merge_owner`; see `skills/auto-ticket/SKILL.md` Step 6, which says where `repo`, `pr`, and `head_sha` come from; a run parked before opening a PR writes `"pr": null, "head_sha": null`). When `repo` or the PR head can't be read, the record falls back to `"version": 1` without `repo` and `head_sha` and carries `"fallback_reason": "<one line>"` naming the failed command and its first error line; the same line appears under **Autonomous decisions so far**. This block is what lets Reeve's `parseRunRecord` read a parked run: it matches on a comment containing "Autonomous run summary" and reads that comment's final ```json fence, so the heading above must keep that exact phrase.
 
 ### Under the prompt-relay transport
 
@@ -234,6 +234,7 @@ A project file overrides the user file, which overrides the built-in default. Th
 
 - **Autonomous is additive.** Interactive behavior is never changed; every autonomous default is gated behind the signal above.
 - **Every decision is recorded** in the PR body/comments and/or a ticket comment, so an unattended run leaves an audit trail.
+- **Never finish on a stale review.** The last clean review's `head:` must be the PR head when `finish-ticket` runs. A late push (Step 4a or 4b) gets a re-review (orchestrator Step 4f) within the existing loop limits, and a run that can't re-review the pushed head parks.
 - **Every exit is `merged`, `handed-off` (only with `merge_owner: reeve`), or `parked-needs-human` (with a reason).** Never `stalled`, never a silent hang, never a merge on a guess.
 
 ## 7. Prompt-relay transport

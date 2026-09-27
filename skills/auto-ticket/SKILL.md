@@ -115,14 +115,16 @@ Store `{PR_NUMBER}`, `{PR_URL}`, `{BASE_BRANCH}`. Add `pr:` to the grounding blo
 
 Run the review-ticket step via `run_step` — `/ccmagic:review-ticket {TICKET-ID}` with the grounding block prepended. Then act on the verdict:
 
-- `clean` → continue to Step 4.
+- `clean` → record the handshake's `head:` as `reviewed_head`, the commit the last clean review read, and continue to Step 4.
 - `needs-human` → **route-and-stop** (stage = `review-ticket`).
 - `fixable-findings` → run a **bounded fix loop** (max `max_review_fix_passes` passes, default **3**). Do not edit the code yourself; the fixes run on the work step's model:
   1. **Build the fix grounding.** Copy each CRITICAL finding and each listed fixable missing-AC item from the review report into a `findings_to_fix:` section, exactly as written: id, title, file and line, detail, the `systemic:` tag and its enumeration, and the **Reproduction** when there is one. A delta report (pass 2 on) lists a finding that is still not fixed as a one-liner, so for that finding copy its full text from the earlier report that first raised it; keep each report's findings in your context until the loop ends. Add `fix_pass: {n}` (1 on the first pass, incrementing) and `fix_source: review` to the grounding block (contract §2).
   2. **Apply the fixes** via `run_step` on the work step (`auto-work`) with that grounding. It follows `work-ticket`'s *Fix pass*: it fixes a `systemic:` finding as a class and re-runs the enumeration search, applies contract §9 to a security or invariant finding, and leaves its changes uncommitted. Run the **fix-pass git check** (below) around it. On `needs-human` → **route-and-stop** (stage = `review-ticket`) with its reason; for a §9 fix that still fails, the reason names the finding and the first failing input, and nothing is pushed. On `done`, read the `applied_findings:` and `commit_notes:` sections above its handshake (contract §3). If `applied_findings:` is missing or leaves out an item you sent, **route-and-stop** (reason: "fix pass {n} (review) did not report {item}").
   3. **Commit and push** via `/ccmagic:push` (run this via `run_step`), appending the work step's `commit_notes:` section to the push grounding when it reported one. This is the pass's only commit and push. If push returns `needs-human`, **route-and-stop**.
-  4. **Re-review.** Re-invoke the review-ticket step via `run_step`, adding `review_pass: {n + 1}` to the grounding block (2 on the first re-review) so the reviewer produces a delta report (contract §2), and a `previous_findings:` section that copies the fix pass's `applied_findings:` list as reported, including the invariant test named for each finding fixed under contract §9, so the fresh review subagent knows what to verify.
-  5. `clean` → continue to Step 4. `fixable-findings` again and passes remain → repeat from item 1 with the new report's findings. Passes exhausted still not clean, or `needs-human` → **route-and-stop** (reason: the outstanding findings).
+  4. **Re-review.** Re-invoke the review-ticket step via `run_step`, adding `review_pass: {review_pass}` to the grounding block (the run-wide review counter below, so 2 on the run's first re-review) so the reviewer produces a delta report (contract §2), and a `previous_findings:` section that copies the fix pass's `applied_findings:` list as reported, including the invariant test named for each finding fixed under contract §9, so the fresh review subagent knows what to verify.
+  5. `clean` → record its `head:` as `reviewed_head` and continue to Step 4. `fixable-findings` again and passes remain → repeat from item 1 with the new report's findings. Passes exhausted still not clean, or `needs-human` → **route-and-stop** (reason: the outstanding findings).
+
+`fix_pass` and `review_pass` count across the whole run. `review_pass` goes up by one on every review-ticket call: the first Step 3 review is pass 1 (sent without the key), each re-review here and each 4f re-review takes the next number. When 4f sends a late-push re-review's findings back to this loop, it continues from the passes already used, so `max_review_fix_passes` bounds every review fix pass in the run, not each entry to the loop.
 
 The fix-pass keys (`fix_pass:`, `fix_source:`, `findings_to_fix:`) go only to the work step's fix pass, `previous_findings:` only to the re-review, and `commit_notes:` only to the push step; leave them out of every other step's grounding block.
 
@@ -136,7 +138,7 @@ Only CRITICAL findings and closable missing-AC items gate here. Out-of-scope cha
 
 ## Step 4: PR-feedback loop
 
-Loop up to `max_feedback_passes` (default 3). **At the very start of each pass — before applying any fix and before anything is pushed — record the current highest PR review-comment id as this pass's high-water mark `H`:**
+Loop up to `max_feedback_passes` (default 3). The pass count runs across the whole run: a return from 4f through the Step 3 fix loop starts the next pass, not pass 1. **At the very start of each pass, before applying any fix and before anything is pushed, record the current highest PR review-comment id as this pass's high-water mark `H`:**
 
 ```bash
 "${CLAUDE_PLUGIN_ROOT}/bin/ccm-pr-threads" {PR_NUMBER}
@@ -176,13 +178,23 @@ Everything this pass pushes is measured against `H`, so bot reviews triggered *b
   - the final `ccm-ci-status` status was `green` or `no-ci`.
 
 **4e. Decide.**
-  - **clean** → break out of the loop; continue to Step 5.
+  - **clean** → read the PR head with `gh pr view {PR_NUMBER} --json headRefOid --jq .headRefOid`. If it equals `reviewed_head` (nothing was pushed since the last clean review), break out of the loop and continue to Step 5. If it differs (4a or 4b pushed), go to 4f. If the read fails, **route-and-stop** (stage = `review-ticket`, reason: "cannot read the PR head to confirm the review covers it: {first error line}").
   - a `needs-human` item surfaced → **route-and-stop**.
   - **pass cap hit and still not clean** → **route-and-stop** (reason: "still not clean after {max_feedback_passes} feedback passes: {what remains}").
+
+**4f. Re-review after a late push.** A push in 4a or 4b moves the PR head past `reviewed_head`, and a merge gate that binds the review to the head (Reeve parks any other head as `review-not-clean`, RV-1) would reject the last report. So review the pushed head before finishing. Run the review-ticket step via `run_step` with `review_pass: {review_pass}` (the run-wide counter from Step 3, one more than the last review-ticket call) and a `previous_findings:` section listing what this feedback pass pushed: each 4b fix pass's `applied_findings:` as reported, and one line per commit since the reviewed head from `git log --format='- %h %s' {reviewed_head}..HEAD`. The reviewer posts a delta report whose handshake `head:` is the commit it read. Then:
+  - `clean` → read the PR head again as in 4e. If the report's `head:` equals it, record it as `reviewed_head` and continue to Step 5: CI and the review threads already settled on this head in 4c, and the review posts a comment without pushing. A missing `head:`, a different head, or a failed read → **route-and-stop** (stage = `review-ticket`, reason: "re-review after a late push read {head, or no head}, but the PR head is {sha}").
+  - `needs-human` → **route-and-stop** (stage = `review-ticket`).
+  - `fixable-findings` on the last feedback pass (this pass is number `max_feedback_passes`) → **route-and-stop** before any fix pass (stage = `review-ticket`, reason: "late-push re-review found fixable findings on the last of {max_feedback_passes} feedback passes: {findings}"), since a fix pushed now could get no CI run or bot review. Nothing is fixed or pushed.
+  - `fixable-findings` with feedback passes left → run the Step 3 fix loop (items 1 to 5) on this report, continuing its pass count, so only the fix passes left under `max_review_fix_passes` remain. With none left → **route-and-stop** (stage = `review-ticket`, reason: "late-push re-review found fixable findings and no review fix passes remain: {findings}"). When the loop ends `clean`, its fix push has had no CI run or bot review yet, so return to the top of Step 4 for the next feedback pass.
+
+Each 4f follows a feedback pass that pushed, so a run makes at most `max_feedback_passes` late-push re-reviews, plus the fix loop's re-reviews under `max_review_fix_passes`; there is no separate limit. Whenever a limit stops the run while the PR head is ahead of `reviewed_head`, the run parks. It never finishes on a stale review.
 
 ---
 
 ## Step 5: Finish the ticket
+
+Only 4e (with the PR head still at `reviewed_head`) and 4f (with a clean re-review of the PR head) lead here, so the last clean review read the commit the gate will merge. Never run this step while the PR head differs from `reviewed_head`: that is a stale review, which Reeve parks as `review-not-clean`; route-and-stop instead (stage = `review-ticket`).
 
 Run the finish-ticket step via `run_step` — `/ccmagic:finish-ticket` with the grounding block. Its Step 3 sanity check is the **merge gate**: it merges only if the PR is mergeable, CI is green, and there are no unaddressed change-requests.
 
@@ -213,7 +225,7 @@ Under prompt-relay there is no create API, so list every item under "to file" fo
 
 ### What ran
 - Classified as **{class}**, branched, implemented, opened the PR.
-- Review: {clean first pass | N CRITICAL findings fixed and re-reviewed}.
+- Review: {clean first pass | N CRITICAL findings fixed and re-reviewed}{; re-reviewed after a late push in feedback pass P}.
 - PR feedback: {P} pass(es) — applied {A}, declined {D}, deferred {F}.
 - Finish: {merged with {squash|merge commit} | handed off to reeve | gate not satisfied}.
 
@@ -221,6 +233,7 @@ Under prompt-relay there is no create API, so list every item under "to file" fo
 - {classification + reasoning}
 - {any minor implementation choices made instead of asking}
 - {out-of-scope changes flagged, if any}
+- {v1 fallback only: "Run record fell back to version 1: {fallback_reason}"}
 
 ### Follow-ups
 - Filed: {ticket id}: {one-liner} (from {step})
@@ -237,7 +250,7 @@ Under prompt-relay there is no create API, so list every item under "to file" fo
 ```
 ````
 
-`steps` lists every sub-skill invocation of this run in order, one entry each, with the handshake `status` it returned; include `reason` whenever the sub-skill emitted one. Repeated review passes are separate entries, and each fix pass is a `work-ticket` entry whose `reason` starts with `fix pass {n} ({fix_source})`. `follow_ups` has one entry per item on the run's follow-up list (empty array when there were none): `ticket` is the filed ID or null, and `reason` says why it wasn't filed (null when filed). The block is emitted on every outcome and under every transport. It is the machine-readable record an external gate reads, so its keys are fixed and must not be renamed; `follow_ups` was added in 3.13.0 as an additive key, and readers that don't know it ignore it.
+`steps` lists every sub-skill invocation of this run in order, one entry each, with the handshake `status` it returned; include `reason` whenever the sub-skill emitted one. Repeated review passes are separate entries, and each fix pass is a `work-ticket` entry whose `reason` starts with `fix pass {n} ({fix_source})`. `review_passes` is the total number of review-ticket calls in the run, 4f re-reviews included: the final `review_pass`, or 1 when there was no re-review. `follow_ups` has one entry per item on the run's follow-up list (empty array when there were none): `ticket` is the filed ID or null, and `reason` says why it wasn't filed (null when filed). The block is emitted on every outcome and under every transport. It is the machine-readable record an external gate reads, so its keys are fixed and must not be renamed; `follow_ups` was added in 3.13.0 as an additive key, and readers that don't know it ignore it.
 
 `version: 2` binds the record to what it describes, and Reeve treats a record whose binding doesn't match the PR it located as no record at all (RV-1). A version 2 record carries `repo`, `pr`, and `head_sha` on every outcome, never omitted (the one exception is the version 1 fallback below):
 
@@ -246,7 +259,7 @@ Under prompt-relay there is no create API, so list every item under "to file" fo
 - `pr`: the PR number as a JSON number, or `null` when the run stopped before opening one.
 - `head_sha`: the PR's head as GitHub reports it, read right before posting with `gh pr view {PR_NUMBER} --json headRefOid --jq .headRefOid` (the full 40-character SHA, never a short one, and not the local `git rev-parse HEAD`, which can differ from what the PR holds); `null` exactly when `pr` is `null`.
 
-If `repo` or `head_sha` can't be read (a `gh` error), write the record at `"version": 1` without `repo` and `head_sha` and say which read failed under "Key autonomous decisions": a v1 record is still read, while a v2 record with a missing or malformed binding is not.
+If `repo` or `head_sha` can't be read (a `gh` error), write the record at `"version": 1` without `repo` and `head_sha`, and add `"fallback_reason": "<one line>"` right after `"run_id"`: a v1 record is still read, while a v2 record with a missing or malformed binding is not. The reason names the command that failed and the first line of its error, for example `"fallback_reason": "gh pr view 12 --json headRefOid failed: HTTP 502: Bad Gateway"`, with both separated by `; ` when both reads failed. Keep it to one line: collapse newlines, escape `"` and `\` for JSON, drop anything that looks like a token or credential, and write dashes as plain hyphens (never an em or en dash). The same line goes under "Key autonomous decisions" as `Run record fell back to version 1: {fallback_reason}`, so the run's final message (the summary, the parked note, and under prompt-relay the relayed message) says why. `fallback_reason` never appears on a version 2 record.
 
 **Idempotency guard:** before posting to any surface, list its existing comments (`gh pr view {PR_NUMBER} --json comments --jq '.comments[].body'` for the PR; the tracker's comment list for the ticket) and **skip that surface** if a `🤖 Autonomous run summary` comment carrying this `run_id` already exists. Re-running Step 6 **within a single orchestrator context** — the same forked run reaching this step more than once — must never double-post. (Any fresh invocation of `/ccmagic:auto-ticket` — including a restart after a crash — mints a new `run_id` in Step 0 and posts its own summary; that is intentional — each run leaves its own audit trail.)
 
@@ -302,6 +315,7 @@ There is no stalled outcome. Never hang waiting for input.
 | Local `/ccmagic:validate` can't be made green within the bounded attempts | route-and-stop (reason: validation failures). |
 | CI never settles within `ci_timeout_minutes` (watch loop cap) | route-and-stop (reason: CI timeout). |
 | Feedback-pass cap hit still not clean | route-and-stop (reason: remaining threads / red CI). |
+| Step 4 pushed after the last clean review (4a or 4b) | Re-review the pushed head (4f). A stale review never reaches finish: a clean re-review of another head, an unreadable PR head, or findings with no review fix or feedback passes left → route-and-stop (stage `review-ticket`), before any fix is pushed. |
 | `finish-ticket` merge gate not satisfied | It returns `needs-human` and does not merge → route-and-stop (stage `finish-ticket`). |
 | `requested_state: {merge_handoff_state}` and no state of that exact name exists | route-and-stop (stage `finish-ticket`); nothing was merged on the hand-off path. |
 | Any other tracker write fails (In Progress, In Review, Done, PR link, follow-up ticket) | Not a park. Say what failed in the summary and continue; an unfiled follow-up is listed with the error as its reason. |

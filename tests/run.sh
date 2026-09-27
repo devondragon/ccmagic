@@ -1747,6 +1747,57 @@ skills_review_handshake_has_head() {
   check "${missing# }" ""
 }
 
+# ---- re-review after a late push (RV-60) -------------------------------------
+
+# section FILE START END: the lines from the first line matching START up to
+# the next line matching END.
+section() { sed -n "/$2/,/$3/p" "$1"; }
+
+# A Step 4 push (pr-feedback in 4a, validate fixes in 4b) moves the PR head
+# past the head the last clean review read. Reeve parks a report whose head is
+# not the PR head, so auto-ticket re-reviews the pushed head before finishing,
+# within the existing loop limits, and parks rather than finish on a stale
+# review.
+skills_auto_ticket_rereviews_after_late_push() {
+  local f=$ROOT/skills/auto-ticket/SKILL.md step4 step5 missing=
+  step4=$(section "$f" '^## Step 4:' '^## Step 5:')
+  step5=$(section "$f" '^## Step 5:' '^## Step 6:')
+  # Step 3 records the head a clean review read.
+  section "$f" '^## Step 3:' '^## Step 4:' | grep -q 'reviewed_head' || missing+=" step3:reviewed_head"
+  # 4e compares the PR head with it and sends a moved head to 4f.
+  grep -E '^  - \*\*clean\*\*' <<<"$step4" | grep -q '4f' || missing+=" 4e:clean-goes-to-4f"
+  grep -qF 'headRefOid' <<<"$step4" || missing+=" 4e:reads-pr-head"
+  # 4f re-reviews with a fresh head, bounded by the existing counters.
+  grep -qE '^\*\*4f\. Re-review' <<<"$step4" || missing+=" 4f:heading"
+  local step4f
+  step4f=$(sed -n '/^\*\*4f\./,/^---$/p' "$f")
+  for key in 'review_pass:' 'max_review_fix_passes' 'max_feedback_passes' 'route-and-stop' 'head:'; do
+    grep -qF "$key" <<<"$step4f" || missing+=" 4f:$key"
+  done
+  # Step 5 never runs on a stale review.
+  grep -qF 'reviewed_head' <<<"$step5" || missing+=" step5:guard"
+  # The error table and the contract name the case.
+  section "$f" '^## Error handling' '^## Notes' | grep -qi 'stale review' || missing+=" errors:stale-review"
+  grep -m1 '^review_pass:' "$ROOT/skills/auto-ticket/autonomous-contract.md" | grep -q '4f' || missing+=" contract:review_pass"
+  grep -qi 'late push' "$ROOT/skills/auto-ticket/autonomous-contract.md" || missing+=" contract:late-push"
+  check "${missing# }" ""
+}
+
+# A version 1 fallback record says why it fell back, in a fallback_reason key
+# (Reeve's RunRecordV1 is not strict, so the extra key parses), and the run's
+# final message says so too.
+skills_run_record_v1_fallback_reason() {
+  local f missing=
+  for f in skills/auto-ticket/SKILL.md skills/auto-ticket/autonomous-contract.md; do
+    grep -qF '"fallback_reason": ' "$ROOT/$f" || missing+=" $f:key"
+  done
+  section "$ROOT/skills/auto-ticket/SKILL.md" '^### Key autonomous decisions' '^### Follow-ups' |
+    grep -qF 'fallback_reason' || missing+=" summary:decisions"
+  section "$ROOT/skills/auto-ticket/autonomous-contract.md" '^\*\*Autonomous decisions so far' '^\*\*Follow-ups' |
+    grep -qF 'fallback_reason' || missing+=" parked:decisions"
+  check "${missing# }" ""
+}
+
 # ---- skill grants ----------------------------------------------------------
 
 # allowed_tools FILE: the skill's allowed-tools frontmatter line.

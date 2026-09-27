@@ -2,6 +2,16 @@
 
 All notable changes to ccmagic are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- A version 1 fallback run record carries `"fallback_reason": "<one line>"`, naming the `gh` command that failed and the first line of its error, and the run's final message says the record fell back and why. Readers that don't know the key ignore it; Reeve's version 1 schema accepts it (RV-60).
+
+### Fixed
+
+- `auto-ticket` re-reviews the pushed head (new Step 4f) when a PR-feedback pass pushed after the last clean review, from `pr-feedback` fixes in 4a or validate fixes in 4b. Before, the run finished on a review of an older commit, and a merge gate that binds the review to the PR head (Reeve, RV-1) parked it as `review-not-clean`. Findings from that re-review go through the Step 3 fix loop and then another feedback pass. `max_review_fix_passes` and `max_feedback_passes` now count across the whole run, and a run that hits either limit while the PR head is ahead of the last clean review parks instead of finishing (RV-60).
+
 ## [3.14.0] - 2026-09
 
 ### Added
