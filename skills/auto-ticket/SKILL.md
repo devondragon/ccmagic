@@ -239,7 +239,7 @@ Under prompt-relay there is no create API, so list every item under "to file" fo
 
 `steps` lists every sub-skill invocation of this run in order, one entry each, with the handshake `status` it returned; include `reason` whenever the sub-skill emitted one. Repeated review passes are separate entries, and each fix pass is a `work-ticket` entry whose `reason` starts with `fix pass {n} ({fix_source})`. `follow_ups` has one entry per item on the run's follow-up list (empty array when there were none): `ticket` is the filed ID or null, and `reason` says why it wasn't filed (null when filed). The block is emitted on every outcome and under every transport. It is the machine-readable record an external gate reads, so its keys are fixed and must not be renamed; `follow_ups` was added in 3.13.0 as an additive key, and readers that don't know it ignore it.
 
-`version: 2` binds the record to what it describes, and Reeve treats a record whose binding doesn't match the PR it located as no record at all (RV-1). Write `repo`, `pr`, and `head_sha` on every outcome, never omitted:
+`version: 2` binds the record to what it describes, and Reeve treats a record whose binding doesn't match the PR it located as no record at all (RV-1). A version 2 record carries `repo`, `pr`, and `head_sha` on every outcome, never omitted (the one exception is the version 1 fallback below):
 
 - `ticket`: the ticket ID exactly as `ccm-context` resolved it in Step 0 (`ENG-123`, or the GitHub issue number).
 - `repo`: `owner/name` of the repository the PR is in: the `github_repo` config value when set, else the output of `gh repo view --json nameWithOwner --jq .nameWithOwner`. Never `null`.
