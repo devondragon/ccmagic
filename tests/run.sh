@@ -1722,6 +1722,31 @@ extreview_prompt_shape_and_conventions() {
   grep -qx "Use tabs." "$T/codex.stdin"
 }
 
+# ---- run record and handshake templates (RV-1) --------------------------------
+
+# Reeve's RunRecordSchema reads version 2 only with repo, pr, and head_sha
+# present (pr and head_sha nullable), so both run record templates carry them.
+skills_run_record_templates_v2() {
+  local f line missing=
+  for f in skills/auto-ticket/SKILL.md skills/auto-ticket/autonomous-contract.md; do
+    line=$(grep -m1 '^{"ccmagic": ' "$ROOT/$f")
+    for key in '"version": 2' '"ticket": ' '"repo": "{owner/name}"' '"pr": {pr_number or null}' '"head_sha": {"<PR head SHA>" or null}' '"steps": '; do
+      grep -qF "$key" <<<"$line" || missing+=" $f:$key"
+    done
+  done
+  check "${missing# }" ""
+}
+
+# The review handshake names the reviewed commit on the line after status:,
+# the order ccm-post-review enforces.
+skills_review_handshake_has_head() {
+  local f missing=
+  for f in skills/review-ticket/SKILL.md agents/auto-review.md skills/auto-ticket/autonomous-contract.md; do
+    grep -A1 '^status: clean | fixable-findings | needs-human' "$ROOT/$f" | grep -q '^head: ' || missing+=" $f"
+  done
+  check "${missing# }" ""
+}
+
 # ---- skill grants ----------------------------------------------------------
 
 # allowed_tools FILE: the skill's allowed-tools frontmatter line.
