@@ -11,7 +11,7 @@ All notable changes to ccmagic are documented here. The format follows [Keep a C
 
 ### Changed
 
-- `ccm-post-review` requires exactly one `head:` line in the handshake, a full SHA equal to the checkout's HEAD, and names the SHA to use when it refuses. It exits 3 without posting when HEAD is unreadable. The shared handshake validator accepts a `head:` line, so the SubagentStop hook still passes the review agent's handshake (RV-1, #63).
+- `ccm-post-review` requires exactly one `head:` line in the handshake, a full SHA equal to the checkout's HEAD, and names the SHA to use when it refuses. It exits 3 without posting when HEAD is unreadable or is not a 40-character SHA-1 (so a SHA-256 repository can't post). Its success JSON adds a `head` field. The shared handshake validator accepts a `head:` line, so the SubagentStop hook still passes the review agent's handshake (RV-1, #63).
 
 ## [3.13.5] - 2026-09
 
