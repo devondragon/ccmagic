@@ -2,6 +2,17 @@
 
 All notable changes to ccmagic are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.14.0] - 2026-09
+
+### Added
+
+- `review-ticket` writes `head: <sha>` in its handshake, right after `status:`: the full 40-character SHA from `git rev-parse HEAD` at review time, on every pass, verdict, and transport. A merge gate can bind the verdict to the commit the review read instead of comparing timestamps; Reeve's gate accepts a report whose head is the PR head and parks any other head (RV-1, #63).
+- The `auto-ticket` run record moves to `"version": 2` and adds `repo` (`owner/name`), `pr` (a number, or `null` before a PR exists), and `head_sha` (the PR head as GitHub reports it, `null` with no PR), keeping every version 1 key. When `repo` or the PR head can't be read, the run writes a version 1 record instead (RV-1, #63).
+
+### Changed
+
+- `ccm-post-review` requires exactly one `head:` line in the handshake, a full SHA equal to the checkout's HEAD, and names the SHA to use when it refuses. It exits 3 without posting when HEAD is unreadable. The shared handshake validator accepts a `head:` line, so the SubagentStop hook still passes the review agent's handshake (RV-1, #63).
+
 ## [3.13.5] - 2026-09
 
 ### Changed
