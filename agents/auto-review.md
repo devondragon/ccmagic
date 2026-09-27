@@ -20,6 +20,7 @@ Return **only** the review-ticket verdict handshake as the last thing in your ou
 
 ```
 status: clean | fixable-findings | needs-human
+head: <full 40-character SHA from git rev-parse HEAD at review time>
 reason: <one line, when not clean>
 follow_ups: [<any tickets or deferrals noted>]
 ```

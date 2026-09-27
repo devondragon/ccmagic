@@ -107,7 +107,10 @@ BASE={base_branch}
 git diff --name-only $BASE...HEAD
 git diff --stat $BASE...HEAD
 git diff $BASE...HEAD
+git rev-parse HEAD
 ```
+
+Keep the full 40-character SHA that `git rev-parse HEAD` prints: it is the commit this review reads, and in autonomous mode it goes into the handshake's `head:` line (*Verdict → handshake mapping*). Run it here, with the diff, not when you write the report.
 
 Cross-reference the diff against the AC and out-of-scope notes:
 
@@ -234,7 +237,7 @@ Absent all three, run the interactive path exactly as documented above. Also rea
   - **CRITICAL findings** from `/ccmagic:review` must be fixed before proceeding → return them under `fixable-findings` (the caller fixes and re-reviews). A CRITICAL finding that needs human judgment → `needs-human`.
 - **Report posting:** if a PR exists for the branch, post the Step 6 combined report (or the delta report on re-review passes) as a PR comment. Every posted report, full or delta, begins with the `# Ticket-Grounded Review: {TICKET-ID}` heading line with no preamble before it, and in autonomous mode ends with the handshake shown under *Verdict → handshake mapping*: the same keys in the same order, the actual verdict filled into `status:`, inside a code fence, as the last thing in the comment body (an external merge gate selects the comment by that heading and reads the handshake block that ends it; a fenced block is the rendering it reads without ambiguity); with no PR (e.g. a standalone pre-PR review), skip — the report in your output is the artifact.
 
-  Post it with `ccm-post-review`, never with `gh pr comment` directly. It reads the report on stdin, checks the heading and the fenced handshake, and only then posts. Pass the PR number from the Step 0 `ccm-context` output (`pr.number`), or omit it to use the current branch's PR:
+  Post it with `ccm-post-review`, never with `gh pr comment` directly. It reads the report on stdin, checks the heading and the fenced handshake (including that `head:` is the checkout's HEAD), and only then posts. Pass the PR number from the Step 0 `ccm-context` output (`pr.number`), or omit it to use the current branch's PR:
   ```bash
   "${CLAUDE_PLUGIN_ROOT}/bin/ccm-post-review" {PR} <<'CCM_REVIEW_EOF'
   # Ticket-Grounded Review: {TICKET-ID}
@@ -244,7 +247,7 @@ Absent all three, run the interactive path exactly as documented above. Also rea
   The script is also on the Bash `PATH` as `ccm-post-review` while the plugin is enabled; use the bare name if the `${CLAUDE_PLUGIN_ROOT}` path doesn't resolve. If the heredoc fails before the script runs because zsh (the default macOS shell) can't write its temp file under `/tmp` in a sandboxed Bash, run it again prefixed with `TMPPREFIX="${TMPDIR:-/tmp}/zsh"; `, which moves that file under `$TMPDIR`. Don't use the prefix by default: a session with only narrow Bash grants refuses the expansion ("Contains expansion"). Act on its exit code:
   - **0:** posted; the JSON has the comment `url`.
   - **1:** refused, nothing posted. `problems` lists what is wrong with the report's format. Fix the report and run it again; do not post it any other way.
-  - **3:** the post itself failed (no PR for the branch, GitHub error). Say so in your output and continue. A later delta pass then leans on the grounding block's `previous_findings:` alone (the prior-comment reference is a convenience, not a dependency).
+  - **3:** the post itself failed (HEAD unreadable or not a 40-character SHA, no PR for the branch, GitHub error). Say so in your output and continue. A later delta pass then leans on the grounding block's `previous_findings:` alone (the prior-comment reference is a convenience, not a dependency).
 - **Re-review passes (`review_pass:` ≥ 2 in the grounding block):** post a **delta report** instead of a full fresh one, under the same `# Ticket-Grounded Review: {TICKET-ID}` heading line and ending with the same fenced handshake — each entry in the grounding block's `previous_findings:` list verified and reported fixed / not-fixed as one-liners, net-new findings in full (schema unchanged), and a reference to the previous pass's report comment on the PR (fetch via `gh pr view --json comments` if needed) instead of repeating unchanged sections. Verdict and handshake semantics are unchanged, and the systemic-enumeration and scoped-all-clear rules apply in full on every pass.
 
 ### Verdict → handshake mapping
@@ -253,9 +256,12 @@ Emit the verdict as the last thing in the report:
 
 ```
 status: clean | fixable-findings | needs-human
+head: <the full 40-character SHA from Step 4's git rev-parse HEAD>
 reason: <one line, when not clean>
 follow_ups: [<any tickets or deferrals noted>]
 ```
+
+`head:` names the commit the review read, so an external merge gate can accept the verdict only for a PR whose head is that commit (Reeve parks any other head as `review-not-clean`). Write it on every pass, every verdict, and every transport (mcp and prompt-relay), in the posted report and in the handshake you return: all 40 lowercase hex characters, at the start of its line, with nothing after the SHA. Never a short SHA or a placeholder. `ccm-post-review` refuses a report whose `head:` is missing or is not the checkout's HEAD, and its refusal names the SHA to use.
 
 - **clean** — no CRITICAL findings and no missing AC (out-of-scope items, if any, are flagged only).
 - **fixable-findings** — one or more CRITICAL findings and/or missing-AC items that are mechanically fixable in-scope. **List them** in the report so the caller can address them.

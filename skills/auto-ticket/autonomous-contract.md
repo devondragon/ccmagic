@@ -93,10 +93,13 @@ In autonomous mode, every sub-skill ends its output with a fenced block:
 
 ```
 status: clean | fixable-findings | needs-human | done
+head: <review-ticket only: the full 40-character SHA from git rev-parse HEAD at review time>
 reason: <one line, when not clean/done>
 follow_ups: [<ticket ids or short descriptions of anything filed/deferred>]
 requested_state: <intended tracker state: orchestrated runs (§8) and the prompt-relay transport; omit otherwise>
 ```
+
+`head:` is emitted by `review-ticket` alone, on every pass and every transport, in its returned handshake and in the report it posts to the PR. It binds the verdict to the commit the review read: Reeve's merge gate accepts a report whose `head` is the PR's head and parks any other head as `review-not-clean` (RV-1). `ccm-post-review` refuses to post a report without it or with a `head` other than the checkout's HEAD. The other steps never emit it, and the SubagentStop hook accepts the line but does not require it.
 
 Which values each sub-skill can emit:
 
@@ -182,13 +185,13 @@ The single routine the orchestrator (or a standalone top-level sub-skill) runs w
 
 ### Run record
 ```json
-{"ccmagic": {"version": 1, "run_id": "{run_id}", "ticket": "{TICKET-ID}", "outcome": "parked", "classification": "{class}", "merge_owner": "{self | reeve}", "pr": {pr_number or null}, "review_passes": {n}, "feedback_passes": {n}, "ci_attempts": {n}, "findings": {"critical": {n}, "high": {n}}, "steps": [{"step": "work-ticket", "status": "done"}, {"step": "review-ticket", "status": "needs-human", "reason": "{one line}"}], "follow_ups": []}}
+{"ccmagic": {"version": 2, "run_id": "{run_id}", "ticket": "{TICKET-ID}", "repo": "{owner/name}", "pr": {pr_number or null}, "head_sha": {"<PR head SHA>" or null}, "outcome": "parked", "classification": "{class}", "merge_owner": "{self | reeve}", "review_passes": {n}, "feedback_passes": {n}, "ci_attempts": {n}, "findings": {"critical": {n}, "high": {n}}, "steps": [{"step": "work-ticket", "status": "done"}, {"step": "review-ticket", "status": "needs-human", "reason": "{one line}"}], "follow_ups": []}}
 ```
 
 Nothing was merged. Resolve the item above (and any uncommitted changes), then re-run `/ccmagic:auto-ticket {TICKET-ID}` (or continue manually).
 ````
 
-The keys and rules are the same as the Step 6 `### Run record` block (contract §2's grounding block feeds `merge_owner`; see `skills/auto-ticket/SKILL.md` Step 6). This block is what lets Reeve's `parseRunRecord` read a parked run: it matches on a comment containing "Autonomous run summary" and reads that comment's final ```json fence, so the heading above must keep that exact phrase.
+The keys and rules are the same as the Step 6 `### Run record` block (contract §2's grounding block feeds `merge_owner`; see `skills/auto-ticket/SKILL.md` Step 6, which says where `repo`, `pr`, and `head_sha` come from; a run parked before opening a PR writes `"pr": null, "head_sha": null`). This block is what lets Reeve's `parseRunRecord` read a parked run: it matches on a comment containing "Autonomous run summary" and reads that comment's final ```json fence, so the heading above must keep that exact phrase.
 
 ### Under the prompt-relay transport
 
