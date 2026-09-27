@@ -598,6 +598,11 @@ stop_review_verdict_values() {
   check "$(blocked)" "allow"
 }
 
+stop_review_head_line_passes() {
+  run_stop_hook $'# Ticket-Grounded Review: ENG-1\n...\n```\nstatus: clean\nhead: 0123456789abcdef0123456789abcdef01234567\nreason: no findings\nfollow_ups: []\n```' ccmagic:auto-review
+  check "$(blocked)" "allow"
+}
+
 stop_missing_handshake_blocked() {
   run_stop_hook 'All done, the PR is merged.' ccmagic:auto-finish
   check "$(blocked)" "block"
@@ -675,17 +680,19 @@ REVIEW_BODY=$'# Ticket-Grounded Review: ENG-1\n\n## Ticket\n- **ENG-1**: "Add se
 
 postreview_valid_report_posts() {
   fx pr-comment 'https://github.com/acme/app/pull/7#issuecomment-99'
-  local report=$REVIEW_BODY$'```\nstatus: clean\nreason: no findings\nfollow_ups: []\n```\n'
+  local head report
+  head=$(git rev-parse HEAD)
+  report=$REVIEW_BODY$'```\nstatus: clean\nhead: '"$head"$'\nreason: no findings\nfollow_ups: []\n```\n'
   run_post_review "$report" 7
   check "$RC,$(jqval .posted),$(jqval .url)" "0,true,https://github.com/acme/app/pull/7#issuecomment-99"
-  check "$(jqval .ticket_id),$(jqval .status)" "ENG-1,clean"
+  check "$(jqval .ticket_id),$(jqval .status),$(jqval .head)" "ENG-1,clean,$head"
   check "$(grep '^pr comment' "$GH_FIXTURES/calls.log")" "pr comment 7 --body-file -"
   check "$(cat "$GH_FIXTURES/pr-comment.stdin")" "$(printf '%s' "$report")"
 }
 
 postreview_current_branch_and_list_follow_ups() {
   fx pr-comment 'https://github.com/acme/app/pull/7#issuecomment-100'
-  run_post_review $'# Ticket-Grounded Review: #42\n\nfindings\n\n```text\nstatus: fixable-findings\nreason: 1 CRITICAL\nfollow_ups:\n  - ENG-9\n```\n\n\n'
+  run_post_review $'# Ticket-Grounded Review: #42\n\nfindings\n\n```text\nstatus: fixable-findings\nhead: '"$(git rev-parse HEAD)"$'\nreason: 1 CRITICAL\nfollow_ups:\n  - ENG-9\n```\n\n\n'
   check "$RC,$(jqval .ticket_id),$(jqval .status)" "0,#42,fixable-findings"
   check "$(grep '^pr comment' "$GH_FIXTURES/calls.log")" "pr comment --body-file -"
 }
@@ -730,9 +737,75 @@ postreview_missing_follow_ups_refused() {
 }
 
 postreview_keys_out_of_order_refused() {
-  run_post_review "$REVIEW_BODY"$'```\nstatus: clean\nfollow_ups: []\nreason: ok\n```\n' 7
+  local head
+  head=$(git rev-parse HEAD)
+  run_post_review "$REVIEW_BODY"$'```\nstatus: clean\nhead: '"$head"$'\nfollow_ups: []\nreason: ok\n```\n' 7
   check "$RC,$(comments_posted)" "1,0"
   [[ $(problems) == *"in the order"* ]]
+  run_post_review "$REVIEW_BODY"$'```\nstatus: clean\nreason: ok\nhead: '"$head"$'\nfollow_ups: []\n```\n' 7
+  check "$RC,$(comments_posted)" "1,0"
+  [[ $(problems) == *"in the order \`status:\`, \`head:\`, \`reason:\`, \`follow_ups:\`"* ]]
+}
+
+# RV-1: the handshake names the commit the review read, so a merge gate can
+# bind the verdict to the PR head. The script checks it against the checkout.
+postreview_missing_head_refused() {
+  local head
+  head=$(git rev-parse HEAD)
+  run_post_review "$REVIEW_BODY"$'```\nstatus: clean\nreason: ok\nfollow_ups: []\n```\n' 7
+  check "$RC,$(comments_posted)" "1,0"
+  [[ $(problems) == *"no \`head:\` line"* ]]
+  [[ $(problems) == *"head: $head"* ]]
+}
+
+postreview_short_head_refused() {
+  local head
+  head=$(git rev-parse HEAD)
+  run_post_review "$REVIEW_BODY"$'```\nstatus: clean\nhead: '"${head:0:12}"$'\nreason: ok\nfollow_ups: []\n```\n' 7
+  check "$RC,$(comments_posted)" "1,0"
+  [[ $(problems) == *"full 40-character"* ]]
+  run_post_review "$REVIEW_BODY"$'```\nstatus: clean\nhead: '"$head"$' (reviewed)\nreason: ok\nfollow_ups: []\n```\n' 7
+  check "$RC,$(comments_posted)" "1,0"
+  [[ $(problems) == *"full 40-character"* ]]
+}
+
+postreview_head_not_checkout_refused() {
+  local head other
+  head=$(git rev-parse HEAD)
+  other=$(printf '%040d' 7)
+  run_post_review "$REVIEW_BODY"$'```\nstatus: clean\nhead: '"$other"$'\nreason: ok\nfollow_ups: []\n```\n' 7
+  check "$RC,$(comments_posted)" "1,0"
+  [[ $(problems) == *"$other"*"$head"* ]]
+}
+
+postreview_two_heads_refused() {
+  local head
+  head=$(git rev-parse HEAD)
+  run_post_review "$REVIEW_BODY"$'```\nstatus: clean\nhead: '"$head"$'\nhead: '"$head"$'\nreason: ok\nfollow_ups: []\n```\n' 7
+  check "$RC,$(comments_posted)" "1,0"
+  [[ $(problems) == *"more than one \`head:\` line"* ]]
+}
+
+# A gate reads `head:` only at the start of a line; indented, it is ignored.
+postreview_indented_head_refused() {
+  run_post_review "$REVIEW_BODY"$'```\nstatus: clean\n  head: '"$(git rev-parse HEAD)"$'\nreason: ok\nfollow_ups: []\n```\n' 7
+  check "$RC,$(comments_posted)" "1,0"
+  [[ $(problems) == *"at the start of its line"* ]]
+}
+
+postreview_no_checkout_head_fails() {
+  cd "$T"
+  run_post_review "$REVIEW_BODY"$'```\nstatus: clean\nhead: 0123456789abcdef0123456789abcdef01234567\nreason: ok\nfollow_ups: []\n```\n' 7
+  check "$RC,$(jqval .posted),$(comments_posted)" "3,false,0"
+  [[ $(jqval .error) == *"git rev-parse HEAD"* ]]
+}
+
+postreview_uppercase_head_posts() {
+  fx pr-comment 'https://github.com/acme/app/pull/7#issuecomment-101'
+  local head
+  head=$(git rev-parse HEAD)
+  run_post_review "$REVIEW_BODY"$'```\nstatus: clean\nhead: '"$(tr 'a-f' 'A-F' <<<"$head")"$'\nreason: ok\nfollow_ups: []\n```\n' 7
+  check "$RC,$(jqval .head)" "0,$head"
 }
 
 postreview_text_after_fence_refused() {
@@ -754,7 +827,7 @@ postreview_reports_every_problem() {
 
 postreview_gh_failure() {
   fx_err pr-comment 'no pull requests found for branch "feature/x"' 1
-  run_post_review "$REVIEW_BODY"$'```\nstatus: clean\nreason: ok\nfollow_ups: []\n```\n'
+  run_post_review "$REVIEW_BODY"$'```\nstatus: clean\nhead: '"$(git rev-parse HEAD)"$'\nreason: ok\nfollow_ups: []\n```\n'
   check "$RC,$(jqval .posted),$(comments_posted)" "3,false,1"
   [[ $(jqval .error) == *"no pull requests found"* ]]
 }

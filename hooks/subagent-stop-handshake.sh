@@ -3,6 +3,7 @@
 # message ends with a valid status handshake (skills/auto-ticket/autonomous-contract.md §3):
 #
 #   status: <value>
+#   head: <sha>                  (review-ticket only; accepted, not required)
 #   reason: <one line>
 #   follow_ups: [...]
 #   requested_state: <state>     (optional: a tracker state change the step needs)

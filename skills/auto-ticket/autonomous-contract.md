@@ -93,10 +93,13 @@ In autonomous mode, every sub-skill ends its output with a fenced block:
 
 ```
 status: clean | fixable-findings | needs-human | done
+head: <review-ticket only: the full 40-character SHA from git rev-parse HEAD at review time>
 reason: <one line, when not clean/done>
 follow_ups: [<ticket ids or short descriptions of anything filed/deferred>]
 requested_state: <intended tracker state: orchestrated runs (§8) and the prompt-relay transport; omit otherwise>
 ```
+
+`head:` is emitted by `review-ticket` alone, on every pass and every transport, in its returned handshake and in the report it posts to the PR. It binds the verdict to the commit the review read: Reeve's merge gate accepts a report whose `head` is the PR's head and parks any other head as `review-not-clean` (RV-1). `ccm-post-review` refuses to post a report without it or with a `head` other than the checkout's HEAD. The other steps never emit it, and the SubagentStop hook accepts the line but does not require it.
 
 Which values each sub-skill can emit:
 
