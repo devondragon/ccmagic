@@ -56,6 +56,20 @@ ticket_content:
 
 The `~~~` fence is deliberate — issue bodies routinely contain backtick fences, so tildes keep the ticket body from prematurely closing the block. Copy the text as written; do not summarize it, because the step agents parse acceptance criteria out of it. Sub-skills in an orchestrated run read the ticket from this section **instead of** fetching it (§8).
 
+<!-- ccmagic:spec-only -->
+**Only when the ticket is a Reeve spec ticket.** When the orchestrator's Step 0 finds a well-formed `reeve:spec` block in the description (`ccm-spec-block` prints a non-null `spec`), it appends a `spec:` section after `ticket_content:`. No other ticket gets one, and every rule that names the `spec:` section applies only when it is there:
+
+```
+spec:
+  repo: {owner/name}
+  change: {change name}
+  section: {a section number, archive, or parent}
+  tasks: {the block's task ids, comma-separated; omitted when there are none}
+```
+
+The work step checks it against the checkout before any work, implements only that section's tasks (or runs the archive procedure), and emits a `tasks_done:` line (§3); the finish step checks the branch's OpenSpec files again before the merge or hand-off; the run record gains an `openspec` key. The `tasks:` line is not the source of the work: the section's tasks are read from `openspec/changes/{change}/tasks.md` in the checkout.
+<!-- /ccmagic:spec-only -->
+
 `review_pass:` appears only when the orchestrator re-invokes `review-ticket`: inside its Step 3 fix loop, or in its Step 4f re-review after a late push (a push in Step 4a or 4b after the last clean review). It is 2 on the first re-review and counts up across the run. `review-ticket` uses it to switch to a delta report (see its *Autonomous mode*); all other sub-skills ignore it. On those re-invocations the orchestrator also appends a `previous_findings:` section to the grounding block: a short fenced list of the findings the work step's fix pass just applied (its `applied_findings:`, id/title and file per finding), so the fresh review subagent knows exactly what to verify as fixed. On a late-push re-review the list holds each Step 4b fix pass's `applied_findings:` and one `- {short sha} {subject}` line per commit pushed since the last clean review:
 
 ```
@@ -100,6 +114,10 @@ requested_state: <intended tracker state: orchestrated runs (§8) and the prompt
 ```
 
 `head:` is emitted by `review-ticket` alone, on every pass and every transport, in its returned handshake and in the report it posts to the PR. It binds the verdict to the commit the review read: Reeve's merge gate accepts a report whose `head` is the PR's head and parks any other head as `review-not-clean` (RV-1). `ccm-post-review` refuses to post a report without it or with a `head` other than the checkout's HEAD. The other steps never emit it, and the SubagentStop hook accepts the line but does not require it.
+
+<!-- ccmagic:spec-only -->
+**Only when the grounding block has a `spec:` section (§2).** The work step's handshake carries one more line, after `follow_ups:`: `tasks_done: [<task ids>]`, the ids of the section's tasks whose boxes the step changed from unchecked to checked (`[]` when it ticked none: the archive, a park before any box, and every fix pass). No other step emits it, and the SubagentStop hook accepts the line without requiring it.
+<!-- /ccmagic:spec-only -->
 
 Which values each sub-skill can emit:
 
@@ -192,6 +210,14 @@ Nothing was merged. Resolve the item above (and any uncommitted changes), then r
 ````
 
 The keys and rules are the same as the Step 6 `### Run record` block (contract §2's grounding block feeds `merge_owner`; see `skills/auto-ticket/SKILL.md` Step 6, which says where `repo`, `pr`, and `head_sha` come from; a run parked before opening a PR writes `"pr": null, "head_sha": null`). When `repo` or the PR head can't be read, the record falls back to `"version": 1` without `repo` and `head_sha` and carries `"fallback_reason": "<one line>"` naming the failed command and its first error line; the same line appears under **Autonomous decisions so far**. This block is what lets Reeve's `parseRunRecord` read a parked run: it matches on a comment containing "Autonomous run summary" and reads that comment's final ```json fence, so the heading above must keep that exact phrase.
+
+<!-- ccmagic:spec-only -->
+**Only when the grounding block has a `spec:` section.** The parked record carries the `openspec` key as the last key inside `ccmagic`, as `skills/auto-ticket/SKILL.md` Step 6 describes, with the ids the work step ticked before it stopped:
+
+```json
+{"ccmagic": {"version": 2, "run_id": "{run_id}", "ticket": "{TICKET-ID}", "repo": "{owner/name}", "pr": {pr_number or null}, "head_sha": {"<PR head SHA>" or null}, "outcome": "parked", "classification": "{class}", "merge_owner": "{self | reeve}", "review_passes": {n}, "feedback_passes": {n}, "ci_attempts": {n}, "findings": {"critical": {n}, "high": {n}}, "steps": [{"step": "work-ticket", "status": "done"}, {"step": "review-ticket", "status": "needs-human", "reason": "{one line}"}], "follow_ups": [], "openspec": {"change": "{spec.change}", "section": {spec.section: a number, or "archive"}, "tasks_done": [{"task id", ...}]}}}
+```
+<!-- /ccmagic:spec-only -->
 
 ### Under the prompt-relay transport
 

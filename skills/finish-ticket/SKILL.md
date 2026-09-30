@@ -2,7 +2,7 @@
 name: finish-ticket
 description: Closes out a development ticket end-to-end. Detects the tracker (Linear, GitHub Issues, or JIRA) and the ticket from the current branch, sanity-checks the PR, confirms disposition (Done by default, or QA when configured/requested), merges the PR, and updates the ticket with a comment, PR link, and final status.
 user-invocable: true
-allowed-tools: Read(*), Edit(*), Bash(git:*, gh:*), Bash(${CLAUDE_PLUGIN_ROOT}/bin/ccm-context *), Bash(ccm-context *), Bash(${CLAUDE_PLUGIN_ROOT}/bin/ccm-merge-gate *), Bash(ccm-merge-gate *), Bash(${CLAUDE_PLUGIN_ROOT}/bin/ccm-ci-status *), Bash(ccm-ci-status *), Glob(*), Grep(*), AskUserQuestion(*), Skill(*)
+allowed-tools: Read(*), Edit(*), Bash(git:*, gh:*), Bash(${CLAUDE_PLUGIN_ROOT}/bin/ccm-context *), Bash(ccm-context *), Bash(${CLAUDE_PLUGIN_ROOT}/bin/ccm-merge-gate *), Bash(ccm-merge-gate *), Bash(${CLAUDE_PLUGIN_ROOT}/bin/ccm-ci-status *), Bash(ccm-ci-status *), Bash(${CLAUDE_PLUGIN_ROOT}/bin/ccm-openspec-scope *), Bash(ccm-openspec-scope *), Glob(*), Grep(*), AskUserQuestion(*), Skill(*)
 argument-hint: "[--qa]"
 model: sonnet
 ---
@@ -144,6 +144,16 @@ If `ci.status` is `pending` or `not-registered`, wait for CI rather than reporti
 Each call returns within ten minutes. If it returns `"call_again": true`, run the same command again; the total wait is bounded by `ci_timeout_minutes` through the wait-key's deadline file, so you don't count anything. Once it settles, re-run `ccm-merge-gate`. A final `timeout` status is a blocker.
 
 The `PreToolUse` hook enforces the same gate: in an autonomous run, `gh pr merge` is denied while `ccm-merge-gate` fails. Interactively the hook only enforces the gate when `merge_guard: on` is set; see Step 6.
+
+<!-- ccmagic:spec-only -->
+**Only when the grounding block has a `spec:` section** (a Reeve spec ticket, contract §2). Check the PR's OpenSpec files with the merge gate's file rules before any merge or hand-off. Run `git fetch origin {baseRefName}` and then the check, each as its own Bash call:
+
+```bash
+"${CLAUDE_PLUGIN_ROOT}/bin/ccm-openspec-scope" {spec.change} {spec.section} origin/{baseRefName}
+```
+
+It judges the branch's HEAD against the base branch tip. Anything but exit 0 is a blocker, `spec scope check failed ({rule}): {detail}` (or `cannot run the spec scope check: {detail}` when it printed no `rule`), listed with the merge gate's blockers; in autonomous mode it is a `needs-human` like any blocker, and the PR is neither merged nor handed off.
+<!-- /ccmagic:spec-only -->
 
 ### 3d. Scope Alignment
 Run:
