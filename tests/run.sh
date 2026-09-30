@@ -706,7 +706,42 @@ stop_orchestrator_doing_the_work_sent_back() {
   check "$RC,$(blocked)" "0,block"
   local r
   r=$(jq -r .reason <<<"$OUT")
-  [[ $r == *"Continue from Step 0"* && $r == *"Do not redo"* && $r == *"Edit"* && $r == *"gh pr create"* ]]
+  [[ $r == *"Continue from Step 0"* && $r == *"Do not redo"* && $r == *"Edit"* && $r == *"gh pr create"* && $r == *"without running any step agent"* ]]
+  [[ $r != *"Route-and-stop"* ]]
+}
+
+# An orchestrator that merged the PR itself is not sent to rerun the steps:
+# it is told to park with a run record saying the steps were skipped.
+stop_orchestrator_that_merged_told_to_park() {
+  orch_transcript "$T/t.jsonl" "$ORCH_DIR" "$ORCH_EDIT" "$ORCH_PUSH" "$ORCH_PR" \
+    '{"name": "Bash", "input": {"command": "gh pr merge 7 --squash --delete-branch"}}'
+  run_orch_hook 'Merged PR #7.' "$T/t.jsonl"
+  check "$RC,$(blocked)" "0,block"
+  local r
+  r=$(jq -r .reason <<<"$OUT")
+  [[ $r == *"already merged, so do not rerun any step"* && $r == *"Route-and-stop now"* && $r == *"gh pr merge 7"* ]]
+  [[ $r != *"Continue from Step 0"* ]]
+}
+
+# Older skill versions ran the step agents and also edited between them. Such
+# a run got far enough that a restart from Step 0 would undo its ending, so
+# any step-agent call lets it go (the mcp ending carries no marker).
+stop_orchestrator_with_step_agents_and_edits_passes() {
+  orch_transcript "$T/t.jsonl" "$ORCH_DIR" "$ORCH_STEP" "$ORCH_EDIT" \
+    '{"name": "Bash", "input": {"command": "git commit --amend --no-edit && git push --force-with-lease"}}' \
+    '{"name": "Task", "input": {"subagent_type": "ccmagic:auto-finish", "prompt": "grounding"}}'
+  run_orch_hook 'RS-1 merged. PR #7.' "$T/t.jsonl"
+  check "$RC,$OUT" "0,"
+}
+
+# A parked note posted through a heredoc whose body mentions git push is a
+# comment, not a push; only the command before any heredoc is read.
+stop_orchestrator_heredoc_body_ignored() {
+  orch_transcript "$T/t.jsonl" "$ORCH_DIR" \
+    '{"name": "Bash", "input": {"command": "gh pr comment 7 --body-file - <<'"'"'CCM_SUMMARY_EOF'"'"'\nParked: git push rejected; gh pr create failed\nCCM_SUMMARY_EOF"}}' \
+    '{"name": "Bash", "input": {"command": "gh issue comment 42 --body \"the git push was rejected\""}}'
+  run_orch_hook 'RS-1 parked: validate failed.' "$T/t.jsonl"
+  check "$RC,$OUT" "0,"
 }
 
 stop_orchestrator_with_final_block_passes() {
