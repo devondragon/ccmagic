@@ -719,7 +719,7 @@ stop_orchestrator_that_merged_told_to_park() {
   check "$RC,$(blocked)" "0,block"
   local r
   r=$(jq -r .reason <<<"$OUT")
-  [[ $r == *"already merged, so do not rerun any step"* && $r == *"Route-and-stop now"* && $r == *"gh pr merge 7"* ]]
+  [[ $r == *"already merged, so do not rerun any step"* && $r == *"Route-and-stop now"* && $r == *"stage finish-ticket, skipping its step 1"* && $r == *"gh pr merge 7"* ]]
   [[ $r != *"Continue from Step 0"* ]]
 }
 
@@ -741,6 +741,24 @@ stop_orchestrator_heredoc_body_ignored() {
     '{"name": "Bash", "input": {"command": "gh pr comment 7 --body-file - <<'"'"'CCM_SUMMARY_EOF'"'"'\nParked: git push rejected; gh pr create failed\nCCM_SUMMARY_EOF"}}' \
     '{"name": "Bash", "input": {"command": "gh issue comment 42 --body \"the git push was rejected\""}}'
   run_orch_hook 'RS-1 parked: validate failed.' "$T/t.jsonl"
+  check "$RC,$OUT" "0,"
+}
+
+# One Bash call can run several commands on separate lines; each line counts.
+stop_orchestrator_multi_line_command_sent_back() {
+  orch_transcript "$T/t.jsonl" "$ORCH_DIR" \
+    '{"name": "Bash", "input": {"command": "git add src/version.ts\ngit commit -m \"fix: x\"\ngit push -u origin HEAD"}}'
+  run_orch_hook "$RS105_END" "$T/t.jsonl"
+  check "$RC,$(blocked)" "0,block"
+  [[ $(jq -r .reason <<<"$OUT") == *"Bash: git commit"* ]]
+}
+
+# A multi-line call whose heredoc body has git lines: only the lines before
+# the heredoc are read.
+stop_orchestrator_multi_line_heredoc_body_ignored() {
+  orch_transcript "$T/t.jsonl" "$ORCH_DIR" \
+    '{"name": "Bash", "input": {"command": "gh pr view 7 --json headRefOid\ngh pr comment 7 --body-file - <<'"'"'CCM_COMMENT_EOF'"'"'\nParked.\ngit push -u origin HEAD\ngh pr create --fill\nCCM_COMMENT_EOF"}}'
+  run_orch_hook 'RS-1 parked.' "$T/t.jsonl"
   check "$RC,$OUT" "0,"
 }
 

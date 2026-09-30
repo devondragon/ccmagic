@@ -20,8 +20,8 @@
 #     agent at all;
 #   - it made an Edit, Write, MultiEdit, or NotebookEdit call, or ran
 #     git commit, git push, gh pr create, or gh pr merge itself (only the
-#     command is read: the first line, before any heredoc, per segment, so a
-#     comment body that mentions git push does not count);
+#     command text before the first heredoc is read, line by line and piece
+#     by piece, so a comment body that mentions git push does not count);
 #   - its last message has neither `=== FINAL MESSAGE TO RELAY` nor
 #     `Autonomous run summary`.
 # A run that spawned any step agent is never sent back, even if it also
@@ -45,7 +45,7 @@ transcript=$(jq -r '.agent_transcript_path // empty' <<<"$INPUT" 2>/dev/null) ||
 # agent, and what did it do itself. Lines that are not JSON are skipped.
 # Prints "other", "stepped", "clean", or "acted<TAB>merged|open<TAB>acts".
 verdict=$(jq -n -R -r '
-  def segments: tostring | split("\n")[0] | split("<<")[0] | [splits("[;&|]+")];
+  def segments: tostring | split("<<")[0] | [splits("[\n;&|]+")];
   def acting: test("^\\s*(\\(\\s*)?(git\\s+(-C\\s+\\S+\\s+)?(commit|push)|gh\\s+pr\\s+(create|merge))(\\s|$)");
   [inputs | fromjson? | objects] as $e
   | ($e | map(select(.type == "user")) | first | .message.content // "") as $c
@@ -82,7 +82,7 @@ esac
 lead="You are the /auto-ticket orchestrator, and you did the work yourself ($acts) without running any step agent. This skill never edits code, commits, pushes, opens a PR, or merges; the step agents do. Do not redo, revert, or repeat any change already made."
 end_rule="End the run the way Step 6 says: the run summary, and under the prompt-relay transport the === FINAL MESSAGE TO RELAY (reproduce verbatim) === block (contract §7)."
 if [ "$state" = merged ]; then
-  r="$lead The PR is already merged, so do not rerun any step. Route-and-stop now (contract §4) with stage auto-ticket and reason: the orchestrator merged the PR itself without the work, review, validate, or finish steps, so the merged change was not reviewed. Post the parked note with its run record (outcome parked). $end_rule"
+  r="$lead The PR is already merged, so do not rerun any step. Route-and-stop now (contract §4) with stage finish-ticket, skipping its step 1 since the PR is already merged, and reason: the orchestrator merged the PR itself without the work, review, validate, or finish steps, so the merged change was not reviewed. Post the parked note with its run record (outcome parked). $end_rule"
 else
   r="$lead Continue from Step 0: read autonomous-contract.md, run ccm-context, then run Steps 1 to 6 through run_step. If the work step finds the change already made and the PR open, that is its done. $end_rule"
 fi
