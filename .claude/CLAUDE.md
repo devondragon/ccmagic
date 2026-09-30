@@ -134,6 +134,7 @@ ccmagic/
 │   ├── lib-commit.sh          # commit-subject parsing and pattern (sourced)
 │   ├── lib-handshake.sh       # status handshake validation (sourced)
 │   ├── subagent-stop-handshake.sh  # auto-* agents must end with the status handshake
+│   ├── subagent-stop-orchestrator.sh  # auto-ticket orchestrator may not do step work itself
 │   └── post-tool-use-commit.sh
 ├── tests/
 │   ├── run.sh                 # plain-bash tests for bin/ and hooks/

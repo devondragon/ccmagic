@@ -286,6 +286,7 @@ Rules that have one right answer are enforced in code, not left to the skill tex
   | Commit subject not in conventional-commit format | denied, with the expected format | allowed; the PostToolUse hook warns |
 
 - `SubagentStop` handshake check (`hooks/subagent-stop-handshake.sh`): a `ccmagic:auto-*` step agent whose final message doesn't end with a valid status handshake is sent back once to add it. The send-back message also covers the `SubagentHandback` tool: its message must carry the full report ending with the handshake. Its handshake validation lives in `hooks/lib-handshake.sh`, which `ccm-post-review` shares.
+- `SubagentStop` orchestrator check (`hooks/subagent-stop-orchestrator.sh`): the forked `/auto-ticket` orchestrator is sent back once when it ran no step agent at all and still edited files, committed, pushed, opened a PR, or merged itself, and ended without a run summary or the prompt-relay final-message block. It is told to continue from Step 0, or to park when it already merged. Every other subagent passes untouched.
 - `PostToolUse` commit-format check (`hooks/post-tool-use-commit.sh`): warns when a commit subject doesn't match the conventional-commit format in `.claude/CLAUDE.md`. It never rejects, so it's safe on repos with non-conventional history.
 
 Tests: `tests/run.sh` (plain bash, with a `gh` stub fed recorded API output). CI runs it and shellcheck on every PR.
@@ -333,6 +334,7 @@ ccmagic/
 │   ├── pre-tool-use-guard.sh
 │   ├── lib-commit.sh
 │   ├── subagent-stop-handshake.sh
+│   ├── subagent-stop-orchestrator.sh
 │   └── post-tool-use-commit.sh
 ├── tests/
 │   └── run.sh                 # tests for bin/ and hooks/

@@ -665,6 +665,180 @@ stop_other_agents_ignored() {
   check "$(blocked)" "allow"
 }
 
+# ---- subagent-stop-orchestrator (RV-80) ----------------------------------------
+
+# orch_transcript FILE SKILL_DIR TOOL_USE_JSON...: write a forked-skill
+# transcript in the shape Claude Code 2.1.286 writes (checked with a live
+# SubagentStop probe): a first user message holding the skill text, then one
+# assistant entry per tool call. A non-JSON line checks that it is skipped.
+orch_transcript() {
+  local f=$1 dir=$2 tu
+  shift 2
+  jq -cn --arg d "$dir" '{type: "user", isSidechain: true, message: {role: "user",
+    content: ("Base directory for this skill: " + $d + "\n\n# /auto-ticket \u2014 Autonomous Ticket Driver\n\nDrives one ticket...\n\nARGUMENTS: RS-105")}}' >"$f"
+  echo 'not json' >>"$f"
+  jq -cn '{type: "attachment"}' >>"$f"
+  for tu in "$@"; do
+    jq -cn --argjson t "$tu" '{type: "assistant", message: {role: "assistant", content: [{type: "thinking", thinking: ""}, ({type: "tool_use", id: "x"} + $t)]}}' >>"$f"
+  done
+}
+
+# run_orch_hook MESSAGE TRANSCRIPT [AGENT_TYPE] [ACTIVE]
+run_orch_hook() {
+  OUT=$(jq -n --arg m "$1" --arg p "$2" --arg a "${3:-general-purpose}" --argjson active "${4:-false}" \
+    '{hook_event_name: "SubagentStop", agent_id: "a1", agent_type: $a, agent_transcript_path: $p, last_assistant_message: $m, stop_hook_active: $active}' |
+    ${HOOK_BASH:-bash} "$HOOKS/subagent-stop-orchestrator.sh" 2>"$T/stderr") && RC=0 || RC=$?
+}
+
+ORCH_DIR=/home/u/.claude/plugins/cache/ccmagic/ccmagic/3.15.0/skills/auto-ticket
+ORCH_EDIT='{"name": "Edit", "input": {"file_path": "/w/src/version.ts", "old_string": "a", "new_string": "b"}}'
+ORCH_PUSH='{"name": "Bash", "input": {"command": "git push -u origin HEAD"}}'
+ORCH_PR='{"name": "Bash", "input": {"command": "gh pr create --title \"fix: x\" --body y"}}'
+ORCH_STEP='{"name": "Agent", "input": {"subagent_type": "ccmagic:auto-work", "prompt": "grounding"}}'
+ORCH_READS='{"name": "Bash", "input": {"command": "git status && git log -1 && gh pr view --json number"}}'
+RS105_END='I did not run the full auto-ticket cycle. There was no separate review, PR-feedback, validate or finish pass, and no run summary.'
+
+# The RS-105 run: it read the handoff file, edited, pushed, opened the PR,
+# and ended with no summary.
+stop_orchestrator_doing_the_work_sent_back() {
+  orch_transcript "$T/t.jsonl" "$ORCH_DIR" '{"name": "Read", "input": {"file_path": "/w/.ccmagic-ticket.md"}}' "$ORCH_EDIT" "$ORCH_PUSH" "$ORCH_PR"
+  run_orch_hook "$RS105_END" "$T/t.jsonl"
+  check "$RC,$(blocked)" "0,block"
+  local r
+  r=$(jq -r .reason <<<"$OUT")
+  [[ $r == *"Continue from Step 0"* && $r == *"Do not redo"* && $r == *"Edit"* && $r == *"gh pr create"* && $r == *"without running any step agent"* ]]
+  [[ $r != *"Route-and-stop"* ]]
+}
+
+# An orchestrator that merged the PR itself is not sent to rerun the steps:
+# it is told to park with a run record saying the steps were skipped.
+stop_orchestrator_that_merged_told_to_park() {
+  orch_transcript "$T/t.jsonl" "$ORCH_DIR" "$ORCH_EDIT" "$ORCH_PUSH" "$ORCH_PR" \
+    '{"name": "Bash", "input": {"command": "gh pr merge 7 --squash --delete-branch"}}'
+  run_orch_hook 'Merged PR #7.' "$T/t.jsonl"
+  check "$RC,$(blocked)" "0,block"
+  local r
+  r=$(jq -r .reason <<<"$OUT")
+  [[ $r == *"already merged, so do not rerun any step"* && $r == *"Route-and-stop now"* && $r == *"stage finish-ticket, skipping its step 1"* && $r == *"gh pr merge 7"* ]]
+  [[ $r != *"Continue from Step 0"* ]]
+}
+
+# Older skill versions ran the step agents and also edited between them. Such
+# a run got far enough that a restart from Step 0 would undo its ending, so
+# any step-agent call lets it go (the mcp ending carries no marker).
+stop_orchestrator_with_step_agents_and_edits_passes() {
+  orch_transcript "$T/t.jsonl" "$ORCH_DIR" "$ORCH_STEP" "$ORCH_EDIT" \
+    '{"name": "Bash", "input": {"command": "git commit --amend --no-edit && git push --force-with-lease"}}' \
+    '{"name": "Task", "input": {"subagent_type": "ccmagic:auto-finish", "prompt": "grounding"}}'
+  run_orch_hook 'RS-1 merged. PR #7.' "$T/t.jsonl"
+  check "$RC,$OUT" "0,"
+}
+
+# A parked note posted through a heredoc whose body mentions git push is a
+# comment, not a push; only the command before any heredoc is read.
+stop_orchestrator_heredoc_body_ignored() {
+  orch_transcript "$T/t.jsonl" "$ORCH_DIR" \
+    '{"name": "Bash", "input": {"command": "gh pr comment 7 --body-file - <<'"'"'CCM_SUMMARY_EOF'"'"'\nParked: git push rejected; gh pr create failed\nCCM_SUMMARY_EOF"}}' \
+    '{"name": "Bash", "input": {"command": "gh issue comment 42 --body \"the git push was rejected\""}}'
+  run_orch_hook 'RS-1 parked: validate failed.' "$T/t.jsonl"
+  check "$RC,$OUT" "0,"
+}
+
+# One Bash call can run several commands on separate lines; each line counts.
+stop_orchestrator_multi_line_command_sent_back() {
+  orch_transcript "$T/t.jsonl" "$ORCH_DIR" \
+    '{"name": "Bash", "input": {"command": "git add src/version.ts\ngit commit -m \"fix: x\"\ngit push -u origin HEAD"}}'
+  run_orch_hook "$RS105_END" "$T/t.jsonl"
+  check "$RC,$(blocked)" "0,block"
+  [[ $(jq -r .reason <<<"$OUT") == *"Bash: git commit"* ]]
+}
+
+# A multi-line call whose heredoc body has git lines: only the lines before
+# the heredoc are read.
+stop_orchestrator_multi_line_heredoc_body_ignored() {
+  orch_transcript "$T/t.jsonl" "$ORCH_DIR" \
+    '{"name": "Bash", "input": {"command": "gh pr view 7 --json headRefOid\ngh pr comment 7 --body-file - <<'"'"'CCM_COMMENT_EOF'"'"'\nParked.\ngit push -u origin HEAD\ngh pr create --fill\nCCM_COMMENT_EOF"}}'
+  run_orch_hook 'RS-1 parked.' "$T/t.jsonl"
+  check "$RC,$OUT" "0,"
+}
+
+stop_orchestrator_with_final_block_passes() {
+  orch_transcript "$T/t.jsonl" "$ORCH_DIR" "$ORCH_EDIT"
+  run_orch_hook $'Summary\n\n=== FINAL MESSAGE TO RELAY (reproduce verbatim) ===\nparked\n=== END FINAL MESSAGE ===' "$T/t.jsonl"
+  check "$RC,$(blocked)" "0,allow"
+}
+
+stop_orchestrator_with_run_summary_passes() {
+  orch_transcript "$T/t.jsonl" "$ORCH_DIR" "$ORCH_EDIT"
+  run_orch_hook $'## \xf0\x9f\x85\xbf\xef\xb8\x8f Autonomous run summary for RS-1 (parked for a human)\n...' "$T/t.jsonl"
+  check "$RC,$(blocked)" "0,allow"
+}
+
+stop_orchestrator_second_attempt_released() {
+  orch_transcript "$T/t.jsonl" "$ORCH_DIR" "$ORCH_EDIT"
+  run_orch_hook "$RS105_END" "$T/t.jsonl" general-purpose true
+  check "$RC,$OUT" "0,"
+}
+
+# A legitimate run makes no Edit, Write, commit, push, or PR call of its own,
+# so an mcp-transport ending or a setup error with no block still passes.
+stop_orchestrator_that_delegated_passes() {
+  orch_transcript "$T/t.jsonl" "$ORCH_DIR" "$ORCH_READS" "$ORCH_STEP"
+  run_orch_hook 'RS-1 merged. PR #7.' "$T/t.jsonl"
+  check "$RC,$OUT" "0,"
+}
+
+stop_orchestrator_setup_error_passes() {
+  orch_transcript "$T/t.jsonl" "$ORCH_DIR" '{"name": "Bash", "input": {"command": "ccm-context"}}'
+  run_orch_hook 'No ticket id: pass one as /ccmagic:auto-ticket {TICKET-ID}.' "$T/t.jsonl"
+  check "$RC,$OUT" "0,"
+}
+
+# Any other general-purpose subagent, including one that edits and pushes,
+# and a skill with the same header outside a skills/auto-ticket directory.
+stop_orchestrator_other_general_purpose_ignored() {
+  jq -cn '{type: "user", message: {role: "user", content: "Fix the typo in README and push."}}' >"$T/t.jsonl"
+  jq -cn --argjson t "$ORCH_EDIT" '{type: "assistant", message: {content: [({type: "tool_use"} + $t)]}}' >>"$T/t.jsonl"
+  run_orch_hook 'Fixed.' "$T/t.jsonl"
+  check "$RC,$OUT" "0,"
+  orch_transcript "$T/t2.jsonl" /home/u/skills/other-skill "$ORCH_EDIT"
+  run_orch_hook 'Fixed.' "$T/t2.jsonl"
+  check "$RC,$OUT" "0,"
+}
+
+stop_orchestrator_other_agent_types_ignored() {
+  orch_transcript "$T/t.jsonl" "$ORCH_DIR" "$ORCH_EDIT"
+  run_orch_hook "$RS105_END" "$T/t.jsonl" ccmagic:auto-work
+  check "$RC,$OUT" "0,"
+  run_orch_hook "$RS105_END" "$T/t.jsonl" Explore
+  check "$RC,$OUT" "0,"
+}
+
+stop_orchestrator_malformed_input_passes() {
+  OUT=$(printf 'not json at all' | ${HOOK_BASH:-bash} "$HOOKS/subagent-stop-orchestrator.sh" 2>"$T/stderr") && RC=0 || RC=$?
+  check "$RC,$OUT" "0,"
+  run_orch_hook "$RS105_END" "$T/missing.jsonl"
+  check "$RC,$OUT" "0,"
+  printf '{"type": "user", "message": {"content": [1, 2' >"$T/bad.jsonl"
+  run_orch_hook "$RS105_END" "$T/bad.jsonl"
+  check "$RC,$OUT" "0,"
+  OUT=$(printf '{"agent_type": "general-purpose"}' | ${HOOK_BASH:-bash} "$HOOKS/subagent-stop-orchestrator.sh" 2>"$T/stderr") && RC=0 || RC=$?
+  check "$RC,$OUT" "0,"
+}
+
+# The skill text carries the guard, and hooks.json registers the hook.
+skills_auto_ticket_orchestrator_guard() {
+  local s f=$ROOT/skills/auto-ticket/SKILL.md missing=
+  # shellcheck disable=SC2016 # literal backticks and ${...} from the skill text
+  for s in 'You are the orchestrator, never the implementer.' 'Your first tool call is `Read` of `${CLAUDE_SKILL_DIR}/autonomous-contract.md`, then the `ccm-context` call, then Step 0.' 'A trivial or one-line ticket changes nothing' 'or run `git commit`, `git push`, or `gh pr create` yourself, stop and go to Step 0'; do
+    grep -qF "$s" "$f" || missing+=" [$s]"
+  done
+  # The guard sits before the lifecycle overview.
+  [ "$(grep -nF 'never the implementer' "$f" | cut -d: -f1)" -lt "$(grep -n '^Drives one ticket' "$f" | cut -d: -f1)" ] || missing+=" [order]"
+  jq -e '.hooks.SubagentStop[].hooks[] | select(.command | contains("subagent-stop-orchestrator.sh"))' "$ROOT/hooks/hooks.json" >/dev/null || missing+=" [hooks.json]"
+  check "${missing# }" ""
+}
+
 # ---- ccm-post-review -----------------------------------------------------------
 
 # run_post_review REPORT [ARGS...]: feed REPORT on stdin to ccm-post-review.
