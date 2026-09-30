@@ -2,7 +2,7 @@
 name: work-ticket
 description: End-to-end ticket workflow. Detects your tracker (Linear, GitHub Issues, or JIRA), looks up the ticket, assigns it to you, moves it to In Progress, triages the work type, creates a branch, executes the work (delegating to /ccmagic:debug for bugs), validates scope, then commits and opens a PR.
 user-invocable: true
-allowed-tools: Read(*), Write(*), Edit(*), Bash(git:*, gh:*, mkdir:*, timeout:*, gtimeout:*), Bash(${CLAUDE_PLUGIN_ROOT}/bin/ccm-context *), Bash(ccm-context *), Glob(*), Grep(*), Task(*), TodoWrite(*), AskUserQuestion(*), Skill(*)
+allowed-tools: Read(*), Write(*), Edit(*), Bash(git:*, gh:*, mkdir:*, timeout:*, gtimeout:*), Bash(${CLAUDE_PLUGIN_ROOT}/bin/ccm-context *), Bash(ccm-context *), Bash(${CLAUDE_PLUGIN_ROOT}/bin/ccm-openspec-scope *), Bash(ccm-openspec-scope *), Glob(*), Grep(*), Task(*), TodoWrite(*), AskUserQuestion(*), Skill(*)
 argument-hint: Ticket ID (e.g. ENG-123, PROJ-456, or a GitHub issue number like 42)
 model: inherit
 ---
@@ -72,6 +72,16 @@ Use the available Linear MCP tool (e.g. `mcp__claude_ai_Linear__get_issue`) with
 - URL: from the response, or `{ticket_url_base}/{TICKET-ID}` if available
 
 **Under prompt-relay** (contract §7), **or when orchestrated** (`orchestrator:` in the grounding block, contract §8, any transport): skip the fetch and read `title` and `description` (and any acceptance criteria) from the grounding block's `ticket_content:` section (contract §2). If that section is absent, stop with the setup-error message per contract §7 `fetch_ticket` (orchestrated: emit `needs-human` per contract §8); never guess, and never spawn a helper to fetch it. The "If not found" stop text below applies only to the MCP path.
+
+<!-- ccmagic:spec-only -->
+**Only when the grounding block has a `spec:` section** (a Reeve spec ticket, contract §2), and not on a fix pass: before any other work, check the ticket against the checkout, as its own Bash call:
+
+```bash
+"${CLAUDE_PLUGIN_ROOT}/bin/ccm-openspec-scope" --precheck --repo {spec.repo} {spec.change} {spec.section}
+```
+
+It checks that `section` is not `parent` (the parent carries no work), that `repo` is this checkout's `owner/name` ignoring case, that `openspec/changes/{change}/tasks.md` exists, for a section that `tasks.md` has a `## {section}.` heading with at least one task, and for the archive that no folder under `openspec/changes/archive/` is already this change's archive. Exit 0: keep its `tasks` (the section's task ids, or every task id for the archive) and `unchecked` lists for Steps 5 to 7. Any other exit: stop with `needs-human`, `reason: spec ticket check failed ({rule}): {detail}` (or `cannot run the spec ticket check: {detail}` when it printed no `rule`), before creating a branch or changing a file.
+<!-- /ccmagic:spec-only -->
 
 ### GitHub
 
@@ -170,6 +180,34 @@ git checkout -b {branch-name}
 
 ## Step 5: Execute the work
 
+<!-- ccmagic:spec-only -->
+**Only when the grounding block has a `spec:` section.** The ticket is one section of an OpenSpec change, or the change's archive. The rules below come on top of the path you take, and nothing here applies to any other ticket.
+
+For a section (`section:` is a number N):
+
+- Read section N's task lines from `openspec/changes/{change}/tasks.md` in the checkout (the `tasks` list from Step 1). They are the work: the ticket body's copy can be older, and when the two lists differ, say so in the PR body ("the ticket listed 2.1, 2.2; tasks.md section 2 now lists 2.1, 2.2, 2.3") and build what `tasks.md` says. You may read `proposal.md`, `design.md`, the change's delta specs, and `openspec/specs/**` for context.
+- Implement section N's tasks, and only those. Then change each of section N's checkboxes from unchecked to `[x]`, and change no other character in `tasks.md`.
+- Change nothing else under `openspec/`: no other section's box or text, no text of your own tasks, no `proposal.md`, `design.md`, delta spec, or `.openspec.yaml`, no other change's folder, nothing under `openspec/changes/archive/`, `openspec/specs/`, or `openspec/config.yaml`.
+- Run no `openspec` command that writes (`openspec archive`, `openspec new`, and the like). `openspec validate --all --strict --no-interactive` only reads, and may be run.
+- A task you cannot do as written (wrong, impossible, or needing a decision) is a `needs-human` stop whose `reason` names the task id and why. Never edit the task text to match what you built. Never open a PR that ticks only some of the section's tasks: if you can do only some, stop with `needs-human` naming the ones left.
+
+For the archive (`section: archive`), run the *Archive procedure* below in place of this step's paths and of Step 6.
+
+#### Archive procedure
+
+`{base-ref}` below is `origin/{base-branch}` after `git fetch origin {base-branch}` (its own Bash call), so the check sees the base tip the merge gate sees; with no `origin` remote it is `{base-branch}`. Run each command as its own Bash call, at the repository root.
+
+1. Run `openspec --version`. Unless it prints exactly `1.13.2`, stop: `reason: openspec --version printed {its output, or "command not found"}; the archive needs 1.13.2`.
+2. Read `.openspec.yaml` and `tasks.md` in `openspec/changes/{change}/`.
+3. Every task in `tasks.md` must be checked: the `unchecked` list from Step 1 is empty. Otherwise stop, naming the unchecked task ids. (`openspec archive` archives over unchecked tasks with only a warning, so this step is what enforces it.)
+4. Run `openspec archive {change} --yes`, with no other flag (not `--skip-specs`, not `--no-validate`).
+5. Run `openspec validate --all --strict --no-interactive`. A failure stops with the validator's first lines, joined into one line, as the reason. Never edit a file to make validation pass, a placeholder Purpose included.
+6. Run `"${CLAUDE_PLUGIN_ROOT}/bin/ccm-openspec-scope" --worktree {change} archive {base-ref}`. Unless it exits 0, stop: `reason: spec scope check failed ({rule}): {detail}`.
+7. Continue with Step 7 (commit, push, and open the PR). The handshake's `tasks_done:` is `[]`.
+
+A stop in any of steps 1 to 6 ends the same way: restore the worktree with two separate Bash calls, `git checkout -- openspec` and then `git clean -fd -- openspec`, open no PR, and return `needs-human` with the reason.
+<!-- /ccmagic:spec-only -->
+
 ### Quick Fix path
 
 1. Implement the fix directly in this session. Read the relevant files first to understand the codebase. Make the minimal change that addresses the ticket scope. Follow the project's coding standards from `context/conventions.md`.
@@ -240,6 +278,16 @@ For each acceptance criterion or stated goal in the ticket, report:
 If there are gaps, offer two options:
 1. Continue working to address them.
 2. Proceed to commit and note the gaps in the PR description.
+
+<!-- ccmagic:spec-only -->
+**Only when the grounding block has a `spec:` section, for a section ticket** (the archive procedure in Step 5 ran its own check). Before the first push, check the branch's OpenSpec files with the merge gate's file rules, as its own Bash call, with `{base-ref}` as in Step 5's *Archive procedure*:
+
+```bash
+"${CLAUDE_PLUGIN_ROOT}/bin/ccm-openspec-scope" --worktree {spec.change} {spec.section} {base-ref}
+```
+
+`--worktree` includes the uncommitted changes and untracked files. Exit 0: keep its `tasks_done` list for the handshake. Exit 1: a rule failed; fix what it names when the fix is within the section rules (for example a box you ticked by mistake), and run it again; otherwise stop with `needs-human`, `reason: spec scope check failed ({rule}): {detail}`, before committing. Any other exit: stop with `needs-human`, `reason: cannot run the spec scope check: {detail}`.
+<!-- /ccmagic:spec-only -->
 
 > Note: scope validation is complementary to the code review run in Step 5 — review checks code quality, scope validation checks ticket coverage. Both matter. If you ran `/ccmagic:review-ticket` in Step 5, the scope drift section already gives you a head start here.
 
@@ -345,6 +393,10 @@ When the grounding block carries `fix_pass:`, `/ccmagic:auto-ticket` is sending 
 5. **Leave the changes uncommitted.** No `git add`, `git commit`, `git push`, or `gh pr` command: the orchestrator's push step commits and pushes the pass, and only after a `done`.
 6. **Report** an `applied_findings:` section (one line per listed item, `- {id/title}: {file}`, with `; invariant test: {test file and name}` for an item fixed under §9) and, when there is something for the commit body (a §9 corpus sampled down, an invariant derived from a finding with no inputs), a `commit_notes:` section with lines of the form `- {file}: {note}`, naming the repository file the note concerns (for a §9 note, the invariant test), both `~~~`-fenced, just before the handshake (contract §3).
 
+<!-- ccmagic:spec-only -->
+**Only when the grounding block has a `spec:` section.** A fix pass follows Step 5's section rules too: it changes nothing under `openspec/`, ticks and unticks no box, and before it reports `done` it runs the Step 6 scope check (for the archive, `ccm-openspec-scope --worktree {change} archive {base-ref}`); a failure is a `needs-human` naming the rule. Its handshake carries `tasks_done: []`.
+<!-- /ccmagic:spec-only -->
+
 An item that cannot be fixed within the ticket's scope → `needs-human` naming it. The handshake on a fix pass has no `requested_state:`:
 
 ```
@@ -372,6 +424,16 @@ reason: <one line — the PR URL on done; the blocking decision on needs-human>
 follow_ups: [<any tickets or deferrals noted>]
 requested_state: <In Review when orchestrated or under prompt-relay; omit otherwise>
 ```
+
+<!-- ccmagic:spec-only -->
+**Only when the grounding block has a `spec:` section.** Every handshake this step emits, on `done`, on `needs-human`, and on a fix pass, carries one more line right after `follow_ups:`:
+
+```
+tasks_done: [<task ids whose boxes this step changed from unchecked to checked>]
+```
+
+On `done` for a section it is the `tasks_done` list from the Step 6 scope check. On a stop, it lists the ids of the boxes you ticked before stopping. It is `[]` for the archive, for a stop before any box, and on every fix pass.
+<!-- /ccmagic:spec-only -->
 
 ---
 

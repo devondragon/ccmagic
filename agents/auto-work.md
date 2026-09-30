@@ -29,6 +29,10 @@ follow_ups: [<any tickets or deferrals noted>]
 requested_state: <In Review on done; omit on needs-human and on a fix pass>
 ```
 
+<!-- ccmagic:spec-only -->
+**Only when the grounding block has a `spec:` section** (a Reeve spec ticket): follow the preloaded work-ticket's spec-ticket rules (the Step 1 check, the section rules or the archive procedure in Step 5, and the Step 6 scope check), and add `tasks_done: [<ids>]` to the handshake right after `follow_ups:`, as its *Handshake* section says, on every outcome (`[]` on a fix pass and for the archive).
+<!-- /ccmagic:spec-only -->
+
 **Returning your report.** The handshake block is the last thing in your final report; nothing follows it. If you deliver the report with the `SubagentHandback` tool, its `message` is the full report ending with the handshake (never call it with an empty `message`), and your final text after the call ends with the same handshake. Never write tool-call tags such as `<SubagentHandback>` as text. A SubagentStop hook checks that your final message ends with the handshake (a `status:` line with an allowed value, then `reason:` and `follow_ups:`, and nothing after it); if it doesn't, you are sent back once to add it: restate your full report, including any sections before the handshake, and don't redo the work.
 
 **No tracker access.** Read the ticket from the grounding block's `ticket_content:`. Do not fetch or update the ticket, and do not spawn a helper agent to do it; the orchestrator owns every tracker read and write (contract §8). Report a needed state change in `requested_state:` and anything to file in `follow_ups:`.

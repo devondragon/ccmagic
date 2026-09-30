@@ -8,6 +8,7 @@
 #   head: <sha>                  (review-ticket only: the commit the review read)
 #   reason: <one line>
 #   follow_ups: [...]
+#   tasks_done: [ids]            (optional: work step on a Reeve spec ticket only)
 #   requested_state: <state>     (optional: a tracker state change the step needs)
 
 # ccm_handshake_problem ALLOWED: read text on stdin and print what is wrong
@@ -35,6 +36,7 @@ ccm_handshake_problem() {
         if (l ~ /^[[:space:]]*follow_ups:/) { follow = 1; continue }
         if (l ~ /^[[:space:]]*requested_state:/) continue
         if (l ~ /^[[:space:]]*head:/) continue
+        if (l ~ /^[[:space:]]*tasks_done:/) continue
         if (l ~ /^[[:space:]]*(- |-$|```|$)/) continue
         print "text after the handshake (`" substr(l, 1, 60) "`); the handshake must be the last thing"; exit
       }

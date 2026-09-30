@@ -84,14 +84,15 @@ Granting one without the other still strands the run (a fork hits `File is in a 
 
    `~/.cyrus/config.json` is **not** hot-reloaded; edits require `docker restart cyrus` (sessions persist and resume).
 
-   **Without plain `Bash`.** The list above grants plain `Bash`, which covers everything. A harness that grants only narrow Bash rules must also grant the plugin's scripts by bare name. `/ccmagic:auto-ticket` runs each step in a subagent that follows a preloaded skill, and there the skill's own `allowed-tools` don't apply; only the session's rules do. The bare name is the stable form, because the plugin path includes the installed version. Grant these alongside `Bash(git:*)`, `Bash(gh:*)`, and the project's own check commands (`Bash(make:*)`, `Bash(npm:*)`, and so on). The first line holds the other commands the step skills run: `timeout`/`gtimeout` bound scratch programs and the Codex pass, `mkdir` and `mktemp` make scratch directories, and `codex` is the optional cross-model review pass.
+   **Without plain `Bash`.** The list above grants plain `Bash`, which covers everything. A harness that grants only narrow Bash rules must also grant the plugin's scripts by bare name. `/ccmagic:auto-ticket` runs each step in a subagent that follows a preloaded skill, and there the skill's own `allowed-tools` don't apply; only the session's rules do. The bare name is the stable form, because the plugin path includes the installed version. Grant these alongside `Bash(git:*)`, `Bash(gh:*)`, and the project's own check commands (`Bash(make:*)`, `Bash(npm:*)`, and so on). The first line holds the other commands the step skills run: `timeout`/`gtimeout` bound scratch programs and the Codex pass, `mkdir` and `mktemp` make scratch directories, and `codex` is the optional cross-model review pass. `openspec` is the OpenSpec CLI, which only the archive procedure of a Reeve spec ticket runs (it checks for version 1.13.2 first and parks otherwise), so the image needs `@fission-ai/openspec@1.13.2` installed globally before any archive ticket is dispatched.
 
    ```json
    "Bash(timeout:*)", "Bash(gtimeout:*)", "Bash(mkdir:*)", "Bash(mktemp:*)", "Bash(codex:*)",
    "Bash(ccm-context *)", "Bash(ccm-ci-status *)", "Bash(ccm-doctor *)",
    "Bash(ccm-external-review *)", "Bash(ccm-merge-gate *)", "Bash(ccm-post-review *)",
    "Bash(ccm-pr-reply *)", "Bash(ccm-pr-threads *)", "Bash(ccm-review-route *)",
-   "Bash(ccm-validate *)"
+   "Bash(ccm-validate *)", "Bash(ccm-openspec-scope *)", "Bash(ccm-spec-block *)",
+   "Bash(openspec:*)"
    ```
 
    Without the `ccm-*` rules a run stalls on its first script call. `tests/relay-smoke.sh --narrow-bash` runs with exactly this set.

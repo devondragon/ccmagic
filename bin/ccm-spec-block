@@ -1,0 +1,135 @@
+#!/usr/bin/env bash
+# ccm-spec-block: read a ticket description on stdin and print, as JSON, the
+# metadata of the Reeve spec block it carries, or null when it carries none.
+#
+# Usage: ccm-spec-block < description
+#
+# A ticket is a spec ticket only when its description holds one well-formed
+# block, as Reeve renders it (src/openspec/render.ts):
+#   - a line that is exactly <!-- reeve:spec v1 --> and, after it, a line that
+#     is exactly <!-- /reeve:spec -->, both outside any code fence;
+#   - no other "reeve:spec" anywhere in the text (Reeve's findSpecBlock rule);
+#   - after the opening line and any blank lines, metadata lines up to the next
+#     blank line, each "key: value" with key repo, change, section, tasks, or
+#     source, none twice: repo an owner/name, change a kebab-case name, section
+#     a number, "archive", or "parent", tasks (only for a number) a list of
+#     task ids, source a 40-character commit SHA.
+# Anything else, a prose mention of reeve:spec included, is an ordinary ticket.
+# Linear's markdown escapes (\_ and the like) are undone first.
+#
+# Exit codes: 0 always after reading stdin (spec or null), 4 usage error.
+# Output: {"spec": {repo, change, section, tasks: [..], source}} or
+#         {"spec": null, "reason": "<why it is not a spec ticket>"}
+
+set -euo pipefail
+
+for a in "$@"; do
+  case $a in
+    -h|--help) sed -n '2,22p' "$0"; exit 0 ;;
+    *) echo "ccm-spec-block: unexpected argument $a" >&2; exit 4 ;;
+  esac
+done
+
+text=$(cat | tr -d '\r' | sed -E 's/\\([][\\`*_{}()#+.!|<>~-])/\1/g')
+
+none() {
+  jq -n --arg r "$1" '{spec: null, reason: $r}'
+  exit 0
+}
+
+marks=$({ grep -o "reeve:spec" <<<"$text" || true; } | wc -l | tr -d " ")
+[ "$marks" -gt 0 ] || none "no reeve:spec block"
+[ "$marks" -eq 2 ] || none "the text holds $marks reeve:spec marks, and a block has exactly two (its delimiters)"
+
+# Find the delimiter lines outside code fences, and print the metadata lines.
+parsed=$(awk '
+  BEGIN { opn = 0; cls = 0; fence = ""; state = "before" }
+  {
+    line = $0
+    sub(/[ \t]+$/, "", line)
+    if (fence == "") {
+      if (match(line, /^ ? ? ?(```+|~~~+)/)) {
+        f = substr(line, RSTART, RLENGTH); sub(/^ +/, "", f); fence = f
+        # Reeve reads metadata lines up to the first blank line, fence or not.
+        if (state == "gap" || state == "meta") { m = line; sub(/^[ \t]+/, "", m); print "M\t" m; state = "body" }
+        next
+      }
+    } else {
+      c = substr(fence, 1, 1); t = line; sub(/^ ? ? ?/, "", t)
+      n = 0; while (substr(t, n + 1, 1) == c) n++
+      if (n >= length(fence) && substr(t, n + 1) ~ /^[ \t]*$/) fence = ""
+      next
+    }
+    if (line == "<!-- reeve:spec v1 -->") { opn++; if (state == "before") state = "gap"; next }
+    if (line == "<!-- /reeve:spec -->") {
+      # A closing line where Reeve still reads metadata is a metadata line to it.
+      if (state == "gap" || state == "meta") print "M\t" line
+      cls++; if (opn == 0) first_close = 1; state = "after"; next
+    }
+    if (state == "gap") {
+      if (line ~ /^[ \t]*$/) next
+      state = "meta"
+    }
+    if (state == "meta") {
+      if (line ~ /^[ \t]*$/) { state = "body"; next }
+      m = line; sub(/^[ \t]+/, "", m)
+      print "M\t" m
+    }
+  }
+  END { print "D\t" opn "\t" cls "\t" (first_close ? 1 : 0) }
+' <<<"$text")
+
+delims=$(grep '^D' <<<"$parsed" | cut -f2-)
+IFS=$'\t' read -r opens closes close_first <<<"$delims"
+[ "$opens" = 1 ] || none "no line is exactly <!-- reeve:spec v1 --> outside a code fence"
+[ "$closes" = 1 ] || none "no line is exactly <!-- /reeve:spec --> outside a code fence"
+[ "$close_first" = 0 ] || none "the closing delimiter comes before the opening one"
+
+repo="" change="" section="" tasks="" source="" have=" "
+while IFS= read -r m; do
+  [ -n "$m" ] || continue
+  if [[ ! $m =~ ^([a-z]+):[[:space:]]*(.*)$ ]]; then
+    none "unexpected metadata line: ${m:0:80}"
+  fi
+  key=${BASH_REMATCH[1]} val=${BASH_REMATCH[2]}
+  val=${val%"${val##*[![:space:]]}"}
+  case $key in repo|change|section|tasks|source) ;; *) none "unexpected metadata key $key" ;; esac
+  case $have in *" $key "*) none "metadata $key appears twice" ;; esac
+  have+="$key "
+  printf -v "$key" '%s' "$val"
+done < <(grep '^M' <<<"$parsed" | cut -f2-)
+
+routing='as-delegation|label-based-prompt|as-refine|profiles'
+shopt -s nocasematch
+if [[ ! $repo =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || [[ $repo =~ linear\.app|$routing ]]; then
+  shopt -u nocasematch; none "missing or invalid repo line"
+fi
+if [[ ! $change =~ ^[a-z0-9]+(-[a-z0-9]+)*$ ]] || [[ $change =~ linear|$routing ]]; then
+  shopt -u nocasematch; none "missing or invalid change line"
+fi
+shopt -u nocasematch
+[[ $source =~ ^[0-9a-f]{40}$ ]] || none "missing or invalid source line"
+
+case $section in
+  parent|archive)
+    case $have in *" tasks "*) none "the  block has a tasks line" ;; esac
+    tasks_json='[]'
+    section_json=$(jq -n --arg s "$section" '$s')
+    ;;
+  *)
+    [[ $section =~ ^[0-9]{1,15}$ ]] || none "missing or invalid section line"
+    [ -n "$tasks" ] || none "a section block has no tasks line"
+    tasks_json='[]'
+    IFS=',' read -ra ids <<<"$tasks"
+    for id in ${ids[@]+"${ids[@]}"}; do
+      id=${id#"${id%%[![:space:]]*}"}; id=${id%"${id##*[![:space:]]}"}
+      [[ $id =~ ^[0-9]+(\.[0-9]+)+[A-Za-z]*$ ]] || none "invalid tasks line"
+      tasks_json=$(jq -c --arg t "$id" '. + [$t]' <<<"$tasks_json")
+    done
+    section_json=$((10#$section))
+    ;;
+esac
+
+jq -n --arg repo "$repo" --arg change "$change" --argjson section "$section_json" \
+  --argjson tasks "$tasks_json" --arg source "$source" \
+  '{spec: {repo: $repo, change: $change, section: $section, tasks: $tasks, source: $source}}'

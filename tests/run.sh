@@ -13,6 +13,12 @@ ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 BIN=$ROOT/bin
 HOOKS=$ROOT/hooks
 FILTER=${1:-}
+# The commit a ticket without a Reeve spec block must behave exactly like
+# (RV-75): the spec-only regression tests compare the skill and agent files
+# against it, both sides with their spec-only blocks removed. One ref, set
+# here: the last commit before RV-75. A later change that is meant to alter
+# every ticket's behavior moves it to that change's parent commit.
+SPEC_BASELINE=491a05cad5e520a648ce9eda411ccc75c560c5af
 PASS=0 FAIL=0 FAILED=()
 
 # ---- helpers ---------------------------------------------------------------
@@ -2031,12 +2037,538 @@ skills_grant_called_scripts() {
   check "${missing# }" ""
 }
 
+# ---- Reeve spec tickets: block detection (RV-75) ------------------------------
+
+SPEC_SHA=0123456789abcdef0123456789abcdef01234567
+
+# spec_desc SECTION [TASKS]: a description as Reeve renders a spec ticket.
+spec_desc() {
+  printf '%s\n' '<!-- reeve:spec v1 -->' '' 'repo: acme/app' 'change: add-export' "section: $1"
+  [ -z "${2:-}" ] || printf 'tasks: %s\n' "$2"
+  printf '%s\n' "source: $SPEC_SHA" '' "## add-export, section $1" '' 'Body text.' '' '<!-- /reeve:spec -->'
+}
+spec_block() { OUT=$(printf '%s' "$1" | "$BIN/ccm-spec-block" 2>"$T/stderr") && RC=0 || RC=$?; }
+
+spec_block_well_formed_section() {
+  spec_block "$(printf 'Some intro.\n\n'; spec_desc 2 '2.1, 2.2')"
+  check "$(jq -c .spec <<<"$OUT"),$RC" '{"repo":"acme/app","change":"add-export","section":2,"tasks":["2.1","2.2"],"source":"'$SPEC_SHA'"},0'
+}
+
+spec_block_archive_and_parent() {
+  spec_block "$(spec_desc archive)"
+  check "$(jq -c '[.spec.section, .spec.tasks]' <<<"$OUT")" '["archive",[]]'
+  spec_block "$(spec_desc parent)"
+  check "$(jq -c '.spec.section' <<<"$OUT")" '"parent"'
+}
+
+# Linear stores the description with markdown escapes and CRLF-safe text.
+spec_block_linear_escapes() {
+  spec_block "$(spec_desc 1 '1.1' | sed 's|repo: acme/app|repo: acme/my\\_app|' | sed 's/$/\r/')"
+  check "$(jq -r .spec.repo <<<"$OUT")" "acme/my_app"
+}
+
+spec_block_prose_mention_is_ordinary() {
+  spec_block $'This ticket changes how Reeve reads the `reeve:spec` block.\n\nNo block here.'
+  check "$(jq -c .spec <<<"$OUT"),$RC" "null,0"
+  spec_block $'Plain ticket.'
+  check "$(jq -c .spec <<<"$OUT")" "null"
+}
+
+spec_block_malformed_is_ordinary() {
+  local d reason
+  d=$(spec_desc 2 '2.1')
+  for bad in \
+    "$(sed '/\/reeve:spec/d' <<<"$d")" \
+    "$(sed '/^source:/d' <<<"$d")" \
+    "$(sed '/^tasks:/d' <<<"$d")" \
+    "${d/section: 2/section: two}" \
+    "${d/change: add-export/change: Add_Export}" \
+    "${d/repo: acme\/app/repo: acme}" \
+    "${d/repo: acme\/app/repo: linear.app\/x}" \
+    "${d/section: 2/$'section: 2\nsection: 3'}" \
+    "${d/source:/$'owner: me\nsource:'}" \
+    "${d/<!-- reeve:spec v1 -->/Intro <!-- reeve:spec v1 -->}" \
+    "$(printf '%s\n\nAnd reeve:spec again.' "$d")" \
+    "$(printf '~~~\n%s\n~~~\n' "$d")" \
+    "$(printf '%s\n%s\n%s\n' "\`\`\`" "$d" "\`\`\`")" \
+    "$(spec_desc archive | awk '/^source:/ { print "tasks: 1.1" } { print }')"; do
+    spec_block "$bad"
+    [ "$(jq -c .spec <<<"$OUT")" = null ] || { echo "    detected: $bad"; return 1; }
+    reason=$(jq -r .reason <<<"$OUT")
+    [ -n "$reason" ] && [ "$reason" != null ]
+  done
+}
+
+spec_block_usage_error() {
+  OUT=$("$BIN/ccm-spec-block" extra </dev/null 2>/dev/null) && RC=0 || RC=$?
+  check "$RC" 4
+}
+
+# ---- Reeve spec tickets: ccm-openspec-scope (RV-75) ----------------------------
+
+g() { git -c user.email=t@t -c user.name=t "$@"; }
+scope() { run "$BIN/ccm-openspec-scope" "$@"; }
+rule() { jq -r '.rule // "pass"' <<<"$OUT"; }
+
+# seed_spec [CHECKED]: main holds change add-export with two sections of two
+# tasks (all checked with CHECKED=all), a delta for capability export, and a
+# main spec for capability version; the test continues on branch work.
+seed_spec() {
+  local box=' '
+  [ "${1:-}" = all ] && box=x
+  mkdir -p openspec/changes/add-export/specs/export openspec/specs/version openspec/specs/export src
+  printf '%s\n' '## 1. Build the helper' '' "- [$box] 1.1 Add the helper" "- [$box] 1.2 Test the helper" '' \
+    '## 2. Wire it up' '' "- [$box] 2.1 Call the helper" "- [$box] 2.2 Document it" >openspec/changes/add-export/tasks.md
+  printf '## Why\n\nExports.\n' >openspec/changes/add-export/proposal.md
+  printf 'schema: spec-driven\n' >openspec/changes/add-export/.openspec.yaml
+  printf '## ADDED Requirements\n\n### Requirement: Export\n' >openspec/changes/add-export/specs/export/spec.md
+  printf '# version\n' >openspec/specs/version/spec.md
+  printf '# export\n' >openspec/specs/export/spec.md
+  printf 'schema: spec-driven\n' >openspec/config.yaml
+  echo app >src/app.txt
+  g add -A && g commit -qm seed && g checkout -qb work
+}
+tick() { sed -i.bak "s/^- \[ \] $1 /- [${2:-x}] $1 /" openspec/changes/add-export/tasks.md && command rm -f openspec/changes/add-export/tasks.md.bak; }
+commit() { g add -A && g commit -qm "${1:-work}"; }
+
+scope_section_passes_with_x_and_X() {
+  seed_spec
+  echo more >>src/app.txt
+  tick 2.1 x; tick 2.2 X; commit
+  scope add-export 2 main
+  check "$(rule),$RC,$(jq -c .tasks_done <<<"$OUT")" 'pass,0,["2.1","2.2"]'
+  check "$(jq -r '.base == (.merge_base)' <<<"$OUT")" true
+}
+
+scope_section_outside_paths_fail() {
+  seed_spec
+  local p
+  for p in openspec/changes/add-export/proposal.md openspec/changes/add-export/.openspec.yaml \
+    openspec/changes/add-export/specs/export/spec.md openspec/changes/other/tasks.md \
+    openspec/specs/version/spec.md openspec/config.yaml openspec/changes/archive/x/tasks.md \
+    openspec/changes/add-export/design.md; do
+    g checkout -q work && g reset -q --hard main
+    mkdir -p "$(dirname "$p")" && echo edit >>"$p"
+    tick 2.1; tick 2.2; commit
+    scope add-export 2 main
+    check "$(rule),$RC,$(jqval .file)" "outside-section,1,$p"
+  done
+}
+
+scope_section_rename_out_of_folder_fails() {
+  seed_spec
+  tick 2.1; tick 2.2
+  g mv openspec/changes/add-export/proposal.md docs-proposal.md
+  commit
+  scope add-export 2 main
+  check "$(rule),$(jqval .file)" "outside-section,openspec/changes/add-export/proposal.md"
+}
+
+scope_section_other_box_and_text_fail() {
+  seed_spec
+  tick 2.1; tick 2.2; tick 1.1; commit
+  scope add-export 2 main
+  check "$(rule),$(jqval .line),$(jqval .task_id)" "tasks-text,3,1.1"
+  g reset -q --hard main
+  tick 2.1; tick 2.2
+  sed -i.bak 's/Call the helper/Call the helper twice/' openspec/changes/add-export/tasks.md && command rm -f openspec/changes/add-export/tasks.md.bak
+  commit
+  scope add-export 2 main
+  check "$(rule),$(jqval .task_id)" "tasks-text,2.1"
+}
+
+scope_section_line_endings_count() {
+  seed_spec
+  tick 2.1; tick 2.2
+  sed -i.bak 's/$/\r/' openspec/changes/add-export/tasks.md && command rm -f openspec/changes/add-export/tasks.md.bak
+  commit
+  scope add-export 2 main
+  check "$(rule),$(jqval .line)" "tasks-text,1"
+  g reset -q --hard main
+  tick 2.1; tick 2.2
+  printf '%s' "$(command cat openspec/changes/add-export/tasks.md)" >|openspec/changes/add-export/tasks.md
+  commit
+  scope add-export 2 main
+  check "$(rule)" "tasks-text"
+}
+
+scope_section_unchecked_task_fails() {
+  seed_spec
+  tick 2.1; commit
+  scope add-export 2 main
+  check "$(rule),$(jqval .task_id),$(jq -c .unchecked <<<"$OUT"),$(jq -c .tasks_done <<<"$OUT")" 'tasks-unchecked,2.2,["2.2"],["2.1"]'
+}
+
+scope_section_missing_at_base_fails() {
+  seed_spec
+  tick 2.1; tick 2.2; commit
+  g checkout -q main
+  printf '%s\n' '## 1. Build the helper' '' '- [ ] 1.1 Add the helper' >openspec/changes/add-export/tasks.md
+  commit "drop section 2"
+  g checkout -q work
+  scope add-export 2 main
+  check "$(rule)" "section-missing"
+}
+
+# The base tip is what is judged: a task text edited on main mid-run fails.
+scope_section_base_changed_mid_run_fails() {
+  seed_spec
+  tick 2.1; tick 2.2; commit
+  g checkout -q main
+  sed -i.bak 's/Add the helper/Add the helper fast/' openspec/changes/add-export/tasks.md && command rm -f openspec/changes/add-export/tasks.md.bak
+  commit "edit 1.1"
+  g checkout -q work
+  scope add-export 2 main
+  check "$(rule),$(jqval .line)" "tasks-text,3"
+}
+
+scope_section_unreadable_names_the_side() {
+  seed_spec
+  tick 2.1; tick 2.2
+  printf '%s\n' '- [x] 9.9 stray task' >>openspec/changes/add-export/tasks.md
+  commit
+  scope add-export 2 main
+  check "$(rule)" "tasks-unreadable"
+  [[ $(jqval .detail) == *"on the branch does not parse (task-prefix)"* ]]
+  g reset -q --hard main
+  g rm -q openspec/changes/add-export/tasks.md && commit
+  scope add-export 2 main
+  [[ $(rule),$(jqval .detail) == "tasks-unreadable,"*"missing on the branch"* ]]
+  g checkout -q main
+  printf '%s\n' '## 1. Build the helper' '' '1. [ ] 1.1 ordered' >openspec/changes/add-export/tasks.md
+  commit "break tasks on main"
+  g checkout -q work && g reset -q --hard HEAD~1
+  scope add-export 2 main
+  [[ $(rule),$(jqval .detail) == "tasks-unreadable,"*"on the base branch (main) does not parse (task-marker)"* ]]
+}
+
+# The work step checks before it commits: --worktree judges the uncommitted
+# changes and untracked files too; the default judges HEAD alone.
+scope_worktree_includes_uncommitted_changes() {
+  seed_spec
+  tick 2.1; tick 2.2
+  echo new >src/new.txt
+  scope --worktree add-export 2 main
+  check "$(rule)" "pass"
+  scope add-export 2 main
+  check "$(rule)" "tasks-unchecked"
+  mkdir -p openspec/changes/other && echo x >openspec/changes/other/tasks.md
+  scope --worktree add-export 2 main
+  check "$(rule),$(jqval .file)" "outside-section,openspec/changes/other/tasks.md"
+  check "$(git status --porcelain | wc -l | tr -d ' ')" 3
+}
+
+# archive_as FOLDER [CHANGE]: what openspec archive does, committed.
+archive_as() {
+  local c=${2:-add-export}
+  mkdir -p openspec/changes/archive
+  g mv "openspec/changes/$c" "openspec/changes/archive/$1"
+  echo '### Requirement: Export' >>openspec/specs/export/spec.md
+  commit archive
+}
+
+scope_archive_passes_with_any_date() {
+  local f
+  for f in 2026-09-30-add-export 1999-01-01-add-export; do
+    setup_fresh
+    seed_spec all
+    archive_as "$f"
+    scope add-export archive main
+    check "$(rule),$RC,$(jq -c .tasks_done <<<"$OUT")" "pass,0,[]"
+  done
+}
+setup_fresh() { cd "$T" && command rm -rf repo && mkdir repo && cd repo && git init -q -b main && g commit -q --allow-empty -m init; }
+
+# A change whose name carries its own date is archived under that name, and a
+# longer name that ends in the change name is not its archive.
+scope_archive_folder_name_rules() {
+  seed_spec all
+  g checkout -q main
+  g mv openspec/changes/add-export openspec/changes/2026-09-28-add-export && commit rename
+  g checkout -q -B work
+  archive_as 2026-09-28-add-export 2026-09-28-add-export
+  scope 2026-09-28-add-export archive main
+  check "$(rule)" "pass"
+  setup_fresh
+  seed_spec all
+  archive_as 2026-09-30-big-add-export
+  scope add-export archive main
+  check "$(rule)" "not-moved"
+  setup_fresh
+  seed_spec all
+  archive_as add-export
+  scope add-export archive main
+  check "$(rule)" "not-moved"
+}
+
+scope_archive_not_moved_cases() {
+  seed_spec all
+  mkdir -p openspec/changes/archive/2026-09-30-add-export
+  command cp -R openspec/changes/add-export/. openspec/changes/archive/2026-09-30-add-export/
+  echo '### Requirement: Export' >>openspec/specs/export/spec.md
+  commit copy
+  scope add-export archive main
+  check "$(rule)" "not-moved"
+  g reset -q --hard main
+  archive_as 2026-09-30-add-export
+  mkdir -p openspec/changes/archive/2026-09-29-add-export && echo x >openspec/changes/archive/2026-09-29-add-export/tasks.md
+  commit second
+  scope add-export archive main
+  check "$(rule)" "not-moved"
+}
+
+scope_archive_folder_content_fails() {
+  seed_spec all
+  archive_as 2026-09-30-add-export
+  echo changed >>openspec/changes/archive/2026-09-30-add-export/proposal.md
+  commit edit
+  scope add-export archive main
+  check "$(rule),$(jqval .file)" "folder-content,openspec/changes/archive/2026-09-30-add-export/proposal.md"
+  g reset -q --hard HEAD~1
+  echo extra >openspec/changes/archive/2026-09-30-add-export/notes.md && commit extra
+  scope add-export archive main
+  check "$(rule),$(jqval .file)" "folder-content,openspec/changes/archive/2026-09-30-add-export/notes.md"
+  g reset -q --hard HEAD~1
+  g rm -q openspec/changes/archive/2026-09-30-add-export/proposal.md && commit drop
+  scope add-export archive main
+  check "$(rule)" "folder-content"
+}
+
+scope_archive_unchecked_task_fails() {
+  seed_spec
+  g checkout -q main
+  tick 1.1; tick 1.2; tick 2.1; commit "three done"
+  g checkout -q -B work
+  archive_as 2026-09-30-add-export
+  scope add-export archive main
+  check "$(rule),$(jqval .task_id)" "tasks-unchecked,2.2"
+}
+
+scope_archive_outside_paths_fail() {
+  seed_spec all
+  echo code >>src/app.txt
+  archive_as 2026-09-30-add-export
+  scope add-export archive main
+  check "$(rule),$(jqval .file)" "outside-archive,src/app.txt"
+  g reset -q --hard main
+  echo edit >>openspec/specs/version/spec.md
+  archive_as 2026-09-30-add-export
+  scope add-export archive main
+  check "$(rule),$(jqval .file)" "outside-archive,openspec/specs/version/spec.md"
+}
+
+scope_archive_spec_flags() {
+  seed_spec all
+  g mv openspec/changes/add-export openspec/changes/archive-tmp && mkdir -p openspec/changes/archive &&
+    g mv openspec/changes/archive-tmp openspec/changes/archive/2026-09-30-add-export && commit "no spec change"
+  scope add-export archive main
+  check "$(rule)" "specs-unchanged"
+  setup_fresh
+  seed_spec all
+  g checkout -q main && printf 'schema: spec-driven\nskip_specs: true\n' >openspec/changes/add-export/.openspec.yaml && commit skip && g checkout -q -B work
+  archive_as 2026-09-30-add-export
+  scope add-export archive main
+  check "$(rule)" "specs-changed"
+  g reset -q --hard main
+  mkdir -p openspec/changes/archive && g mv openspec/changes/add-export openspec/changes/archive/2026-09-30-add-export && commit
+  scope add-export archive main
+  check "$(rule)" "pass"
+}
+
+scope_archive_spec_deletion_needs_retire() {
+  seed_spec all
+  g checkout -q main && mkdir -p openspec/changes/add-export/specs/import openspec/specs/import
+  echo '## REMOVED Requirements' >openspec/changes/add-export/specs/import/spec.md && echo '# import' >openspec/specs/import/spec.md
+  commit import && g checkout -q -B work
+  g rm -q openspec/specs/import/spec.md
+  archive_as 2026-09-30-add-export
+  scope add-export archive main
+  check "$(rule),$(jqval .file)" "spec-deleted,openspec/specs/import/spec.md"
+  setup_fresh
+  seed_spec all
+  g checkout -q main && printf 'schema: spec-driven\nretire_capabilities: true\n' >openspec/changes/add-export/.openspec.yaml && commit retire && g checkout -q -B work
+  mkdir -p openspec/changes/archive
+  g mv openspec/changes/add-export openspec/changes/archive/2026-09-30-add-export
+  g rm -q openspec/specs/export/spec.md && commit retire
+  scope add-export archive main
+  check "$(rule)" "pass"
+}
+
+scope_precheck_section_and_archive() {
+  seed_spec
+  scope --precheck --repo ACME/App add-export 2
+  check "$(rule),$RC,$(jq -c '[.tasks, .unchecked]' <<<"$OUT")" 'pass,0,[["2.1","2.2"],["2.1","2.2"]]'
+  scope --precheck --repo acme/app add-export archive
+  check "$(rule),$(jq -c .unchecked <<<"$OUT")" 'pass,["1.1","1.2","2.1","2.2"]'
+  scope --precheck --repo acme/app add-export 9
+  check "$(rule),$RC" "section-missing,1"
+  scope --precheck --repo acme/app add-export parent
+  check "$(rule)" "section-parent"
+  [[ $(jqval .detail) == *"carries no work"* ]]
+  scope --precheck --repo acme/other add-export 2
+  check "$(rule)" "repo-mismatch"
+  scope --precheck --repo acme/app nope 1
+  check "$(rule)" "tasks-missing"
+}
+
+scope_precheck_archive_exists_by_name_rule() {
+  seed_spec
+  mkdir -p openspec/changes/archive/2026-01-01-big-add-export openspec/changes/archive/add-export
+  scope --precheck --repo acme/app add-export archive
+  check "$(rule)" "pass"
+  mkdir -p openspec/changes/archive/2026-01-01-add-export
+  scope --precheck --repo acme/app add-export archive
+  check "$(rule),$(jqval .file)" "archive-exists,openspec/changes/archive/2026-01-01-add-export"
+}
+
+scope_usage_and_unreadable() {
+  seed_spec
+  scope add-export 2
+  check "$RC" 4
+  scope add-export parent main
+  check "$RC" 4
+  scope Bad_Name 2 main
+  check "$RC" 4
+  scope --precheck add-export 2
+  check "$RC" 4
+  scope add-export 2 no-such-branch
+  check "$RC" 3
+}
+
+# The box holds one character as Reeve's JavaScript reads it: a multibyte
+# character such as a check mark is an unchecked box, a character outside the
+# Basic Multilingual Plane is not a box, and a no-break space is whitespace.
+scope_unicode_boxes_read_as_reeve_does() {
+  seed_spec
+  g checkout -q main
+  sed -i.bak 's/^- \[ \] 2.2 /- [✓] 2.2 /; s/^- \[ \] 1.2 /- [😀] 1.2 /; s/^- \[ \] 2.1 /-'$'\xc2\xa0''[ ] 2.1 /' openspec/changes/add-export/tasks.md
+  command rm -f openspec/changes/add-export/tasks.md.bak
+  commit unicode && g checkout -q -B work
+  scope --precheck --repo acme/app add-export 2
+  check "$(rule),$(jq -c '[.tasks, .unchecked]' <<<"$OUT")" 'pass,[["2.1","2.2"],["2.1","2.2"]]'
+  scope --precheck --repo acme/app add-export 1
+  check "$(jq -c .tasks <<<"$OUT")" '["1.1"]'
+  sed -i.bak 's/^- \[✓\] 2.2 /- [x] 2.2 /; s/^-'$'\xc2\xa0''\[ \] 2.1 /-'$'\xc2\xa0''[X] 2.1 /' openspec/changes/add-export/tasks.md
+  command rm -f openspec/changes/add-export/tasks.md.bak
+  commit
+  scope add-export 2 main
+  check "$(rule),$(jq -c .tasks_done <<<"$OUT")" 'pass,["2.1","2.2"]'
+}
+
+# Reeve rejects a section block whose tasks: line is empty, and one whose
+# closing delimiter comes right after the metadata with no blank line.
+spec_block_matches_reeve_edge_cases() {
+  local d
+  d=$(spec_desc 2 '2.1')
+  spec_block "${d/tasks: 2.1/tasks:}"
+  check "$(jq -c .spec <<<"$OUT"),$(jq -r .reason <<<"$OUT")" "null,a section block has no tasks line"
+  spec_block "$(printf '%s\n' '<!-- reeve:spec v1 -->' '' 'repo: acme/app' 'change: add-export' 'section: archive' "source: $SPEC_SHA" '<!-- /reeve:spec -->')"
+  check "$(jq -c .spec <<<"$OUT")" "null"
+  [[ $(jq -r .reason <<<"$OUT") == "unexpected metadata line"* ]]
+  spec_block "$(printf '%s\n' '<!-- reeve:spec v1 -->' '' '<!-- /reeve:spec -->')"
+  check "$(jq -c .spec <<<"$OUT")" "null"
+}
+
+# The handshake validator accepts the work step's tasks_done: line and still
+# requires reason: and follow_ups:.
+stop_tasks_done_line_passes() {
+  run_stop_hook $'PR opened.\n\nstatus: done\nreason: https://github.com/acme/app/pull/7\nfollow_ups: []\ntasks_done: [2.1, 2.2]\nrequested_state: In Review' ccmagic:auto-work
+  check "$(blocked)" "allow"
+  run_stop_hook $'status: done\nreason: ok\ntasks_done: []' ccmagic:auto-work
+  check "$(blocked)" "block"
+  run_stop_hook $'status: done\nfollow_ups: []\ntasks_done: []' ccmagic:auto-work
+  check "$(blocked)" "block"
+}
+
+# ---- Reeve spec tickets: no change for other tickets (RV-75) --------------------
+
+# Every line RV-75 added to a skill or agent file sits in a block between
+# <!-- ccmagic:spec-only --> and <!-- /ccmagic:spec-only -->, followed by one
+# blank line, whose first line starts "**Only when"; the added grants are the
+# only other change. Removing both gives $SPEC_BASELINE byte for byte, so a
+# ticket without a spec block reads the same prompts, steps, and run record
+# templates as that release.
+strip_spec_only() {
+  awk '
+    eat { eat = 0; if ($0 == "") next }
+    $0 == "<!-- ccmagic:spec-only -->" { skip = 1; next }
+    skip && $0 == "<!-- /ccmagic:spec-only -->" { skip = 0; eat = 1; next }
+    skip { next }
+    /^allowed-tools:/ {
+      n = split(" Bash(${CLAUDE_PLUGIN_ROOT}/bin/ccm-openspec-scope *), Bash(ccm-openspec-scope *),| Bash(${CLAUDE_PLUGIN_ROOT}/bin/ccm-spec-block *), Bash(ccm-spec-block *),", g, "|")
+      for (i = 1; i <= n; i++) while ((k = index($0, g[i])) > 0) $0 = substr($0, 1, k - 1) substr($0, k + length(g[i]))
+    }
+    { print }' "$1"
+}
+
+spec_prompt_files() {
+  { git -C "$ROOT" ls-tree -r --name-only "$SPEC_BASELINE" -- skills agents
+    git -C "$ROOT" ls-files -- skills agents; } | LC_ALL=C sort -u
+}
+
+skills_spec_only_blocks_well_formed() {
+  local f missing=
+  git -C "$ROOT" rev-parse -q --verify "$SPEC_BASELINE^{commit}" >/dev/null || { echo "    baseline $SPEC_BASELINE is not in this clone (CI needs fetch-depth: 0)"; return 1; }
+  for f in $(spec_prompt_files); do
+    [ -f "$ROOT/$f" ] || continue
+    awk -v f="$f" '
+      want_blank { want_blank = 0; if ($0 != "") { print f ":" NR ": no blank line after a spec-only block"; bad = 1 } }
+      $0 == "<!-- ccmagic:spec-only -->" { if (inb) { print f ":" NR ": nested block"; bad = 1 } inb = 1; first = 1; next }
+      $0 == "<!-- /ccmagic:spec-only -->" { if (!inb) { print f ":" NR ": end without start"; bad = 1 } inb = 0; want_blank = 1; next }
+      inb && first && $0 != "" { first = 0; t = $0; sub(/^[ \t]+/, "", t); if (t !~ /^\*\*Only when/) { print f ":" NR ": block does not start with **Only when"; bad = 1 } }
+      /ccmagic:spec-only/ && $0 != "<!-- ccmagic:spec-only -->" && $0 != "<!-- /ccmagic:spec-only -->" { print f ":" NR ": marker not on a line of its own"; bad = 1 }
+      END { if (inb) print f ": unclosed block" }' "$ROOT/$f" | grep . && missing+=" $f"
+  done
+  check "${missing# }" ""
+}
+
+skills_non_spec_tickets_unchanged_since_baseline() {
+  local f missing=
+  git -C "$ROOT" rev-parse -q --verify "$SPEC_BASELINE^{commit}" >/dev/null || { echo "    baseline $SPEC_BASELINE is not in this clone (CI needs fetch-depth: 0)"; return 1; }
+  for f in $(spec_prompt_files); do
+    if ! git -C "$ROOT" cat-file -e "$SPEC_BASELINE:$f" 2>/dev/null; then missing+=" added:$f"; continue; fi
+    [ -f "$ROOT/$f" ] || { missing+=" removed:$f"; continue; }
+    git -C "$ROOT" show "$SPEC_BASELINE:$f" >"$T/base-raw"
+    strip_spec_only "$T/base-raw" >"$T/base"
+    strip_spec_only "$ROOT/$f" >"$T/stripped"
+    cmp -s "$T/base" "$T/stripped" || { missing+=" $f"; diff "$T/base" "$T/stripped" | sed -n '1,6s/^/    /p'; }
+  done
+  check "${missing# }" ""
+}
+
+# The hooks change only to accept the work step's tasks_done: line: these two
+# added lines in hooks/lib-handshake.sh, and nothing else.
+skills_hooks_only_accept_tasks_done() {
+  local changed
+  changed=$(git -C "$ROOT" diff "$SPEC_BASELINE" -- hooks | grep -E '^[-+]' | grep -vE '^(\+\+\+|---) ' || true)
+  check "$changed" "+#   tasks_done: [ids]            (optional: work step on a Reeve spec ticket only)
++        if (l ~ /^[[:space:]]*tasks_done:/) continue"
+}
+
+# A spec ticket's run record is the ordinary template with the openspec key
+# added last inside "ccmagic"; the ordinary template is the baseline's.
+skills_run_record_openspec_key_only_for_spec_tickets() {
+  local f base spec frag missing=
+  frag=', "openspec": {"change": "{spec.change}", "section": {spec.section: a number, or "archive"}, "tasks_done": [{"task id", ...}]}'
+  for f in skills/auto-ticket/SKILL.md skills/auto-ticket/autonomous-contract.md; do
+    # The ordinary template, as the file has it now; that it matches the
+    # baseline is the unchanged-since-baseline test's job.
+    base=$(grep -m1 '^{"ccmagic": ' "$ROOT/$f")
+    spec=$(awk '$0 == "<!-- ccmagic:spec-only -->" { b = 1 } $0 == "<!-- /ccmagic:spec-only -->" { b = 0 } b && /^\{"ccmagic": /' "$ROOT/$f")
+    [ "$spec" = "${base%\}\}}$frag}}" ] || missing+=" $f:spec-template"
+    [[ $spec == *'"version": 2'* ]] || missing+=" $f:version"
+    strip_spec_only "$ROOT/$f" | grep -q '"openspec"' && missing+=" $f:key-outside-block"
+    [ "$(strip_spec_only "$ROOT/$f" | grep -m1 '^{"ccmagic": ')" = "$base" ] || missing+=" $f:ordinary-template-in-block"
+  done
+  check "${missing# }" ""
+}
+
 # ---- run -------------------------------------------------------------------
 
 MIRRORS=$(mktemp -d)
 trap 'rm -rf "$MIRRORS"' EXIT
 
-for fn in $(declare -F | awk '{print $3}' | grep -E '^(context|ci|merge_gate|guard|post|postreview|stop|threads|reply|validate|route|doctor|extreview|skills)_'); do
+for fn in $(declare -F | awk '{print $3}' | grep -E '^(context|ci|merge_gate|guard|post|postreview|stop|threads|reply|validate|route|doctor|extreview|skills|spec_block|scope)_'); do
   t "$fn" "$fn"
 done
 

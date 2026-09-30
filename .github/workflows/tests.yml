@@ -10,6 +10,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # The spec-only regression tests read the files at SPEC_BASELINE (tests/run.sh).
+          fetch-depth: 0
       - name: shellcheck
         run: shellcheck -x bin/ccm-* hooks/*.sh tests/run.sh tests/relay-smoke.sh tests/stubs/gh evals/run.sh
       - name: tests
