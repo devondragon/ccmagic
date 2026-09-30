@@ -2,18 +2,21 @@
 
 All notable changes to ccmagic are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [3.16.0] - 2026-09
+
+Nothing changes for a ticket without a well-formed Reeve spec block: the OpenSpec build contract below applies only to a ticket whose description carries one. The one behavior change for every `auto-ticket` run is the orchestrator guard under Fixed (its SubagentStop hook runs on every subagent stop and exits at once unless the stopping agent is `general-purpose`). The handshake validator also accepts a `tasks_done:` line from any step, which has no effect when the line is absent.
 
 ### Added
 
 - Reeve spec tickets (RV-75). A ticket whose description carries a well-formed `<!-- reeve:spec v1 -->` block (the exact delimiter lines outside a code fence, no other `reeve:spec` in the text, and valid `repo:`, `change:`, `section:`, `tasks:`, and `source:` metadata) is a spec ticket. `auto-ticket` Step 0 detects it with the new `bin/ccm-spec-block` and adds a `spec:` section to the grounding block. The work step then checks the checkout (`ccm-openspec-scope --precheck`: the repo, `tasks.md`, the section, no existing archive, and a refusal for `section: parent`), implements only the section's tasks from `tasks.md` and ticks only their boxes, and for the archive ticket runs a fixed procedure: `openspec --version` must print 1.13.2, every task must be checked, then `openspec archive <change> --yes`, `openspec validate --all --strict --no-interactive`, and the scope check, restoring `openspec/` with `git checkout -- openspec` and `git clean -fd -- openspec` on any failure and opening no PR.
 - `bin/ccm-openspec-scope` applies the file rules of Reeve's `openspec` merge gate check to a branch (section: `outside-section`, `tasks-unreadable`, `section-missing`, `tasks-text`, `tasks-unchecked`; archive: `not-moved`, `folder-content`, `tasks-unreadable`, `tasks-unchecked`, `outside-archive`, `specs-unchanged`, `specs-changed`, `spec-deleted`) and prints JSON naming the first that fails. The work step runs it before the first push, and `finish-ticket` runs it again in its Step 3 sanity check before the merge or hand-off. `work-ticket` and `finish-ticket` grant it, and `docs/cyrus-deployment.md` lists it and `Bash(openspec:*)` for narrow-Bash harnesses. The skills do not grant `openspec` in `allowed-tools`, so an interactive run in any OpenSpec repository still asks before an `openspec` command.
 - On a spec ticket the work step's handshake carries `tasks_done: [<ids>]` after `follow_ups:`, which the handshake validator accepts without requiring, and the run record gains `"openspec": {"change", "section", "tasks_done"}` as its last key. The record stays at `version: 2`; readers that don't know the key ignore it.
-- A ticket without a well-formed spec block runs exactly as before this change. Every added line in the skill and agent files sits in a `<!-- ccmagic:spec-only -->` block, and `tests/run.sh` checks that removing those blocks and the new grants gives the previous files byte for byte.
+- A ticket without a well-formed spec block runs exactly as before RV-75. Every added line in the skill and agent files sits in a `<!-- ccmagic:spec-only -->` block, and `tests/run.sh` checks that removing those blocks and the new grants gives the previous files byte for byte.
 
 ### Fixed
 
 - `auto-ticket` now refuses to act as the implementer. The skill opens with a guard: the orchestrator's first call is the contract read, then `ccm-context`, then Step 0, a trivial ticket changes nothing, and an orchestrator about to edit files, commit, push, or open a PR itself goes to Step 0 instead. A new SubagentStop hook, `hooks/subagent-stop-orchestrator.sh`, sends the forked orchestrator back once when it spawned no `ccmagic:auto-*` step agent at all and still made an Edit or Write call or ran `git commit`, `git push`, `gh pr create`, or `gh pr merge` itself, and its last message has no run summary or final-message block. It is told to continue from Step 0 without redoing finished work, or, when it merged the PR itself, to park with a run record saying the steps were skipped. A run that spawned any step agent is never sent back. Before, a run that did the work itself ended with no review, no finish, and no run record (RV-80).
+- `tests/run.sh` checks no longer pipe into `grep -q`, which under `pipefail` made a check fail at random on Linux when its producer got SIGPIPE (#69).
 
 ## [3.15.0] - 2026-09
 
