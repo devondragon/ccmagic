@@ -2,6 +2,12 @@
 
 All notable changes to ccmagic are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- `auto-ticket` now refuses to act as the implementer. The skill opens with a guard: the orchestrator's first call is the contract read, then `ccm-context`, then Step 0, a trivial ticket changes nothing, and an orchestrator about to edit files, commit, push, or open a PR itself goes to Step 0 instead. A new SubagentStop hook, `hooks/subagent-stop-orchestrator.sh`, sends the forked orchestrator back once, from Step 0 and without redoing finished work, when its own transcript shows an Edit, Write, `git commit`, `git push`, `gh pr create`, or `gh pr merge` call and its last message has no run summary or final-message block. Before, a run that did the work itself ended with no review, no finish, and no run record (RV-80).
+
 ## [3.15.0] - 2026-09
 
 ### Added
