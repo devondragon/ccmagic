@@ -50,7 +50,8 @@ parsed=$(awk '
     if (fence == "") {
       if (match(line, /^ ? ? ?(```+|~~~+)/)) {
         f = substr(line, RSTART, RLENGTH); sub(/^ +/, "", f); fence = f
-        if (state == "meta") state = "body"
+        # Reeve reads metadata lines up to the first blank line, fence or not.
+        if (state == "gap" || state == "meta") { m = line; sub(/^[ \t]+/, "", m); print "M\t" m; state = "body" }
         next
       }
     } else {
@@ -60,7 +61,11 @@ parsed=$(awk '
       next
     }
     if (line == "<!-- reeve:spec v1 -->") { opn++; if (state == "before") state = "gap"; next }
-    if (line == "<!-- /reeve:spec -->") { cls++; if (opn == 0) first_close = 1; state = "after"; next }
+    if (line == "<!-- /reeve:spec -->") {
+      # A closing line where Reeve still reads metadata is a metadata line to it.
+      if (state == "gap" || state == "meta") print "M\t" line
+      cls++; if (opn == 0) first_close = 1; state = "after"; next
+    }
     if (state == "gap") {
       if (line ~ /^[ \t]*$/) next
       state = "meta"
@@ -113,10 +118,10 @@ case $section in
     ;;
   *)
     [[ $section =~ ^[0-9]{1,15}$ ]] || none "missing or invalid section line"
-    case $have in *" tasks "*) ;; *) none "a section block has no tasks line" ;; esac
+    [ -n "$tasks" ] || none "a section block has no tasks line"
     tasks_json='[]'
     IFS=',' read -ra ids <<<"$tasks"
-    for id in "${ids[@]}"; do
+    for id in ${ids[@]+"${ids[@]}"}; do
       id=${id#"${id%%[![:space:]]*}"}; id=${id%"${id##*[![:space:]]}"}
       [[ $id =~ ^[0-9]+(\.[0-9]+)+[A-Za-z]*$ ]] || none "invalid tasks line"
       tasks_json=$(jq -c --arg t "$id" '. + [$t]' <<<"$tasks_json")

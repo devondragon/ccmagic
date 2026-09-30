@@ -13,10 +13,12 @@ ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 BIN=$ROOT/bin
 HOOKS=$ROOT/hooks
 FILTER=${1:-}
-# The release a ticket without a Reeve spec block must behave exactly like
+# The commit a ticket without a Reeve spec block must behave exactly like
 # (RV-75): the spec-only regression tests compare the skill and agent files
-# against it. One ref, set here; point it at the last commit before RV-75.
-SPEC_BASELINE=v3.15.0
+# against it, both sides with their spec-only blocks removed. One ref, set
+# here: the last commit before RV-75. A later change that is meant to alter
+# every ticket's behavior moves it to that change's parent commit.
+SPEC_BASELINE=491a05cad5e520a648ce9eda411ccc75c560c5af
 PASS=0 FAIL=0 FAILED=()
 
 # ---- helpers ---------------------------------------------------------------
@@ -2433,6 +2435,40 @@ scope_usage_and_unreadable() {
   check "$RC" 3
 }
 
+# The box holds one character as Reeve's JavaScript reads it: a multibyte
+# character such as a check mark is an unchecked box, a character outside the
+# Basic Multilingual Plane is not a box, and a no-break space is whitespace.
+scope_unicode_boxes_read_as_reeve_does() {
+  seed_spec
+  g checkout -q main
+  sed -i.bak 's/^- \[ \] 2.2 /- [✓] 2.2 /; s/^- \[ \] 1.2 /- [😀] 1.2 /; s/^- \[ \] 2.1 /-'$'\xc2\xa0''[ ] 2.1 /' openspec/changes/add-export/tasks.md
+  command rm -f openspec/changes/add-export/tasks.md.bak
+  commit unicode && g checkout -q -B work
+  scope --precheck --repo acme/app add-export 2
+  check "$(rule),$(jq -c '[.tasks, .unchecked]' <<<"$OUT")" 'pass,[["2.1","2.2"],["2.1","2.2"]]'
+  scope --precheck --repo acme/app add-export 1
+  check "$(jq -c .tasks <<<"$OUT")" '["1.1"]'
+  sed -i.bak 's/^- \[✓\] 2.2 /- [x] 2.2 /; s/^-'$'\xc2\xa0''\[ \] 2.1 /-'$'\xc2\xa0''[X] 2.1 /' openspec/changes/add-export/tasks.md
+  command rm -f openspec/changes/add-export/tasks.md.bak
+  commit
+  scope add-export 2 main
+  check "$(rule),$(jq -c .tasks_done <<<"$OUT")" 'pass,["2.1","2.2"]'
+}
+
+# Reeve rejects a section block whose tasks: line is empty, and one whose
+# closing delimiter comes right after the metadata with no blank line.
+spec_block_matches_reeve_edge_cases() {
+  local d
+  d=$(spec_desc 2 '2.1')
+  spec_block "${d/tasks: 2.1/tasks:}"
+  check "$(jq -c .spec <<<"$OUT"),$(jq -r .reason <<<"$OUT")" "null,a section block has no tasks line"
+  spec_block "$(printf '%s\n' '<!-- reeve:spec v1 -->' '' 'repo: acme/app' 'change: add-export' 'section: archive' "source: $SPEC_SHA" '<!-- /reeve:spec -->')"
+  check "$(jq -c .spec <<<"$OUT")" "null"
+  [[ $(jq -r .reason <<<"$OUT") == "unexpected metadata line"* ]]
+  spec_block "$(printf '%s\n' '<!-- reeve:spec v1 -->' '' '<!-- /reeve:spec -->')"
+  check "$(jq -c .spec <<<"$OUT")" "null"
+}
+
 # The handshake validator accepts the work step's tasks_done: line and still
 # requires reason: and follow_ups:.
 stop_tasks_done_line_passes() {
@@ -2459,7 +2495,7 @@ strip_spec_only() {
     skip && $0 == "<!-- /ccmagic:spec-only -->" { skip = 0; eat = 1; next }
     skip { next }
     /^allowed-tools:/ {
-      n = split(" Bash(openspec:*),| Bash(${CLAUDE_PLUGIN_ROOT}/bin/ccm-openspec-scope *), Bash(ccm-openspec-scope *),| Bash(${CLAUDE_PLUGIN_ROOT}/bin/ccm-spec-block *), Bash(ccm-spec-block *),", g, "|")
+      n = split(" Bash(${CLAUDE_PLUGIN_ROOT}/bin/ccm-openspec-scope *), Bash(ccm-openspec-scope *),| Bash(${CLAUDE_PLUGIN_ROOT}/bin/ccm-spec-block *), Bash(ccm-spec-block *),", g, "|")
       for (i = 1; i <= n; i++) while ((k = index($0, g[i])) > 0) $0 = substr($0, 1, k - 1) substr($0, k + length(g[i]))
     }
     { print }' "$1"
@@ -2492,18 +2528,21 @@ skills_non_spec_tickets_unchanged_since_baseline() {
   for f in $(spec_prompt_files); do
     if ! git -C "$ROOT" cat-file -e "$SPEC_BASELINE:$f" 2>/dev/null; then missing+=" added:$f"; continue; fi
     [ -f "$ROOT/$f" ] || { missing+=" removed:$f"; continue; }
-    git -C "$ROOT" show "$SPEC_BASELINE:$f" >"$T/base"
+    git -C "$ROOT" show "$SPEC_BASELINE:$f" >"$T/base-raw"
+    strip_spec_only "$T/base-raw" >"$T/base"
     strip_spec_only "$ROOT/$f" >"$T/stripped"
     cmp -s "$T/base" "$T/stripped" || { missing+=" $f"; diff "$T/base" "$T/stripped" | sed -n '1,6s/^/    /p'; }
   done
   check "${missing# }" ""
 }
 
-# The hooks change only to accept the work step's tasks_done: line.
+# The hooks change only to accept the work step's tasks_done: line: these two
+# added lines in hooks/lib-handshake.sh, and nothing else.
 skills_hooks_only_accept_tasks_done() {
   local changed
-  changed=$(git -C "$ROOT" diff "$SPEC_BASELINE" -- hooks | grep -E '^[-+]' | grep -vE '^(\+\+\+|---) ' | grep -v '^+.*tasks_done' || true)
-  check "$changed" ""
+  changed=$(git -C "$ROOT" diff "$SPEC_BASELINE" -- hooks | grep -E '^[-+]' | grep -vE '^(\+\+\+|---) ' || true)
+  check "$changed" "+#   tasks_done: [ids]            (optional: work step on a Reeve spec ticket only)
++        if (l ~ /^[[:space:]]*tasks_done:/) continue"
 }
 
 # A spec ticket's run record is the ordinary template with the openspec key
@@ -2512,12 +2551,14 @@ skills_run_record_openspec_key_only_for_spec_tickets() {
   local f base spec frag missing=
   frag=', "openspec": {"change": "{spec.change}", "section": {spec.section: a number, or "archive"}, "tasks_done": [{"task id", ...}]}'
   for f in skills/auto-ticket/SKILL.md skills/auto-ticket/autonomous-contract.md; do
-    base=$(git -C "$ROOT" show "$SPEC_BASELINE:$f" | grep -m1 '^{"ccmagic": ')
-    [ "$(grep -m1 '^{"ccmagic": ' "$ROOT/$f")" = "$base" ] || missing+=" $f:ordinary-template-changed"
+    # The ordinary template, as the file has it now; that it matches the
+    # baseline is the unchanged-since-baseline test's job.
+    base=$(grep -m1 '^{"ccmagic": ' "$ROOT/$f")
     spec=$(awk '$0 == "<!-- ccmagic:spec-only -->" { b = 1 } $0 == "<!-- /ccmagic:spec-only -->" { b = 0 } b && /^\{"ccmagic": /' "$ROOT/$f")
     [ "$spec" = "${base%\}\}}$frag}}" ] || missing+=" $f:spec-template"
     [[ $spec == *'"version": 2'* ]] || missing+=" $f:version"
     strip_spec_only "$ROOT/$f" | grep -q '"openspec"' && missing+=" $f:key-outside-block"
+    [ "$(strip_spec_only "$ROOT/$f" | grep -m1 '^{"ccmagic": ')" = "$base" ] || missing+=" $f:ordinary-template-in-block"
   done
   check "${missing# }" ""
 }

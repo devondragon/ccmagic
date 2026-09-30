@@ -2,7 +2,7 @@
 name: work-ticket
 description: End-to-end ticket workflow. Detects your tracker (Linear, GitHub Issues, or JIRA), looks up the ticket, assigns it to you, moves it to In Progress, triages the work type, creates a branch, executes the work (delegating to /ccmagic:debug for bugs), validates scope, then commits and opens a PR.
 user-invocable: true
-allowed-tools: Read(*), Write(*), Edit(*), Bash(git:*, gh:*, mkdir:*, timeout:*, gtimeout:*), Bash(${CLAUDE_PLUGIN_ROOT}/bin/ccm-context *), Bash(ccm-context *), Bash(${CLAUDE_PLUGIN_ROOT}/bin/ccm-openspec-scope *), Bash(ccm-openspec-scope *), Bash(openspec:*), Glob(*), Grep(*), Task(*), TodoWrite(*), AskUserQuestion(*), Skill(*)
+allowed-tools: Read(*), Write(*), Edit(*), Bash(git:*, gh:*, mkdir:*, timeout:*, gtimeout:*), Bash(${CLAUDE_PLUGIN_ROOT}/bin/ccm-context *), Bash(ccm-context *), Bash(${CLAUDE_PLUGIN_ROOT}/bin/ccm-openspec-scope *), Bash(ccm-openspec-scope *), Glob(*), Grep(*), Task(*), TodoWrite(*), AskUserQuestion(*), Skill(*)
 argument-hint: Ticket ID (e.g. ENG-123, PROJ-456, or a GitHub issue number like 42)
 model: inherit
 ---
