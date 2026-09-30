@@ -1922,7 +1922,7 @@ skills_run_record_templates_v2() {
 skills_review_handshake_has_head() {
   local f missing=
   for f in skills/review-ticket/SKILL.md agents/auto-review.md skills/auto-ticket/autonomous-contract.md; do
-    grep -A1 '^status: clean | fixable-findings | needs-human' "$ROOT/$f" | grep -q '^head: ' || missing+=" $f"
+    grep -A1 '^status: clean | fixable-findings | needs-human' "$ROOT/$f" | grep '^head: ' >/dev/null || missing+=" $f"
   done
   check "${missing# }" ""
 }
@@ -1943,9 +1943,9 @@ skills_auto_ticket_rereviews_after_late_push() {
   step4=$(section "$f" '^## Step 4:' '^## Step 5:')
   step5=$(section "$f" '^## Step 5:' '^## Step 6:')
   # Step 3 records the head a clean review read.
-  section "$f" '^## Step 3:' '^## Step 4:' | grep -q 'reviewed_head' || missing+=" step3:reviewed_head"
+  section "$f" '^## Step 3:' '^## Step 4:' | grep 'reviewed_head' >/dev/null || missing+=" step3:reviewed_head"
   # 4e compares the PR head with it and sends a moved head to 4f.
-  grep -E '^  - \*\*clean\*\*' <<<"$step4" | grep -q '4f' || missing+=" 4e:clean-goes-to-4f"
+  grep -E '^  - \*\*clean\*\*' <<<"$step4" | grep '4f' >/dev/null || missing+=" 4e:clean-goes-to-4f"
   grep -qF 'headRefOid' <<<"$step4" || missing+=" 4e:reads-pr-head"
   # 4f re-reviews with a fresh head, bounded by the existing counters.
   grep -qE '^\*\*4f\. Re-review' <<<"$step4" || missing+=" 4f:heading"
@@ -1957,8 +1957,8 @@ skills_auto_ticket_rereviews_after_late_push() {
   # Step 5 never runs on a stale review.
   grep -qF 'reviewed_head' <<<"$step5" || missing+=" step5:guard"
   # The error table and the contract name the case.
-  section "$f" '^## Error handling' '^## Notes' | grep -qi 'stale review' || missing+=" errors:stale-review"
-  grep -m1 '^review_pass:' "$ROOT/skills/auto-ticket/autonomous-contract.md" | grep -q '4f' || missing+=" contract:review_pass"
+  section "$f" '^## Error handling' '^## Notes' | grep -i 'stale review' >/dev/null || missing+=" errors:stale-review"
+  grep -m1 '^review_pass:' "$ROOT/skills/auto-ticket/autonomous-contract.md" | grep '4f' >/dev/null || missing+=" contract:review_pass"
   grep -qi 'late push' "$ROOT/skills/auto-ticket/autonomous-contract.md" || missing+=" contract:late-push"
   check "${missing# }" ""
 }
@@ -2557,7 +2557,7 @@ skills_run_record_openspec_key_only_for_spec_tickets() {
     spec=$(awk '$0 == "<!-- ccmagic:spec-only -->" { b = 1 } $0 == "<!-- /ccmagic:spec-only -->" { b = 0 } b && /^\{"ccmagic": /' "$ROOT/$f")
     [ "$spec" = "${base%\}\}}$frag}}" ] || missing+=" $f:spec-template"
     [[ $spec == *'"version": 2'* ]] || missing+=" $f:version"
-    strip_spec_only "$ROOT/$f" | grep -q '"openspec"' && missing+=" $f:key-outside-block"
+    strip_spec_only "$ROOT/$f" | grep '"openspec"' >/dev/null && missing+=" $f:key-outside-block"
     [ "$(strip_spec_only "$ROOT/$f" | grep -m1 '^{"ccmagic": ')" = "$base" ] || missing+=" $f:ordinary-template-in-block"
   done
   check "${missing# }" ""
