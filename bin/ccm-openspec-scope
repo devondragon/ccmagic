@@ -13,9 +13,15 @@
 # does: the paths the PR touches come from the merge base of BASE and HEAD
 # (the files GitHub lists for the PR), and tasks.md and the change folder are
 # compared against the tip of BASE, the file that would land. By default the
-# branch is HEAD; with --worktree it is HEAD plus every uncommitted change and
-# untracked file (not ignored), what the branch holds once the work is
-# committed. The first rule that fails is reported.
+# branch is HEAD; with --worktree it is HEAD plus the uncommitted changes and
+# deletions of tracked files, the new files staged in the index, and the
+# untracked, not ignored files under openspec/: what the branch holds once the
+# work is committed. Only regular files and symlinks are staged, so a device
+# (a sandbox's /dev/null mount over a dotfile) or FIFO is skipped. Untracked
+# files outside openspec/ are left out: the section rules judge only openspec/
+# paths, openspec archive writes only under openspec/, and session files such
+# as .claude/settings.local.json are never committed. The first rule that
+# fails is reported.
 #   Section rules: outside-section, tasks-unreadable, section-missing,
 #     tasks-text, tasks-unchecked.
 #   Archive rules: not-moved, folder-content, tasks-unreadable (the archived
@@ -42,7 +48,7 @@ usage() { echo "ccm-openspec-scope: $1" >&2; exit 4; }
 precheck=false worktree=false repo="" args=()
 while [ $# -gt 0 ]; do
   case $1 in
-    -h|--help) sed -n '2,35p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,39p' "$0"; exit 0 ;;
     --precheck) precheck=true ;;
     --worktree) worktree=true ;;
     --repo) [ $# -ge 2 ] || usage "--repo needs OWNER/NAME"; repo=$2; shift ;;
@@ -252,7 +258,19 @@ mb_sha=$(git merge-base "$base_sha" "$head_sha") || unreadable "$base and HEAD h
 if [ "$worktree" = true ]; then
   idx=$scratch/index
   GIT_INDEX_FILE=$idx git read-tree "$head_sha" || unreadable "cannot read HEAD into a scratch index"
-  GIT_INDEX_FILE=$idx git add -A || unreadable "cannot stage the working tree into a scratch index"
+  # Tracked files: every change and deletion, except a path that is now a
+  # device, FIFO, or socket (a sandbox's /dev/null mount over a dotfile), which
+  # keeps its HEAD content. New files: the untracked ones under openspec/ and
+  # the ones staged in the real index, each only a regular file or a symlink.
+  { GIT_INDEX_FILE=$idx git ls-files -m -d -z |
+      while IFS= read -r -d '' p; do
+        if [ -f "$p" ] || [ -L "$p" ] || [ -d "$p" ] || [ ! -e "$p" ]; then printf '%s\0' "$p"; fi
+      done &&
+    { GIT_INDEX_FILE=$idx git ls-files -o --exclude-standard -z -- openspec/ &&
+      git diff --cached --name-only --diff-filter=A --no-renames -z "$head_sha"; } |
+      while IFS= read -r -d '' p; do if [ -f "$p" ] || [ -L "$p" ]; then printf '%s\0' "$p"; fi; done
+  } | GIT_INDEX_FILE=$idx git update-index --add --remove -z --stdin ||
+    unreadable "cannot stage the working tree into a scratch index"
   side=$(GIT_INDEX_FILE=$idx git write-tree) || unreadable "cannot write the working tree as a tree"
 else
   side=$head_sha
