@@ -209,6 +209,18 @@ ids_json() {
     jq -R . | jq -sc .
 }
 
+# parse_error PARSED: set prule, pline, and preason from the "E" line of
+# parse_tasks output. The fields are split by hand: tab is IFS whitespace, so
+# `IFS=$'\t' read` collapses the empty line field of a no-section rejection
+# and shifts the reason into pline. The reason is last and keeps any tab.
+parse_error() {
+  local l
+  l=$(grep -m1 '^E' <<<"$1")
+  l=${l#E$'\t'}
+  prule=${l%%$'\t'*}; l=${l#*$'\t'}
+  pline=${l%%$'\t'*}; preason=${l#*$'\t'}
+}
+
 matches_archive() { # FOLDER NAME: Reeve's archiveFolderMatches
   local d='^[0-9]{4}-[0-9]{2}-[0-9]{2}-'
   if [[ $2 =~ $d ]]; then [ "$1" = "$2" ]; else [[ $1 =~ $d ]] && [ "${1:11}" = "$2" ]; fi
@@ -238,7 +250,7 @@ if [ "$mode" = precheck ]; then
   fi
   parsed=$(parse_tasks "$tasks_path")
   if [[ $parsed == E* || $parsed == *$'\nE'* ]]; then
-    IFS=$'\t' read -r _ prule pline preason <<<"$(grep '^E' <<<"$parsed")"
+    parse_error "$parsed"
     fail tasks-unreadable "$tasks_path does not parse ($prule): $preason" "$tasks_path" "$pline"
   fi
   if [ "$section" = archive ]; then
@@ -317,12 +329,12 @@ if [ "$mode" = section ]; then
   show "$side" "$tasks_path" "$H" || fail tasks-unreadable "$tasks_path is missing on the branch" "$tasks_path"
   pb=$(parse_tasks "$B")
   if [[ $pb == E* || $pb == *$'\nE'* ]]; then
-    IFS=$'\t' read -r _ prule pline preason <<<"$(grep '^E' <<<"$pb")"
+    parse_error "$pb"
     fail tasks-unreadable "$tasks_path on the base branch ($base) does not parse ($prule): $preason" "$tasks_path" "$pline"
   fi
   ph=$(parse_tasks "$H")
   if [[ $ph == E* || $ph == *$'\nE'* ]]; then
-    IFS=$'\t' read -r _ prule pline preason <<<"$(grep '^E' <<<"$ph")"
+    parse_error "$ph"
     fail tasks-unreadable "$tasks_path on the branch does not parse ($prule): $preason" "$tasks_path" "$pline"
   fi
   tasks_json=$(ids_json "$pb" "$section" all)
@@ -396,7 +408,7 @@ A=$scratch/archived-tasks.md
 if show "$side" "$adir/tasks.md" "$A"; then
   pa=$(parse_tasks "$A")
   if [[ $pa == E* || $pa == *$'\nE'* ]]; then
-    IFS=$'\t' read -r _ prule pline preason <<<"$(grep '^E' <<<"$pa")"
+    parse_error "$pa"
     fail tasks-unreadable "$adir/tasks.md does not parse ($prule): $preason" "$adir/tasks.md" "$pline"
   fi
   tasks_json=$(ids_json "$pa" all all); unchecked_json=$(ids_json "$pa" all unchecked)
