@@ -277,10 +277,30 @@ else
 fi
 
 # The paths the PR touches: STATUS<TAB>OLD<TAB>NEW per entry (OLD empty unless
-# renamed or copied), from the merge base, as GitHub lists a PR's files.
+# renamed or copied), from the merge base, as GitHub lists a PR's files. The
+# diff is read NUL-separated: without -z git C-quotes a path holding a double
+# quote, a backslash, or a control character ("openspec/x\ty"), even with
+# core.quotepath off, and the quoted form escapes every prefix rule below. A
+# path holding a tab or a newline cannot be written as one line here, and no
+# OpenSpec file has one, so it is reported as unreadable rather than checked.
 changes=$scratch/changes
-git -c core.quotepath=off diff --name-status --find-renames "$mb_sha" "$side" |
-  awk -F'\t' '$1 ~ /^[RC]/ { printf "%s\t%s\t%s\n", substr($1, 1, 1), $2, $3; next } { printf "%s\t\t%s\n", $1, $2 }' >"$changes"
+git diff -z --name-status --find-renames "$mb_sha" "$side" >"$scratch/changes.z" ||
+  unreadable "cannot list the paths the branch changes from the merge base"
+: >"$changes"
+while IFS= read -r -d '' st; do
+  old=""
+  if [[ $st == [RC]* ]]; then
+    IFS= read -r -d '' old || unreadable "cannot read git diff -z output"
+    st=${st:0:1}
+  fi
+  IFS= read -r -d '' new || unreadable "cannot read git diff -z output"
+  for p in "$old" "$new"; do
+    case $p in
+      *$'\t'* | *$'\n'*) unreadable "the branch changes $(printf %q "$p"), whose name holds a tab or a newline; no OpenSpec file has one, and this check cannot read it" ;;
+    esac
+  done
+  printf '%s\t%s\t%s\n' "$st" "$old" "$new" >>"$changes"
+done <"$scratch/changes.z"
 touched() { awk -F'\t' '{ if ($2 != "") print $2; print $3 }' "$changes"; }
 
 # show REV PATH OUT: write REV:PATH to OUT; fails when it does not exist.

@@ -2467,6 +2467,74 @@ scope_archive_spec_deletion_needs_retire() {
   check "$(rule)" "pass"
 }
 
+# Git C-quotes a path holding a double quote, a backslash, or a control
+# character in its plain diff output, and the quoted form starts with a quote,
+# not openspec/, so the rules must read the raw path. A tab or a newline cannot
+# be written into the tab-separated list, so it is unreadable (exit 3).
+scope_section_quoted_paths_fail() {
+  seed_spec
+  local p d=openspec/changes/add-export
+  for p in "$d/x\"y" "$d/x\\y" "$d/x"$'\001'"y" "openspec/a\"b/tasks.md"; do
+    g checkout -q work && g reset -q --hard main
+    mkdir -p "$(dirname "$p")" && echo edit >"$p"
+    tick 2.1; tick 2.2; commit
+    scope add-export 2 main
+    check "$(rule),$RC" "outside-section,1"
+    check "$(jqval .file)" "$p"
+  done
+  for p in "$d/x"$'\n'"y" "$d/x"$'\t'"y" "src/a"$'\n'"openspec/b"; do
+    g checkout -q work && g reset -q --hard main
+    mkdir -p "$(dirname "$p")" && echo edit >"$p"
+    tick 2.1; tick 2.2; commit
+    scope add-export 2 main
+    check "$(jqval .pass),$RC" "false,3"
+    [[ $(jqval .detail) == *"holds a tab or a newline"* ]]
+  done
+}
+
+scope_archive_quoted_paths_fail() {
+  seed_spec all
+  echo edit >"openspec/specs/export/a\"b"
+  archive_as 2026-09-30-add-export
+  scope add-export archive main
+  check "$(rule),$RC,$(jqval .file)" "outside-archive,1,openspec/specs/export/a\"b"
+  g reset -q --hard main
+  echo edit >"openspec/specs/export/a"$'\t'"b"
+  archive_as 2026-09-30-add-export
+  scope add-export archive main
+  check "$(jqval .pass),$RC" "false,3"
+}
+
+# Reading the diff with -z changes nothing for ordinary paths: the JSON is
+# byte for byte what v3.16.0 printed on the same branch.
+SCOPE_BASELINE=f2e68eed489d1956df31473691a5721b053ab60e
+scope_json_matches_v3_16_0() {
+  git -C "$ROOT" rev-parse -q --verify "$SCOPE_BASELINE^{commit}" >/dev/null || { echo "    baseline $SCOPE_BASELINE is not in this clone (CI needs fetch-depth: 0)"; return 1; }
+  mkdir -p "$T/old"
+  git -C "$ROOT" show "$SCOPE_BASELINE:bin/ccm-openspec-scope" >"$T/old/ccm-openspec-scope"
+  git -C "$ROOT" show "$SCOPE_BASELINE:bin/ccm-lib.sh" >"$T/old/ccm-lib.sh"
+  chmod +x "$T/old/ccm-openspec-scope"
+  same_as_old() {
+    local new
+    scope "$@"; new="$OUT,$RC"
+    run "$T/old/ccm-openspec-scope" "$@"
+    check "$new" "$OUT,$RC"
+  }
+  seed_spec
+  echo more >>src/app.txt && g mv src/app.txt src/moved.txt
+  tick 2.1; tick 2.2; commit
+  same_as_old add-export 2 main
+  same_as_old add-export 1 main
+  echo edit >>openspec/changes/add-export/proposal.md && commit
+  same_as_old add-export 2 main
+  setup_fresh
+  seed_spec all
+  archive_as 2026-09-30-add-export
+  same_as_old add-export archive main
+  echo code >>src/app.txt && commit
+  same_as_old add-export archive main
+}
+
 scope_precheck_section_and_archive() {
   seed_spec
   scope --precheck --repo ACME/App add-export 2
