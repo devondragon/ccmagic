@@ -2562,6 +2562,36 @@ scope_precheck_archive_exists_by_name_rule() {
   check "$(rule),$(jqval .file)" "archive-exists,openspec/changes/archive/2026-01-01-add-export"
 }
 
+# A tasks.md with no numbered section heading is rejected with an empty line
+# field; the rejection still reaches the JSON as tasks-unreadable (exit 1) with
+# a null line, on every path that parses tasks.md.
+scope_no_section_heading_is_tasks_unreadable() {
+  seed_spec
+  local t=openspec/changes/add-export/tasks.md
+  printf '%s\n' '# Tasks' '' 'Nothing numbered here.' >|"$t"
+  scope --precheck --repo acme/app add-export 2
+  check "$(rule),$RC,$(jqval .line),$(jqval .file)" "tasks-unreadable,1,null,$t"
+  [[ $(jqval .detail) == *"does not parse (no-section): The file has no numbered section heading (## 1. Title)."* ]]
+  scope --precheck --repo acme/app add-export archive
+  check "$(rule),$RC,$(jqval .line)" "tasks-unreadable,1,null"
+  commit
+  scope add-export 2 main
+  check "$(rule),$RC,$(jqval .line)" "tasks-unreadable,1,null"
+  [[ $(jqval .detail) == *"on the branch does not parse (no-section): The file has no"* ]]
+  setup_fresh
+  seed_spec
+  g checkout -q main
+  printf '%s\n' '# Tasks' '' 'Nothing numbered here.' >|"$t" && commit "no sections"
+  g checkout -q -B work
+  scope add-export 2 main
+  check "$(rule),$RC,$(jqval .line)" "tasks-unreadable,1,null"
+  [[ $(jqval .detail) == *"on the base branch (main) does not parse (no-section)"* ]]
+  archive_as 2026-09-30-add-export
+  scope add-export archive main
+  check "$(rule),$RC,$(jqval .line),$(jqval .file)" "tasks-unreadable,1,null,openspec/changes/archive/2026-09-30-add-export/tasks.md"
+  [[ $(jqval .detail) == *"does not parse (no-section): The file has no"* ]]
+}
+
 scope_usage_and_unreadable() {
   seed_spec
   scope add-export 2
