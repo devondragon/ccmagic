@@ -2505,6 +2505,85 @@ scope_archive_quoted_paths_fail() {
   check "$(jqval .pass),$RC" "false,3"
 }
 
+# The tree listings are read NUL-separated too: a change folder holding a file
+# or a capability whose name git C-quotes (a double quote, a backslash, a
+# control character) archives cleanly, and the archive rules still catch a
+# wrong copy of it. A tab or a newline in a listed name is unreadable (exit 3).
+# seed_quoted [YAML]: main holds add-export with such names (and YAML as its
+# .openspec.yaml), archived on branch work with capability a\b's spec written.
+seed_quoted() {
+  local d=openspec/changes/add-export
+  seed_spec all
+  g checkout -q main
+  [ -z "${1:-}" ] || printf '%s\n' "$1" >|"$d/.openspec.yaml"
+  echo quote >"$d/q\"uote.md"
+  echo ctl >"$d/c"$'\001'"tl.md"
+  mkdir -p "$d/specs/a\\b" "openspec/specs/a\\b" "$d/specs/s p"
+  echo '## ADDED Requirements' >"$d/specs/a\\b/spec.md"
+  echo '# backslash' >"openspec/specs/a\\b/spec.md"
+  echo '## ADDED Requirements' >"$d/specs/s p/spec.md"
+  commit quoted && g checkout -q -B work
+  mkdir -p openspec/changes/archive
+  g mv "$d" openspec/changes/archive/2026-09-30-add-export
+  echo '### Requirement: B' >>"openspec/specs/a\\b/spec.md"
+  commit archive
+}
+
+scope_archive_quoted_names_in_change_folder() {
+  local a=openspec/changes/archive/2026-09-30-add-export
+  seed_quoted
+  scope add-export archive main
+  check "$(rule),$RC" "pass,0"
+  # A capability the change does not name may not be written, even when it is
+  # a word of a name holding a space.
+  mkdir -p openspec/specs/s && echo '# s' >openspec/specs/s/spec.md && commit stray
+  scope add-export archive main
+  check "$(rule),$(jqval .file)" "outside-archive,openspec/specs/s/spec.md"
+  g reset -q --hard HEAD~1
+  echo changed >>"$a/q\"uote.md" && commit edit
+  scope add-export archive main
+  check "$(rule),$RC,$(jqval .file)" "folder-content,1,$a/q\"uote.md"
+  g reset -q --hard HEAD~1
+  echo extra >"$a/n\"ew.md" && commit extra
+  scope add-export archive main
+  check "$(rule),$(jqval .file)" "folder-content,$a/n\"ew.md"
+  g reset -q --hard HEAD~1
+  # Capability a\b is retired like any other: refused without
+  # retire_capabilities, accepted with it.
+  g rm -q "openspec/specs/a\\b/spec.md" && echo more >>openspec/specs/export/spec.md && commit retire
+  scope add-export archive main
+  check "$(rule),$(jqval .file)" "spec-deleted,openspec/specs/a\\b/spec.md"
+  setup_fresh
+  seed_quoted $'schema: spec-driven\nretire_capabilities: true'
+  g rm -q "openspec/specs/a\\b/spec.md" && echo more >>openspec/specs/export/spec.md && commit retire
+  scope add-export archive main
+  check "$(rule),$RC" "pass,0"
+}
+
+# A tab in a change folder file is caught by the diff read before the tree
+# listings run (the archive move lists it); a newline in an archive folder
+# already on the base reaches only the folder listing.
+scope_archive_tab_or_newline_in_listing_unreadable() {
+  seed_spec all
+  g checkout -q main
+  echo tab >"openspec/changes/add-export/t"$'\t'"ab.md" && commit tab && g checkout -q -B work
+  archive_as 2026-09-30-add-export
+  scope add-export archive main
+  check "$(jqval .pass),$RC" "false,3"
+  [[ $(jqval .detail) == *"holds a tab or a newline"* ]]
+  setup_fresh
+  seed_spec all
+  archive_as 2026-09-30-add-export
+  # Committed on main, so the diff from the merge base does not list it and
+  # only the archive folder listing reads the name.
+  g checkout -q main
+  mkdir -p "openspec/changes/archive/x"$'\n'"y" && echo x >"openspec/changes/archive/x"$'\n'"y/tasks.md" && commit nl
+  g checkout -q work && g merge -q --no-edit main
+  scope add-export archive main
+  check "$(jqval .pass),$RC" "false,3"
+  [[ $(jqval .detail) == *"holds a tab or a newline"* ]]
+}
+
 # Reading the diff with -z changes nothing for ordinary paths: the JSON is
 # byte for byte what v3.16.0 printed on the same branch.
 SCOPE_BASELINE=f2e68eed489d1956df31473691a5721b053ab60e

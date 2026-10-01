@@ -384,21 +384,59 @@ fi
 
 # ---- archive rules --------------------------------------------------------------
 
-# files REV PREFIX: "relative-path<TAB>blob" for every file under PREFIX/.
-files() { git ls-tree -r --full-tree "$1" -- "$2/" | awk -F'\t' -v p="$2/" '{ split($1, m, " "); print substr($2, length(p) + 1) "\t" m[3] }' | LC_ALL=C sort; }
-folders() { git ls-tree -d --name-only --full-tree "$1" -- openspec/changes/archive/ | sed 's|^openspec/changes/archive/||' | LC_ALL=C sort; }
+# The tree listings are read NUL-separated, as the diff is above: without -z
+# git C-quotes a name holding a double quote, a backslash, or a control
+# character, and the quoted form no longer matches its other side or the
+# prefix rules. A name holding a tab or a newline cannot be written as one line
+# here, and no OpenSpec file has one, so it is reported as unreadable. Each
+# listing is written to a file by the main shell, so unreadable exits the
+# script, not a command substitution.
 
-base_files=$(files "$base_sha" "$dir")
+# list_files REV PREFIX OUT: "relative-path<TAB>blob" for every file under
+# PREFIX/, sorted, into OUT.
+list_files() {
+  local entry meta path
+  git ls-tree -r -z --full-tree "$1" -- "$2/" >"$scratch/ls-tree.z" ||
+    unreadable "cannot list $2 at $1"
+  : >"$3.unsorted"
+  while IFS= read -r -d '' entry; do
+    meta=${entry%%$'\t'*} path=${entry#*$'\t'}
+    case $path in
+      *$'\t'* | *$'\n'*) unreadable "$(printf %q "$path") at $1 holds a tab or a newline; no OpenSpec file has one, and this check cannot read it" ;;
+    esac
+    meta=${meta##* }
+    printf '%s\t%s\n' "${path:${#2}+1}" "$meta" >>"$3.unsorted"
+  done <"$scratch/ls-tree.z"
+  LC_ALL=C sort "$3.unsorted" >"$3"
+}
+# list_folders REV OUT: the folder names directly under openspec/changes/archive/
+# at REV, sorted, into OUT.
+list_folders() {
+  local path a=openspec/changes/archive/
+  git ls-tree -d -z --name-only --full-tree "$1" -- "$a" >"$scratch/ls-tree.z" ||
+    unreadable "cannot list $a at $1"
+  : >"$2.unsorted"
+  while IFS= read -r -d '' path; do
+    case $path in
+      *$'\t'* | *$'\n'*) unreadable "$(printf %q "$path") at $1 holds a tab or a newline; no OpenSpec folder has one, and this check cannot read it" ;;
+    esac
+    printf '%s\n' "${path#"$a"}" >>"$2.unsorted"
+  done <"$scratch/ls-tree.z"
+  LC_ALL=C sort "$2.unsorted" >"$2"
+}
+list_files "$base_sha" "$dir" "$scratch/base-files"; base_files=$(<"$scratch/base-files")
 [ -n "$base_files" ] || fail not-moved "$dir is not on the base branch ($base)" "$dir"
-[ -z "$(files "$side" "$dir")" ] || fail not-moved "$dir is still on the branch; openspec archive moves it" "$dir"
-new=$(LC_ALL=C comm -13 <(folders "$base_sha") <(folders "$side"))
+list_files "$side" "$dir" "$scratch/left-files"
+[ ! -s "$scratch/left-files" ] || fail not-moved "$dir is still on the branch; openspec archive moves it" "$dir"
+list_folders "$base_sha" "$scratch/base-folders"; list_folders "$side" "$scratch/side-folders"
+new=$(LC_ALL=C comm -13 "$scratch/base-folders" "$scratch/side-folders")
 count=$(grep -c . <<<"$new" || true)
 [ "$count" -eq 1 ] || fail not-moved "the branch adds $count archive folders ($(tr '\n' ' ' <<<"$new" | sed 's/ $//')); openspec archive adds exactly one" "openspec/changes/archive"
 F=$new
 matches_archive "$F" "$change" || fail not-moved "openspec/changes/archive/$F is not an archive name for $change (YYYY-MM-DD-$change, or the name itself when it starts with a date)" "openspec/changes/archive/$F"
 adir="openspec/changes/archive/$F"
 
-head_files=$(files "$side" "$adir")
+list_files "$side" "$adir" "$scratch/head-files"; head_files=$(<"$scratch/head-files")
 if [ "$base_files" != "$head_files" ]; then
   f=$({ diff <(printf '%s\n' "$base_files") <(printf '%s\n' "$head_files") || true; } | awk -F'\t' '/^[<>] / { print substr($1, 3); exit }')
   fail folder-content "$adir/$f differs from $dir/$f on the base branch ($base), is missing, or was added; the archive must hold exactly the change's files" "$adir/$f"
@@ -418,10 +456,14 @@ else
   fail tasks-unreadable "$adir/tasks.md is missing" "$adir/tasks.md"
 fi
 
-caps=" $(awk -F'\t' '$1 ~ /^specs\/[^\/]+\// { split($1, p, "/"); print p[2] }' <<<"$base_files" | sort -u | tr '\n' ' ')"
-first=$(touched | awk -v d="$dir/" -v a="$adir/" -v caps="$caps" '
+# The capability names, one per line. They reach awk through ENVIRON, since
+# awk -v reads backslash escapes and a raw name can hold a backslash, and they
+# are matched whole, so a name holding a space names only itself.
+caps=$(awk -F'\t' '$1 ~ /^specs\/[^\/]+\// { split($1, p, "/"); print p[2] }' <<<"$base_files" | LC_ALL=C sort -u)
+first=$(touched | CAPS=$caps awk -v d="$dir/" -v a="$adir/" '
+  BEGIN { n = split(ENVIRON["CAPS"], cl, "\n"); for (i = 1; i <= n; i++) if (cl[i] != "") cap[cl[i]] = 1 }
   index($0, d) == 1 || index($0, a) == 1 { next }
-  $0 ~ /^openspec\/specs\/[^\/]+\/spec\.md$/ { split($0, p, "/"); if (index(caps, " " p[3] " ")) next }
+  $0 ~ /^openspec\/specs\/[^\/]+\/spec\.md$/ { split($0, p, "/"); if (p[3] in cap) next }
   { print; exit }')
 [ -z "$first" ] || fail outside-archive "$first is outside what openspec archive writes for $change (the change folder's move and openspec/specs/<cap>/spec.md for the capabilities its specs/ folder names)" "$first"
 
@@ -441,6 +483,6 @@ gone=$(awk -F'\t' '$1 == "D" && $3 ~ /^openspec\/specs\// { print $3 } $1 == "R"
 if [ -n "$gone" ]; then
   [ "$retire" = true ] || fail spec-deleted "$gone is removed, and $dir/.openspec.yaml does not set retire_capabilities: true" "$gone"
   cap=${gone#openspec/specs/}; cap=${cap%%/*}
-  [[ $caps == *" $cap "* ]] || fail spec-deleted "$gone is removed, and $change does not name capability $cap" "$gone"
+  grep -qxF -- "$cap" <<<"$caps" || fail spec-deleted "$gone is removed, and $change does not name capability $cap" "$gone"
 fi
 result true "" ""
