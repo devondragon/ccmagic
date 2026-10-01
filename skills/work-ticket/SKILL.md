@@ -286,7 +286,7 @@ If there are gaps, offer two options:
 "${CLAUDE_PLUGIN_ROOT}/bin/ccm-openspec-scope" --worktree {spec.change} {spec.section} {base-ref}
 ```
 
-`--worktree` includes the uncommitted changes and untracked files. Exit 0: keep its `tasks_done` list for the handshake. Exit 1: a rule failed; fix what it names when the fix is within the section rules (for example a box you ticked by mistake), and run it again; otherwise stop with `needs-human`, `reason: spec scope check failed ({rule}): {detail}`, before committing. Any other exit: stop with `needs-human`, `reason: cannot run the spec scope check: {detail}`.
+`--worktree` includes the uncommitted changes to tracked files, staged new files, and untracked files under `openspec/` (it skips untracked files elsewhere, such as session files, and anything that is not a regular file or a symlink). Exit 0: keep its `tasks_done` list for the handshake. Exit 1: a rule failed; fix what it names when the fix is within the section rules (for example a box you ticked by mistake), and run it again; otherwise stop with `needs-human`, `reason: spec scope check failed ({rule}): {detail}`, before committing. Any other exit: stop with `needs-human`, `reason: cannot run the spec scope check: {detail}`.
 <!-- /ccmagic:spec-only -->
 
 > Note: scope validation is complementary to the code review run in Step 5 — review checks code quality, scope validation checks ticket coverage. Both matter. If you ran `/ccmagic:review-ticket` in Step 5, the scope drift section already gives you a head start here.

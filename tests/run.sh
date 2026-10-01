@@ -2243,7 +2243,7 @@ scope_section_unreadable_names_the_side() {
 }
 
 # The work step checks before it commits: --worktree judges the uncommitted
-# changes and untracked files too; the default judges HEAD alone.
+# changes and new files too; the default judges HEAD alone.
 scope_worktree_includes_uncommitted_changes() {
   seed_spec
   tick 2.1; tick 2.2
@@ -2256,6 +2256,79 @@ scope_worktree_includes_uncommitted_changes() {
   scope --worktree add-export 2 main
   check "$(rule),$(jqval .file)" "outside-section,openspec/changes/other/tasks.md"
   check "$(git status --porcelain | wc -l | tr -d ' ')" 3
+}
+
+# A sandboxed session sees dotfiles masked by /dev/null mounts, which git lists
+# as untracked non-regular files; --worktree skips anything that is not a
+# regular file or a symlink (a FIFO stands in for the device here).
+scope_worktree_skips_special_files() {
+  seed_spec
+  tick 2.1; tick 2.2
+  mkfifo .bash_profile openspec/changes/add-export/pipe
+  scope --worktree add-export 2 main
+  check "$(rule),$RC" "pass,0"
+  # A tracked dotfile under the mount keeps its committed content.
+  command rm -f .bash_profile && echo cfg >.gitconfig && g add .gitconfig && g commit -qm cfg
+  command rm -f .gitconfig && mkfifo .gitconfig
+  scope --worktree add-export 2 main
+  check "$(rule),$RC" "pass,0"
+  command rm -f .gitconfig
+  g reset -q --hard main && command rm -f openspec/changes/add-export/pipe
+  g checkout -q main
+  tick 1.1; tick 1.2; tick 2.1; tick 2.2; commit "all done"
+  g checkout -q -B work
+  mkdir -p openspec/changes/archive
+  command mv openspec/changes/add-export openspec/changes/archive/2026-09-30-add-export
+  echo '### Requirement: Export' >>openspec/specs/export/spec.md
+  mkfifo .bash_profile openspec/changes/archive/pipe
+  scope --worktree add-export archive main
+  check "$(rule),$RC" "pass,0"
+}
+
+# Untracked files outside openspec/ (Cyrus's .claude/settings.local.json, a
+# review stats file) are never committed, so --worktree leaves them out; a
+# tracked change outside openspec/ still counts, and so does a staged new file.
+scope_worktree_archive_ignores_untracked_outside_openspec() {
+  seed_spec all
+  mkdir -p openspec/changes/archive .claude context
+  command mv openspec/changes/add-export openspec/changes/archive/2026-09-30-add-export
+  echo '### Requirement: Export' >>openspec/specs/export/spec.md
+  echo '{}' >.claude/settings.local.json
+  echo '{}' >"context/review stats.json"
+  scope --worktree add-export archive main
+  check "$(rule),$RC" "pass,0"
+  echo code >>src/app.txt
+  scope --worktree add-export archive main
+  check "$(rule),$(jqval .file)" "outside-archive,src/app.txt"
+  g checkout -q -- src/app.txt
+  echo staged >src/staged.txt && g add src/staged.txt
+  scope --worktree add-export archive main
+  check "$(rule),$(jqval .file)" "outside-archive,src/staged.txt"
+}
+
+# Untracked files under openspec/ are still judged (a space in the name too),
+# and tracked modifications and deletions are still included.
+scope_worktree_judges_openspec_and_tracked_changes() {
+  seed_spec
+  tick 2.1; tick 2.2
+  printf 'x\n' >"openspec/changes/add-export/stray name.md"
+  scope --worktree add-export 2 main
+  check "$(rule),$(jqval .file)" "outside-section,openspec/changes/add-export/stray name.md"
+  command rm -f "openspec/changes/add-export/stray name.md"
+  ln -s proposal.md openspec/changes/add-export/link.md
+  scope --worktree add-export 2 main
+  check "$(rule),$(jqval .file)" "outside-section,openspec/changes/add-export/link.md"
+  command rm -f openspec/changes/add-export/link.md
+  echo edit >>openspec/changes/add-export/proposal.md
+  scope --worktree add-export 2 main
+  check "$(rule),$(jqval .file)" "outside-section,openspec/changes/add-export/proposal.md"
+  g checkout -q -- openspec/changes/add-export/proposal.md
+  command rm -f openspec/specs/version/spec.md
+  scope --worktree add-export 2 main
+  check "$(rule),$(jqval .file)" "outside-section,openspec/specs/version/spec.md"
+  g checkout -q -- openspec/specs/version/spec.md
+  scope --worktree add-export 2 main
+  check "$(rule)" "pass"
 }
 
 # archive_as FOLDER [CHANGE]: what openspec archive does, committed.
