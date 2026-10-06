@@ -1,6 +1,16 @@
 # Every-ticket changes to the skill and agent files since SPEC_BASELINE in
 # tests/run.sh, spec-only blocks removed on both sides. Written by
 #   CCM_WRITE_EVERY_TICKET_DIFF=1 bash tests/run.sh skills_non_spec
+### agents/auto-feedback.md
+@@ -31,7 +31,7 @@ follow_ups: [<short description of each deferred or out-of-scope item>]
+ **No tracker access.** Read the ticket from the grounding block's `ticket_content:`. Do not fetch or update the ticket, and do not spawn a helper agent to do it; the orchestrator owns every tracker read and write (contract §8). Report a needed state change in `requested_state:` and anything to file in `follow_ups:`.
+ 
+ 
+-Call the `ccm-*` scripts the skill calls by bare name (`ccm-context`, not the `${CLAUDE_PLUGIN_ROOT}/bin/ccm-context` path the procedure shows); plugin `bin/` is on the Bash `PATH`. Here only the session's permission rules apply, not the skill's `allowed-tools`, and a harness that grants Bash narrowly grants these scripts by bare name (`docs/cyrus-deployment.md`). Run each script as its own Bash call, with nothing chained to it: a compound command is refused as a whole when any other part of it is. If a bare name is not found, fall back to the path form.
++Call the `ccm-*` scripts by the path the procedure shows (`"${CLAUDE_PLUGIN_ROOT}/bin/ccm-context"`, not the bare `ccm-context`): plugin `bin/` is not on the Bash `PATH` in every harness, and in a Cyrus session the bare name exits 127 (command not found). Run each script as its own Bash call, with nothing chained to it: a compound command is refused as a whole when any other part of it is. Here only the session's permission rules apply, not the skill's `allowed-tools`; if the path form is not found or is denied (a harness that grants Bash narrowly grants these scripts by bare name, `docs/cyrus-deployment.md`), fall back to the bare name.
+ 
+ **Keep every call in the foreground.** You are a subagent, and a subagent returns to the orchestrator the moment it ends its turn. Pass `run_in_background: false` on every `Task` (Agent) call and every Bash call you make, including the ones a preloaded procedure tells you to launch in parallel: put a parallel batch in one message, and each result comes back in that message. A background task reports only through a completion notification, which arrives after you have already returned, so its work is lost and your handshake is missing.
+ 
 ### agents/auto-finish.md
 @@ -9,7 +9,20 @@ tools: Read, Edit, Bash, Glob, Grep
  
@@ -10,7 +20,7 @@
 +**First, check the run may finish.** Before any other call, pass the grounding block's `steps:` section (the line `steps:` and its `~~~` fence, verbatim) to `ccm-finish-guard` on stdin, as its own Bash call:
 +
 +```bash
-+ccm-finish-guard <<'CCM_STEPS_EOF'
++"${CLAUDE_PLUGIN_ROOT}/bin/ccm-finish-guard" <<'CCM_STEPS_EOF'
 +steps:
 +~~~
 +{the JSON array from the grounding block, verbatim}
@@ -23,6 +33,44 @@
 +Then follow the **preloaded `finish-ticket` procedure in autonomous mode**: enforce the merge gate (mergeable + CI green + no unaddressed change-requests), take the Done path, merge with the strategy the skill determines (or, when the grounding block carries `merge_owner: reeve`, hand off per the skill's *Merge hand-off* section instead of merging), and auto-resolve only trivial conflicts. Use the grounding block in your task prompt.
  
  Because you were invoked with an autonomous grounding block, you are **orchestrated** — on `needs-human` (gate not satisfied, or a business-logic conflict), do NOT merge and do NOT park the ticket yourself; emit the handshake and stop so the orchestrator routes it.
+ 
+@@ -29,7 +42,7 @@ requested_state: <on done: Done under merge_owner: self, {merge_handoff_state} u
+ **No tracker access.** Read the ticket from the grounding block's `ticket_content:`. Do not fetch or update the ticket, and do not spawn a helper agent to do it; the orchestrator owns every tracker read and write (contract §8). Report a needed state change in `requested_state:` and anything to file in `follow_ups:`.
+ 
+ 
+-Call the `ccm-*` scripts the skill calls by bare name (`ccm-context`, not the `${CLAUDE_PLUGIN_ROOT}/bin/ccm-context` path the procedure shows); plugin `bin/` is on the Bash `PATH`. Here only the session's permission rules apply, not the skill's `allowed-tools`, and a harness that grants Bash narrowly grants these scripts by bare name (`docs/cyrus-deployment.md`). Run each script as its own Bash call, with nothing chained to it: a compound command is refused as a whole when any other part of it is. If a bare name is not found, fall back to the path form.
++Call the `ccm-*` scripts by the path the procedure shows (`"${CLAUDE_PLUGIN_ROOT}/bin/ccm-context"`, not the bare `ccm-context`): plugin `bin/` is not on the Bash `PATH` in every harness, and in a Cyrus session the bare name exits 127 (command not found). Run each script as its own Bash call, with nothing chained to it: a compound command is refused as a whole when any other part of it is. Here only the session's permission rules apply, not the skill's `allowed-tools`; if the path form is not found or is denied (a harness that grants Bash narrowly grants these scripts by bare name, `docs/cyrus-deployment.md`), fall back to the bare name.
+ 
+ **Keep every call in the foreground.** You are a subagent, and a subagent returns to the orchestrator the moment it ends its turn. Pass `run_in_background: false` on every `Task` (Agent) call and every Bash call you make, including the ones a preloaded procedure tells you to launch in parallel: put a parallel batch in one message, and each result comes back in that message. A background task reports only through a completion notification, which arrives after you have already returned, so its work is lost and your handshake is missing.
+ 
+### agents/auto-push.md
+@@ -28,7 +28,7 @@ follow_ups: []
+ **No tracker access.** Read the ticket from the grounding block's `ticket_content:`. Do not fetch or update the ticket, and do not spawn a helper agent to do it; the orchestrator owns every tracker read and write (contract §8). Report a needed state change in `requested_state:` and anything to file in `follow_ups:`.
+ 
+ 
+-Call the `ccm-*` scripts the skill calls by bare name (`ccm-context`, not the `${CLAUDE_PLUGIN_ROOT}/bin/ccm-context` path the procedure shows); plugin `bin/` is on the Bash `PATH`. Here only the session's permission rules apply, not the skill's `allowed-tools`, and a harness that grants Bash narrowly grants these scripts by bare name (`docs/cyrus-deployment.md`). Run each script as its own Bash call, with nothing chained to it: a compound command is refused as a whole when any other part of it is. If a bare name is not found, fall back to the path form.
++Call the `ccm-*` scripts by the path the procedure shows (`"${CLAUDE_PLUGIN_ROOT}/bin/ccm-context"`, not the bare `ccm-context`): plugin `bin/` is not on the Bash `PATH` in every harness, and in a Cyrus session the bare name exits 127 (command not found). Run each script as its own Bash call, with nothing chained to it: a compound command is refused as a whole when any other part of it is. Here only the session's permission rules apply, not the skill's `allowed-tools`; if the path form is not found or is denied (a harness that grants Bash narrowly grants these scripts by bare name, `docs/cyrus-deployment.md`), fall back to the bare name.
+ 
+ **Keep every call in the foreground.** You are a subagent, and a subagent returns to the orchestrator the moment it ends its turn. Pass `run_in_background: false` on every `Task` (Agent) call and every Bash call you make, including the ones a preloaded procedure tells you to launch in parallel: put a parallel batch in one message, and each result comes back in that message. A background task reports only through a completion notification, which arrives after you have already returned, so its work is lost and your handshake is missing.
+ 
+### agents/auto-review.md
+@@ -12,7 +12,7 @@ You are running the **review** step of an autonomous ticket run driven by `/ccma
+ 
+ Follow the **preloaded `review-ticket` procedure in autonomous mode**, which itself uses the preloaded `review` procedure — run `review`'s pipeline inline (spawn its parallel analysis subagents via your `Task` tool as `review` describes). Use the grounding block in your task prompt.
+ 
+-Because you were invoked with an autonomous grounding block, you are **orchestrated** — on `needs-human`, emit the verdict and stop; do not park the ticket yourself. Report and verdict only; do not mutate code (the orchestrator sends the findings to the work step's fix pass). Your toolset has no Edit or Write for that reason; review stats are recorded through `ccm-review-route --record`, so never create or overwrite files.
++Because you were invoked with an autonomous grounding block, you are **orchestrated** — on `needs-human`, emit the verdict and stop; do not park the ticket yourself. Report and verdict only; do not mutate code (the orchestrator sends the findings to the work step's fix pass). Your toolset has no Edit or Write for that reason; review stats are recorded through `"${CLAUDE_PLUGIN_ROOT}/bin/ccm-review-route" --record`, so never create or overwrite files.
+ 
+ Follow the preloaded procedures directly; do not re-invoke `/ccmagic:review-ticket` or `/ccmagic:review` as skills.
+ 
+@@ -30,7 +30,7 @@ follow_ups: [<any tickets or deferrals noted>]
+ **No tracker access.** Read the ticket from the grounding block's `ticket_content:`. Do not fetch or update the ticket, and do not spawn a helper agent to do it; the orchestrator owns every tracker read and write (contract §8). Report a needed state change in `requested_state:` and anything to file in `follow_ups:`.
+ 
+ 
+-Call the `ccm-*` scripts the skill calls by bare name (`ccm-context`, not the `${CLAUDE_PLUGIN_ROOT}/bin/ccm-context` path the procedure shows); plugin `bin/` is on the Bash `PATH`. Here only the session's permission rules apply, not the skill's `allowed-tools`, and a harness that grants Bash narrowly grants these scripts by bare name (`docs/cyrus-deployment.md`). Run each script as its own Bash call, with nothing chained to it: a compound command is refused as a whole when any other part of it is. If a bare name is not found, fall back to the path form.
++Call the `ccm-*` scripts by the path the procedure shows (`"${CLAUDE_PLUGIN_ROOT}/bin/ccm-context"`, not the bare `ccm-context`): plugin `bin/` is not on the Bash `PATH` in every harness, and in a Cyrus session the bare name exits 127 (command not found). Run each script as its own Bash call, with nothing chained to it: a compound command is refused as a whole when any other part of it is. Here only the session's permission rules apply, not the skill's `allowed-tools`; if the path form is not found or is denied (a harness that grants Bash narrowly grants these scripts by bare name, `docs/cyrus-deployment.md`), fall back to the bare name.
+ 
+ **Keep every call in the foreground.** You are a subagent, and a subagent returns to the orchestrator the moment it ends its turn. Pass `run_in_background: false` on every `Task` (Agent) call and every Bash call you make, including the ones a preloaded procedure tells you to launch in parallel: put a parallel batch in one message, and each result comes back in that message. A background task reports only through a completion notification, which arrives after you have already returned, so its work is lost and your handshake is missing.
  
 ### agents/auto-validate.md
 @@ -11,7 +11,7 @@ You are running the **validate** step of an autonomous ticket run driven by `/cc
@@ -43,7 +91,35 @@
  follow_ups: []
  ```
  
+@@ -28,7 +28,7 @@ follow_ups: []
+ **No tracker access.** Read the ticket from the grounding block's `ticket_content:`. Do not fetch or update the ticket, and do not spawn a helper agent to do it; the orchestrator owns every tracker read and write (contract §8). Report a needed state change in `requested_state:` and anything to file in `follow_ups:`.
+ 
+ 
+-Call the `ccm-*` scripts the skill calls by bare name (`ccm-context`, not the `${CLAUDE_PLUGIN_ROOT}/bin/ccm-context` path the procedure shows); plugin `bin/` is on the Bash `PATH`. Here only the session's permission rules apply, not the skill's `allowed-tools`, and a harness that grants Bash narrowly grants these scripts by bare name (`docs/cyrus-deployment.md`). Run each script as its own Bash call, with nothing chained to it: a compound command is refused as a whole when any other part of it is. If a bare name is not found, fall back to the path form.
++Call the `ccm-*` scripts by the path the procedure shows (`"${CLAUDE_PLUGIN_ROOT}/bin/ccm-context"`, not the bare `ccm-context`): plugin `bin/` is not on the Bash `PATH` in every harness, and in a Cyrus session the bare name exits 127 (command not found). Run each script as its own Bash call, with nothing chained to it: a compound command is refused as a whole when any other part of it is. Here only the session's permission rules apply, not the skill's `allowed-tools`; if the path form is not found or is denied (a harness that grants Bash narrowly grants these scripts by bare name, `docs/cyrus-deployment.md`), fall back to the bare name.
+ 
+ **Keep every call in the foreground.** You are a subagent, and a subagent returns to the orchestrator the moment it ends its turn. Pass `run_in_background: false` on every `Task` (Agent) call and every Bash call you make, including the ones a preloaded procedure tells you to launch in parallel: put a parallel batch in one message, and each result comes back in that message. A background task reports only through a completion notification, which arrives after you have already returned, so its work is lost and your handshake is missing.
+ 
+### agents/auto-work.md
+@@ -34,7 +34,7 @@ requested_state: <In Review on done; omit on needs-human and on a fix pass>
+ **No tracker access.** Read the ticket from the grounding block's `ticket_content:`. Do not fetch or update the ticket, and do not spawn a helper agent to do it; the orchestrator owns every tracker read and write (contract §8). Report a needed state change in `requested_state:` and anything to file in `follow_ups:`.
+ 
+ 
+-Call the `ccm-*` scripts the skill calls by bare name (`ccm-context`, not the `${CLAUDE_PLUGIN_ROOT}/bin/ccm-context` path the procedure shows); plugin `bin/` is on the Bash `PATH`. Here only the session's permission rules apply, not the skill's `allowed-tools`, and a harness that grants Bash narrowly grants these scripts by bare name (`docs/cyrus-deployment.md`). Run each script as its own Bash call, with nothing chained to it: a compound command is refused as a whole when any other part of it is. If a bare name is not found, fall back to the path form.
++Call the `ccm-*` scripts by the path the procedure shows (`"${CLAUDE_PLUGIN_ROOT}/bin/ccm-context"`, not the bare `ccm-context`): plugin `bin/` is not on the Bash `PATH` in every harness, and in a Cyrus session the bare name exits 127 (command not found). Run each script as its own Bash call, with nothing chained to it: a compound command is refused as a whole when any other part of it is. Here only the session's permission rules apply, not the skill's `allowed-tools`; if the path form is not found or is denied (a harness that grants Bash narrowly grants these scripts by bare name, `docs/cyrus-deployment.md`), fall back to the bare name.
+ 
+ **Keep every call in the foreground.** You are a subagent, and a subagent returns to the orchestrator the moment it ends its turn. Pass `run_in_background: false` on every `Task` (Agent) call and every Bash call you make, including the ones a preloaded procedure tells you to launch in parallel: put a parallel batch in one message, and each result comes back in that message. A background task reports only through a completion notification, which arrives after you have already returned, so its work is lost and your handshake is missing.
+ 
 ### skills/auto-ticket/SKILL.md
+@@ -79,7 +79,7 @@ Step agents cannot reach tracker MCP tools, so in this run **only this skill rea
+    "${CLAUDE_PLUGIN_ROOT}/bin/ccm-context" {TICKET-ID}   # argument given
+    "${CLAUDE_PLUGIN_ROOT}/bin/ccm-context"               # no argument: parse the current branch
+    ```
+-   (Bare `ccm-context` works too; plugin `bin/` is on `PATH`.) Run it, and every other `ccm-*` call in this skill, as its own Bash call with nothing chained to it: a session with narrow Bash grants refuses a compound command as a whole when any other part of it is refused. Read `ticket_id` from its JSON: the argument (a leading `#` stripped), or the segment after the branch prefix (`feature/ENG-123-slug` gives `ENG-123`, `bugfix/42-slug` gives `42`), the same parse `/ccmagic:finish-ticket` Step 1 uses. Do not re-parse the branch yourself. If `ticket_id` is null, **exit cleanly** with a one-line message asking the caller to pass one (`/ccmagic:auto-ticket {TICKET-ID}`); this is a setup error, not a parkable ticket, so do not wait for input. The same JSON's `tracker_hint`, `gh_available`, and `config.tracker` feed item 1's cascade (settings and arg/branch shape); the MCP probe, CLI probe, and transport detection stay in item 1.
++   Call it by this path, not by the bare name `ccm-context`, which is not on `PATH` in every harness; fall back to the bare name only when the path form is not found. Run it, and every other `ccm-*` call in this skill, as its own Bash call with nothing chained to it: a session with narrow Bash grants refuses a compound command as a whole when any other part of it is refused. Read `ticket_id` from its JSON: the argument (a leading `#` stripped), or the segment after the branch prefix (`feature/ENG-123-slug` gives `ENG-123`, `bugfix/42-slug` gives `42`), the same parse `/ccmagic:finish-ticket` Step 1 uses. Do not re-parse the branch yourself. If `ticket_id` is null, **exit cleanly** with a one-line message asking the caller to pass one (`/ccmagic:auto-ticket {TICKET-ID}`); this is a setup error, not a parkable ticket, so do not wait for input. The same JSON's `tracker_hint`, `gh_available`, and `config.tracker` feed item 1's cascade (settings and arg/branch shape); the MCP probe, CLI probe, and transport detection stay in item 1.
+ 3. **Load config** from the same output's `config` object, which already applies the precedence project `.claude/ccmagic.local.md` over user `~/.claude/ccmagic.local.md` over the built-in defaults (see contract §5). An explicit arg still beats `config`. Do not re-read the config files. Keys: `needs_human_state`, `needs_human_label` (default `needs-human`), `merge_owner` (default `self`), `merge_handoff_state` (default `Awaiting Merge`), `max_feedback_passes` (default `3`), `max_review_fix_passes` (default `3`), `max_validate_attempts` (default `2`), `ci_timeout_minutes` (default `30`), `ci_poll_interval_seconds` (default `60`), plus the usual `tracker` / `ticket_url_base` / `github_repo`, and the per-step model overrides `model_work_ticket`, `model_review_ticket`, `model_pr_feedback`, `model_finish_ticket`, `model_validate`, `model_push`. The model keys have no built-in default in `ccm-context`, so they appear in `config` only when set; when absent, use the registry value.
+ 4. **Fetch the ticket** to confirm it exists (per the tracker's lookup in `work-ticket`/`review-ticket`), and keep its title, description, and acceptance criteria (a separate AC field too, if the tracker has one) exactly as written: the grounding block carries them to every step, and no step fetches the ticket again. If not found, stop (Sacred Rule). Then, on the **mcp** transport, assign the ticket to yourself and move it to In Progress, as `work-ticket` Step 2 describes for each tracker (the step agents no longer do this); if that fails, note it for the summary and continue. Under **prompt-relay** there is no MCP to fetch from, so instead confirm the ticket content (title + description) is present in the invocation arguments / grounding block, **or in a `.ccmagic-ticket.md` handoff file in the working directory**, read here in item 4 after `ccm-context` has run, never as the run's first call. The file is a fork-safe content source for harnesses (like Cyrus) that inject the ticket into a *parent* prompt the forked skill can't see. If you read it from the handoff file, delete it afterward with exactly `rm -f .ccmagic-ticket.md` as its own Bash call from the working directory, without a `cd` or other commands chained to it (the only `rm` this skill is granted, and a chained form doesn't match the grant) so it is never committed. If it's absent from all of these, stop with a setup-error message: this is the Sacred Rule made explicit, since the caller should have injected the content, so a missing body is a setup error, never a guess and never a park.
+ 5. **Build the grounding block** (contract §2) with the resolved values. Mint `run_id` first — a short unique id for this run (the last 6 digits of `date +%s`; skip `openssl` and other commands this skill doesn't grant); it keys the Step 6 idempotency guard. The block also carries the `transport:` line and, on every transport, the fenced `ticket_content:` section (contract §2), so every per-step agent receives the ticket body without fetching it. Prepend it to every sub-skill invocation below. `/ccmagic:auto-ticket` always drives sub-skills with `autonomous: true`, regardless of the `autonomous:` config default.
 @@ -155,7 +155,7 @@ Everything this pass pushes is measured against `H`, so bot reviews triggered *b
  **4a. Apply feedback.** Run the pr-feedback step via `run_step` — `/ccmagic:pr-feedback {PR_NUMBER}` with the grounding block. Autonomous `pr-feedback` applies address-now fixes, replies to declined/question threads, records each defer/out-of-scope item as a short description in `follow_ups` (it files no tickets in an orchestrated run; Step 6 does), and pushes. Collect its handshake counts; its `follow_ups` go on the run's list like every step's.
    - `needs-human` (e.g. a genuine reviewer tie) → **route-and-stop** (stage = `pr-feedback`).
@@ -116,6 +192,118 @@
  - **Never finish on a stale review.** The last clean review's `head:` must be the PR head when `finish-ticket` runs. A late push (Step 4a or 4b) gets a re-review (orchestrator Step 4f) within the existing loop limits, and a run that can't re-review the pushed head parks.
  - **Every exit is `merged`, `handed-off` (only with `merge_owner: reeve`), or `parked-needs-human` (with a reason).** Never `stalled`, never a silent hang, never a merge on a guess.
  
+@@ -295,7 +307,7 @@ In an **orchestrated** run (the grounding block carries `orchestrator: auto-tick
+ | `set_state(In Review \| Done \| merge_handoff_state)` | Report it in the handshake's `requested_state:`. | Applies it after the step returns (mcp), or relays it as `Requested state:` (prompt-relay). |
+ | `comment(ticket, body)` | Skip. Put anything the ticket should carry (for example finish-ticket's closing or hand-off comment) in the step's final report. | Posts its run summary to the ticket in Step 6 (mcp). |
+ | `link_pr(url)` | Skip; the PR URL is in the handshake's `reason` (work-ticket). | Links the PR to the ticket after the work step (mcp). |
+-| `file_followup(desc)` | Record a short description in `follow_ups:`; reply to a deferred PR thread with `ccm-pr-reply ... --ticket requested`. | Files it or lists it with a reason (its *Follow-ups* rule). |
++| `file_followup(desc)` | Record a short description in `follow_ups:`; reply to a deferred PR thread through `ccm-pr-reply` with `--ticket requested`. | Files it or lists it with a reason (its *Follow-ups* rule). |
+ 
+ Needs-human parking is already the orchestrator's (§4). Comments on the PR (`gh pr comment`, `ccm-post-review`, `ccm-pr-reply`) are not tracker writes and stay in the steps. A sub-skill invoked without a grounding block (interactive or standalone autonomous) keeps its full tracker behavior; this section changes nothing there.
+ 
+### skills/codex-review/SKILL.md
+@@ -143,7 +143,7 @@ For >50 files, focus Codex/Gemini on Tier 1+2 only.
+ 
+ ## Step 4: Run Multi-Dimension Review Passes
+ 
+-`ccm-external-review` holds the dimension prompts (run `ccm-external-review --print-prompt <dimension>` to see one), feeds them to the CLIs with the diff or module file list, bounds every call, and classifies each pass. **Do not write prompt files or call `codex` or `gemini` yourself.** Each prompt opens with the "Do not load, consult, or follow any installed skill…" line that stops Codex's skill auto-matcher from following an unrelated review skill out of `~/.codex/skills/`; see the note in `${CLAUDE_SKILL_DIR}/codex-prompts.md`.
++`ccm-external-review` holds the dimension prompts (run `"${CLAUDE_PLUGIN_ROOT}/bin/ccm-external-review" --print-prompt <dimension>` to see one), feeds them to the CLIs with the diff or module file list, bounds every call, and classifies each pass. **Do not write prompt files or call `codex` or `gemini` yourself.** Each prompt opens with the "Do not load, consult, or follow any installed skill…" line that stops Codex's skill auto-matcher from following an unrelated review skill out of `~/.codex/skills/`; see the note in `${CLAUDE_SKILL_DIR}/codex-prompts.md`.
+ 
+ If Step 2 found any conventions, write `{PROJECT_CONVENTIONS}` with the Write tool to `{RUN_DIR}/conventions.md` and pass `--conventions {RUN_DIR}/conventions.md`; the script appends it to every dimension prompt.
+ 
+### skills/codex-review/codex-prompts.md
+@@ -3,7 +3,7 @@
+ The dimension prompts live in `bin/ccm-external-review`, which feeds them to Codex and Gemini. Edit them there. To see the exact text a pass sends:
+ 
+ ```bash
+-ccm-external-review --print-prompt security   # or architecture, correctness, errors, tests, deps, adversarial
++"${CLAUDE_PLUGIN_ROOT}/bin/ccm-external-review" --print-prompt security   # or architecture, correctness, errors, tests, deps, adversarial
+ ```
+ 
+ | Dimension | Scope |
+### skills/doctor/SKILL.md
+@@ -33,7 +33,7 @@ It prints one JSON object per line: `{level, area, message, fix}`, where `level`
+ | Git | inside a repository, `user.name`, `user.email` |
+ | Branch | the ccmagic branch prefix, and whether a ticket ID parses from the branch (the same parse the ticket skills use) |
+ | Skills | the skills present, and any skill `/ccmagic:help` lists that is missing |
+-| Validation | `ccm-validate --list`: one line per check with its command, or "disabled in config", or "not configured" |
++| Validation | `"${CLAUDE_PLUGIN_ROOT}/bin/ccm-validate" --list`: one line per check with its command, or "disabled in config", or "not configured" |
+ 
+ Exit code 1 means at least one `FAIL` line; 0 means none. Report the lines as the script printed them. Don't re-run the checks by hand or second-guess a level. If `jq` is missing the script prints a single `FAIL` line and stops; report that and tell the user to install `jq` first.
+ 
+@@ -106,4 +106,4 @@ Status is FAIL if any line is `FAIL`, else WARN if any line is `WARN` (including
+ 
+ ## Quick mode
+ 
+-If invoked as `/ccmagic:doctor --quick`, run `ccm-doctor --quick` (Project setup and Configuration only) and skip step 2.
++If invoked as `/ccmagic:doctor --quick`, run `"${CLAUDE_PLUGIN_ROOT}/bin/ccm-doctor" --quick` (Project setup and Configuration only) and skip step 2.
+### skills/finish-ticket/SKILL.md
+@@ -433,7 +433,7 @@ Absent all three, run the interactive path exactly as documented above. Also rea
+ 
+ ### Behavior at each human-gate
+ 
+-- **Step 3 (Sanity check) — this is the merge gate.** Merge **only if** `ccm-merge-gate` exits 0 (after waiting out `pending` / `not-registered` CI with `ccm-ci-status --watch` as Step 3 describes). **Never ask a human to confirm CI, and never emit a question as the run's result** — an autonomous run ends by merging or by route-and-stop, never by asking. If the gate fails → `needs-human` (do **not** merge; the `reason` is the gate's `blockers` joined with `; `). Do not take the interactive "proceed anyway" option. The PreToolUse hook denies `gh pr merge` in autonomous runs while the gate fails, so a merge attempt past a failed gate is refused, and the refusal means `needs-human`.
++- **Step 3 (Sanity check) — this is the merge gate.** Merge **only if** `ccm-merge-gate` exits 0 (after waiting out `pending` / `not-registered` CI with `"${CLAUDE_PLUGIN_ROOT}/bin/ccm-ci-status" --watch` as Step 3 describes). **Never ask a human to confirm CI, and never emit a question as the run's result** — an autonomous run ends by merging or by route-and-stop, never by asking. If the gate fails → `needs-human` (do **not** merge; the `reason` is the gate's `blockers` joined with `; `). Do not take the interactive "proceed anyway" option. The PreToolUse hook denies `gh pr merge` in autonomous runs while the gate fails, so a merge attempt past a failed gate is refused, and the refusal means `needs-human`.
+ - **Step 4 (Disposition):** always take the **Done** path. The QA path needs an interactive hand-off (QA-assignee lookup, status confirmation) that would hang an unattended run, so autonomous mode never enters it — **even if `default_qa_workflow: true`**. If the QA path was explicitly forced (`--qa` passed *together with* an autonomous signal), that's a conflict autonomous mode can't satisfy → `needs-human` (reason: "QA disposition requires a human — re-run without `--qa`, or complete QA manually"); do **not** merge. A project that requires QA on every ticket should not be driven by `/ccmagic:auto-ticket`.
+ - **Step 5 (Merge confirmation):** proceed with the determined strategy — squash for `feature/`/`bugfix/`/`hotfix/`/`chore/`, merge commit for `release/` — no pause.
+ - **Step 6 (Merge conflicts):** auto-resolve **trivial** conflicts (version bumps, import lists, config values) exactly as Step 6 already describes. A **business-logic** conflict → `needs-human` (do not merge; leave the branch unmerged, `reason` names the conflicting files).
+### skills/merge/SKILL.md
+@@ -98,7 +98,7 @@ gh pr merge --rebase --delete-branch
+ ```markdown
+ 1. Detect platform (GitHub/GitLab/Bitbucket)
+ 2. Run the merge gate (GitHub) or check approval and pipeline status (GitLab/Bitbucket)
+-3. Wait for pending CI with `ccm-ci-status --watch`
++3. Wait for pending CI with `"${CLAUDE_PLUGIN_ROOT}/bin/ccm-ci-status" --watch`
+ 4. Select merge strategy based on:
+    - Project conventions
+    - Branch type (feature/hotfix/release)
+### skills/pr-feedback/SKILL.md
+@@ -206,7 +206,7 @@ After presenting the plan, suggest validation steps:
+ > 2. `/ccmagic:test` — Run tests to verify fixes don't break existing behavior
+ > 3. `gh pr view {PR_NUMBER} --comments` — Review to confirm all threads addressed
+ >
+-> When replying to review threads, use `ccm-pr-reply {PR} {comment_id} --disposition fixed|declined|answered|deferred ...` (see *Autonomous mode*, step 4). A plain reply leaves the thread counted as open by `/ccmagic:auto-ticket`.
++> When replying to review threads, use `"${CLAUDE_PLUGIN_ROOT}/bin/ccm-pr-reply" {PR} {comment_id} --disposition fixed|declined|answered|deferred ...` (see *Autonomous mode*, step 4). A plain reply leaves the thread counted as open by `/ccmagic:auto-ticket`.
+ 
+ ## Autonomous mode
+ 
+@@ -233,7 +233,7 @@ Run Steps 1–5 exactly as written (load conventions, fetch threads, classify, v
+ 3. **Push**: invoke `/ccmagic:push` with the autonomous grounding block prepended (it commits the grouped fixes and pushes; if push returns `needs-human`, propagate that and skip step 4). Replies come after the push because a `fixed` reply must cite a pushed commit.
+ 4. **Reply on every triaged thread with `ccm-pr-reply`**, using the response templates in `${CLAUDE_SKILL_DIR}/triage-guide.md` for the body. The script appends the disposition marker that `ccm-pr-threads` reads, replies to the thread's root comment, and resolves the thread for `fixed`:
+    ```bash
+-   ccm-pr-reply {PR} {comment_id} --disposition fixed    --commit {sha that fixed it} --body - <<'CCM_REPLY_EOF'
++   "${CLAUDE_PLUGIN_ROOT}/bin/ccm-pr-reply" {PR} {comment_id} --disposition fixed    --commit {sha that fixed it} --body - <<'CCM_REPLY_EOF'
+    {reply body}
+    CCM_REPLY_EOF
+    ```
+### skills/review-ticket/SKILL.md
+@@ -26,14 +26,14 @@ Runs a full code review with the **ticket as the ground truth for intent**. The
+ 
+ Same cascade as `/ccmagic:work-ticket`:
+ 
+-1. Run `ccm-context`, passing `$1` as the ticket ID when the first argument is present and is not a flag (does not start with `--`):
++1. Run `"${CLAUDE_PLUGIN_ROOT}/bin/ccm-context"`, passing `$1` as the ticket ID when the first argument is present and is not a flag (does not start with `--`):
+    ```bash
+    "${CLAUDE_PLUGIN_ROOT}/bin/ccm-context" {TICKET-ID}   # first argument present and not a flag
+    "${CLAUDE_PLUGIN_ROOT}/bin/ccm-context"        # otherwise
+    ```
+    It prints JSON with the resolved `config` (project `.claude/ccmagic.local.md` over user `~/.claude/ccmagic.local.md` over built-in defaults), `ticket_id`, `ticket_source` (`arg` or `branch`), `ticket_kind`, `tracker_hint`, `gh_available`, `branch`, and `base_branch`. Read `config.tracker`, `config.ticket_url_base`, `config.ticket_id_regex`, and `config.github_repo` from it; do not re-read the config files or re-derive these fields. The script is also on the Bash `PATH` as `ccm-context` while the plugin is enabled; use the bare name if the `${CLAUDE_PLUGIN_ROOT}` path doesn't resolve.
+ 
+-   `ccm-context` does not check an argument against the regex. If `ticket_source` is `arg` and the ID neither matches `config.ticket_id_regex` nor has `ticket_kind: integer`, `$1` was not a ticket ID: rerun `ccm-context` with no argument, so it parses the branch, and use that output from here on.
++   `ccm-context` does not check an argument against the regex. If `ticket_source` is `arg` and the ID neither matches `config.ticket_id_regex` nor has `ticket_kind: integer`, `$1` was not a ticket ID: rerun `"${CLAUDE_PLUGIN_ROOT}/bin/ccm-context"` with no argument, so it parses the branch, and use that output from here on.
+ 2. If `config.tracker` is `auto` or unset, run the detection cascade:
+    - **Ticket shape:** `tracker_hint` from `ccm-context`: `github` for an integer ID, `linear` or `jira` when a key-shaped ID meets a `ticket_url_base` pointing at that tracker, `linear-or-jira` otherwise.
+    - **MCP probe:** Linear MCP — a server available to the session (case-insensitive `mcp__*[Ll]inear*__get_issue`, incl. Cyrus's `mcp__linear__` and a still-connecting server; see contract §7); Atlassian/JIRA MCP (`mcp__*atlassian*__*` or `mcp__*Atlassian*__*`).
+### skills/review/SKILL.md
+@@ -290,7 +290,7 @@ After the review completes, record the counts as in Step 7d.
+ 
+ Load `${CLAUDE_SKILL_DIR}/codex-pass.md` and follow it. It covers running the pass with `ccm-external-review` and acting on the status it reports.
+ 
+-In short: run `"${CLAUDE_PLUGIN_ROOT}/bin/ccm-external-review" --tools codex --dimensions adversarial` (bare name `ccm-external-review` also works; plugin `bin/` is on `PATH`) in the background alongside the Step 3 agents in an interactive run, or in the foreground with a 600000 ms timeout when running autonomously. The script checks availability, bounds the pass with `timeout --kill-after=30 300`, and classifies it by exit status; act on its `status` rather than re-deriving it. Codex is additive and never blocking — every failure mode continues the review with Explore agent findings only.
++In short: run `"${CLAUDE_PLUGIN_ROOT}/bin/ccm-external-review" --tools codex --dimensions adversarial` (fall back to the bare name `ccm-external-review` only when the path form is not found) in the background alongside the Step 3 agents in an interactive run, or in the foreground with a 600000 ms timeout when running autonomously. The script checks availability, bounds the pass with `timeout --kill-after=30 300`, and classifies it by exit status; act on its `status` rather than re-deriving it. Codex is additive and never blocking — every failure mode continues the review with Explore agent findings only.
+ 
+ ---
+ 
 ### skills/validate/SKILL.md
 @@ -27,6 +27,16 @@ The script is also on the Bash `PATH` as `ccm-validate` while the plugin is enab
  
@@ -143,6 +331,15 @@
  
  ### 3. Optional checks (interactive only)
  
+@@ -95,7 +105,7 @@ Timestamp: [ISO 8601 timestamp]
+ ## Smart Features
+ 
+ ### 1. Auto-fix Mode (interactive only)
+-Offer to fix simple failures, then rerun that check with `ccm-validate --only <check>` to confirm:
++Offer to fix simple failures, then rerun that check with `"${CLAUDE_PLUGIN_ROOT}/bin/ccm-validate" --only <check>` to confirm:
+ ```bash
+ # Auto-fix linting
+ eslint --fix
 @@ -166,13 +176,14 @@ The handshake follows the script's JSON, with no judgment of your own:
  
  - Every step 2 call returned `status: pass`: emit `done` with reason `validation passed`.

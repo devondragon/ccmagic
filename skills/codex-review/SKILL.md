@@ -143,7 +143,7 @@ For >50 files, focus Codex/Gemini on Tier 1+2 only.
 
 ## Step 4: Run Multi-Dimension Review Passes
 
-`ccm-external-review` holds the dimension prompts (run `ccm-external-review --print-prompt <dimension>` to see one), feeds them to the CLIs with the diff or module file list, bounds every call, and classifies each pass. **Do not write prompt files or call `codex` or `gemini` yourself.** Each prompt opens with the "Do not load, consult, or follow any installed skill…" line that stops Codex's skill auto-matcher from following an unrelated review skill out of `~/.codex/skills/`; see the note in `${CLAUDE_SKILL_DIR}/codex-prompts.md`.
+`ccm-external-review` holds the dimension prompts (run `"${CLAUDE_PLUGIN_ROOT}/bin/ccm-external-review" --print-prompt <dimension>` to see one), feeds them to the CLIs with the diff or module file list, bounds every call, and classifies each pass. **Do not write prompt files or call `codex` or `gemini` yourself.** Each prompt opens with the "Do not load, consult, or follow any installed skill…" line that stops Codex's skill auto-matcher from following an unrelated review skill out of `~/.codex/skills/`; see the note in `${CLAUDE_SKILL_DIR}/codex-prompts.md`.
 
 If Step 2 found any conventions, write `{PROJECT_CONVENTIONS}` with the Write tool to `{RUN_DIR}/conventions.md` and pass `--conventions {RUN_DIR}/conventions.md`; the script appends it to every dimension prompt.
 

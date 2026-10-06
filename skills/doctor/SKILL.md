@@ -33,7 +33,7 @@ It prints one JSON object per line: `{level, area, message, fix}`, where `level`
 | Git | inside a repository, `user.name`, `user.email` |
 | Branch | the ccmagic branch prefix, and whether a ticket ID parses from the branch (the same parse the ticket skills use) |
 | Skills | the skills present, and any skill `/ccmagic:help` lists that is missing |
-| Validation | `ccm-validate --list`: one line per check with its command, or "disabled in config", or "not configured" |
+| Validation | `"${CLAUDE_PLUGIN_ROOT}/bin/ccm-validate" --list`: one line per check with its command, or "disabled in config", or "not configured" |
 
 Exit code 1 means at least one `FAIL` line; 0 means none. Report the lines as the script printed them. Don't re-run the checks by hand or second-guess a level. If `jq` is missing the script prints a single `FAIL` line and stops; report that and tell the user to install `jq` first.
 
@@ -106,4 +106,4 @@ Status is FAIL if any line is `FAIL`, else WARN if any line is `WARN` (including
 
 ## Quick mode
 
-If invoked as `/ccmagic:doctor --quick`, run `ccm-doctor --quick` (Project setup and Configuration only) and skip step 2.
+If invoked as `/ccmagic:doctor --quick`, run `"${CLAUDE_PLUGIN_ROOT}/bin/ccm-doctor" --quick` (Project setup and Configuration only) and skip step 2.

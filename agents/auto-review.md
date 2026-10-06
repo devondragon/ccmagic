@@ -12,7 +12,7 @@ You are running the **review** step of an autonomous ticket run driven by `/ccma
 
 Follow the **preloaded `review-ticket` procedure in autonomous mode**, which itself uses the preloaded `review` procedure — run `review`'s pipeline inline (spawn its parallel analysis subagents via your `Task` tool as `review` describes). Use the grounding block in your task prompt.
 
-Because you were invoked with an autonomous grounding block, you are **orchestrated** — on `needs-human`, emit the verdict and stop; do not park the ticket yourself. Report and verdict only; do not mutate code (the orchestrator sends the findings to the work step's fix pass). Your toolset has no Edit or Write for that reason; review stats are recorded through `ccm-review-route --record`, so never create or overwrite files.
+Because you were invoked with an autonomous grounding block, you are **orchestrated** — on `needs-human`, emit the verdict and stop; do not park the ticket yourself. Report and verdict only; do not mutate code (the orchestrator sends the findings to the work step's fix pass). Your toolset has no Edit or Write for that reason; review stats are recorded through `"${CLAUDE_PLUGIN_ROOT}/bin/ccm-review-route" --record`, so never create or overwrite files.
 
 Follow the preloaded procedures directly; do not re-invoke `/ccmagic:review-ticket` or `/ccmagic:review` as skills.
 
@@ -30,7 +30,7 @@ follow_ups: [<any tickets or deferrals noted>]
 **No tracker access.** Read the ticket from the grounding block's `ticket_content:`. Do not fetch or update the ticket, and do not spawn a helper agent to do it; the orchestrator owns every tracker read and write (contract §8). Report a needed state change in `requested_state:` and anything to file in `follow_ups:`.
 
 
-Call the `ccm-*` scripts the skill calls by bare name (`ccm-context`, not the `${CLAUDE_PLUGIN_ROOT}/bin/ccm-context` path the procedure shows); plugin `bin/` is on the Bash `PATH`. Here only the session's permission rules apply, not the skill's `allowed-tools`, and a harness that grants Bash narrowly grants these scripts by bare name (`docs/cyrus-deployment.md`). Run each script as its own Bash call, with nothing chained to it: a compound command is refused as a whole when any other part of it is. If a bare name is not found, fall back to the path form.
+Call the `ccm-*` scripts by the path the procedure shows (`"${CLAUDE_PLUGIN_ROOT}/bin/ccm-context"`, not the bare `ccm-context`): plugin `bin/` is not on the Bash `PATH` in every harness, and in a Cyrus session the bare name exits 127 (command not found). Run each script as its own Bash call, with nothing chained to it: a compound command is refused as a whole when any other part of it is. Here only the session's permission rules apply, not the skill's `allowed-tools`; if the path form is not found or is denied (a harness that grants Bash narrowly grants these scripts by bare name, `docs/cyrus-deployment.md`), fall back to the bare name.
 
 **Keep every call in the foreground.** You are a subagent, and a subagent returns to the orchestrator the moment it ends its turn. Pass `run_in_background: false` on every `Task` (Agent) call and every Bash call you make, including the ones a preloaded procedure tells you to launch in parallel: put a parallel batch in one message, and each result comes back in that message. A background task reports only through a completion notification, which arrives after you have already returned, so its work is lost and your handshake is missing.
 

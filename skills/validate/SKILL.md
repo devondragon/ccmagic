@@ -105,7 +105,7 @@ Timestamp: [ISO 8601 timestamp]
 ## Smart Features
 
 ### 1. Auto-fix Mode (interactive only)
-Offer to fix simple failures, then rerun that check with `ccm-validate --only <check>` to confirm:
+Offer to fix simple failures, then rerun that check with `"${CLAUDE_PLUGIN_ROOT}/bin/ccm-validate" --only <check>` to confirm:
 ```bash
 # Auto-fix linting
 eslint --fix

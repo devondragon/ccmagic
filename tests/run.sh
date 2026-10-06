@@ -2181,6 +2181,32 @@ skills_use_plugin_root_bin() {
   check "$(grep -rlF 'CLAUDE_SKILL_DIR}/../../bin' "$ROOT/skills" "$ROOT/agents" || true)" ""
 }
 
+# Skills and agents call every bin/ccm-* script by its ${CLAUDE_PLUGIN_ROOT}/bin
+# path: in a Cyrus session the bare name is not on PATH and exits 127 (RV-82).
+# A bare name may still be named in prose and as the fallback, but never as a
+# command: a command line, or a backticked span, that starts with it and
+# carries arguments.
+# shellcheck disable=SC2016 # literal backticks in the markdown and descriptions
+skills_call_scripts_by_plugin_path() {
+  local found
+  found=$(grep -rnE '^[[:space:]>]*ccm-[a-z-]+([[:space:]]|$)|`ccm-[a-z-]+ [^`]*`' "$ROOT/skills" "$ROOT/agents" | sed "s|^$ROOT/||" || true)
+  check "$found" ""
+  # The step agents no longer tell the model to try the bare name first.
+  check "$(grep -lF 'by bare name (`ccm-context`' "$ROOT"/agents/*.md || true)" ""
+}
+
+# A parent spec ticket's parked record carries no openspec key, which Reeve's
+# schema would reject along with the whole record (RV-82).
+# shellcheck disable=SC2016 # literal backticks in the markdown and descriptions
+skills_parent_record_has_no_openspec_key() {
+  local f missing=
+  for f in skills/auto-ticket/SKILL.md skills/auto-ticket/autonomous-contract.md; do
+    awk '$0 == "<!-- ccmagic:spec-only -->" { b = 1 } $0 == "<!-- /ccmagic:spec-only -->" { b = 0 } b' "$ROOT/$f" |
+      grep -E 'parent.*(no `openspec` key|leave the key out)' | grep -qF 'drops a whole record' || missing+=" $f"
+  done
+  check "${missing# }" ""
+}
+
 # docs/cyrus-deployment.md lists the bare-name rules a harness without plain
 # Bash must grant; tests/relay-smoke.sh --narrow-bash grants every bin/ccm-*.
 skills_harness_rules_list_every_script() {
@@ -2901,6 +2927,7 @@ spec_block_matches_reeve_edge_cases() {
 # as Reeve's specDelimiterLines does since RV-77 (its refine-block tests): an
 # escaped backtick or tilde run, which Reeve writes for a fence line in a
 # rendered body, is never a fence and cannot hide the closing delimiter.
+# shellcheck disable=SC2016 # literal backticks in the markdown and descriptions
 spec_block_fences_on_the_raw_line_as_reeve() {
   local d run text
   d=$(spec_desc 2 '2.1')
@@ -2929,6 +2956,7 @@ spec_block_fences_on_the_raw_line_as_reeve() {
 
 # Reeve's quoted-copy cases (refine-block.test.ts, RV-77): each is prose, so
 # the ticket is ordinary; CRLF and trailing spaces on the delimiters are not.
+# shellcheck disable=SC2001,SC2016 # sed indents every line; literal backticks
 spec_block_quoted_copies_are_prose_as_reeve() {
   local d text
   d=$(spec_desc 2 '2.1')

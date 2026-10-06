@@ -394,7 +394,7 @@ When the grounding block carries `fix_pass:`, `/ccmagic:auto-ticket` is sending 
 6. **Report** an `applied_findings:` section (one line per listed item, `- {id/title}: {file}`, with `; invariant test: {test file and name}` for an item fixed under §9) and, when there is something for the commit body (a §9 corpus sampled down, an invariant derived from a finding with no inputs), a `commit_notes:` section with lines of the form `- {file}: {note}`, naming the repository file the note concerns (for a §9 note, the invariant test), both `~~~`-fenced, just before the handshake (contract §3).
 
 <!-- ccmagic:spec-only -->
-**Only when the grounding block has a `spec:` section.** A fix pass follows Step 5's section rules too: it changes nothing under `openspec/`, ticks and unticks no box, and before it reports `done` it runs the Step 6 scope check (for the archive, `ccm-openspec-scope --worktree {change} archive {base-ref}`); a failure is a `needs-human` naming the rule. Its handshake carries `tasks_done: []`.
+**Only when the grounding block has a `spec:` section.** A fix pass follows Step 5's section rules too: it changes nothing under `openspec/`, ticks and unticks no box, and before it reports `done` it runs the Step 6 scope check (for the archive, `"${CLAUDE_PLUGIN_ROOT}/bin/ccm-openspec-scope" --worktree {change} archive {base-ref}`); a failure is a `needs-human` naming the rule. Its handshake carries `tasks_done: []`.
 <!-- /ccmagic:spec-only -->
 
 An item that cannot be fixed within the ticket's scope → `needs-human` naming it. The handshake on a fix pass has no `requested_state:`:
