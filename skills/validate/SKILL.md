@@ -27,6 +27,16 @@ The script is also on the Bash `PATH` as `ccm-validate` while the plugin is enab
 
 It prints `{status, timeout_seconds, checks: [{name, command, source, status, reason?}]}` without running anything. `status: planned` checks will run; `skipped` checks carry a `reason` ("not configured" or "disabled in config"). Show the plan to the user as a short table. If the top-level `status` is `nothing-to-run` (exit 2), skip to the report: there is nothing to run, and the user can add `validate_*` keys to `.claude/ccmagic.local.md`.
 
+### 1b. Install missing Node dependencies
+
+If the `--list` output has an `install` object, the repository's `package.json` declares dependencies and `node_modules` is missing, so the checks would fail for a reason that is not the code. Install them first, as its own call with the maximum Bash tool timeout (600000 ms):
+
+```bash
+"${CLAUDE_PLUGIN_ROOT}/bin/ccm-validate" --install
+```
+
+It runs the install the lockfile calls for (`npm ci` for `package-lock.json` or `npm-shrinkwrap.json`; `pnpm`, `yarn`, or `bun` for their lockfiles, only when that tool is installed) under `validate_timeout_seconds` and prints `{status: installed | not-needed | environment, install}`. `installed` or `not-needed`: go on to step 2. `environment` (exit 5): the install failed, timed out, or could not be done (no lockfile, or the lockfile's tool is missing); `install.reason` says which, and `install.tail` shows the end of the install's output. Run no check: report the environment problem, since every check would fail for the same reason. This is Node only; other ecosystems are never installed. A step 2 call that finds the dependencies still missing installs them itself and reports `environment` the same way.
+
 ### 2. Run each planned check, one call per check
 
 For each check with `status: planned`, in the listed order:
@@ -37,7 +47,7 @@ For each check with `status: planned`, in the listed order:
 
 Give each call the maximum Bash tool timeout (600000 ms). One call per check keeps each under the tool's 10-minute limit; the script enforces its own `validate_timeout_seconds` limit (default 540, which leaves room to report before the tool's limit) and reports a check that hits it as `failed` with reason "timed out". If the output has a `note`, no `timeout` binary was found and the checks ran unbounded; repeat the note in the report. If the Bash call itself times out and prints no JSON, count that check as failed with reason "timed out".
 
-Each call prints `{status: pass | fail, checks: [{name, command, source, status, exit_code, duration_s, log, reason?, tail?}]}` and exits 0 on pass, 1 on fail. A failed check carries the last 40 lines of its output as `tail`; the full output is in the `log` file. Keep going after a failure so the report covers every check, unless the user asked to stop at the first failure.
+Each call prints `{status: pass | fail | environment, install?, checks: [{name, command, source, status, exit_code, duration_s, log, reason?, tail?}]}` and exits 0 on pass, 1 on fail, and 5 on `environment` (missing dependencies it could not install, so no check ran; stop and report it as step 1b says). A failed check carries the last 40 lines of its output as `tail`; the full output is in the `log` file. Keep going after a failure so the report covers every check, unless the user asked to stop at the first failure.
 
 ### 3. Optional checks (interactive only)
 
@@ -166,13 +176,14 @@ The handshake follows the script's JSON, with no judgment of your own:
 
 - Every step 2 call returned `status: pass`: emit `done` with reason `validation passed`.
 - `--list` returned `nothing-to-run`: emit `done` with reason `no checks configured`.
+- `--install` or a step 2 call returned `status: environment`: emit `needs-human` with a reason starting `environment:` and quoting `install.reason` (for example `environment: npm ci exited 1`), and no `failures:` section. An environment problem is not a check failure: the orchestrator parks it without a fix pass. Only the script's `environment` status is one; a check the script reports `failed` stays `failed:` however environmental its output looks.
 - Any step 2 call returned `status: fail`: emit `needs-human` with a reason listing the failed check names from the JSON (for example `failed: lint, test`; add "(timed out)" after a check whose `reason` says so). Just before the handshake, emit a `failures:` section (contract §3) with one entry per failed check: its `command`, `exit_code`, `log` path, and the lines of its `tail` that show the cause, copied from the JSON. The orchestrator decides whether to fix-and-retry or park, and hands that section to the fix pass.
 
 ### Handshake (emit last, in autonomous mode)
 
 ```
 status: done | needs-human
-reason: <one line: "validation passed" or "no checks configured" on done; the failed check names on needs-human>
+reason: <one line: "validation passed" or "no checks configured" on done; "failed: <check names>" or "environment: <install.reason>" on needs-human>
 follow_ups: []
 ```
 
