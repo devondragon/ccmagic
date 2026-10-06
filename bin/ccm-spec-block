@@ -15,7 +15,14 @@
 #     a number, "archive", or "parent", tasks (only for a number) a list of
 #     task ids, source a 40-character commit SHA.
 # Anything else, a prose mention of reeve:spec included, is an ordinary ticket.
-# Linear's markdown escapes (\_ and the like) are undone first.
+# Each line is read as Reeve's specDelimiterLines reads it (src/refine/block.ts,
+# since RV-77): carriage returns and trailing whitespace removed, code fences
+# found on the line as written (three or more backticks or tildes, indented at
+# most three spaces, closed by a line of at least as many of the same
+# character, or open to the end), and only then Linear's markdown escapes
+# (\_ and the like) undone for the delimiter and metadata tests. An escaped
+# backtick or tilde run, which Reeve writes for a fence line in a rendered
+# body, is never a fence, so it cannot hide the closing delimiter.
 #
 # Exit codes: 0 always after reading stdin (spec or null), 4 usage error.
 # Output: {"spec": {repo, change, section, tasks: [..], source}} or
@@ -25,12 +32,12 @@ set -euo pipefail
 
 for a in "$@"; do
   case $a in
-    -h|--help) sed -n '2,22p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,29p' "$0"; exit 0 ;;
     *) echo "ccm-spec-block: unexpected argument $a" >&2; exit 4 ;;
   esac
 done
 
-text=$(cat | tr -d '\r' | sed -E 's/\\([][\\`*_{}()#+.!|<>~-])/\1/g')
+text=$(cat | tr -d '\r')
 
 none() {
   jq -n --arg r "$1" '{spec: null, reason: $r}'
@@ -42,24 +49,42 @@ marks=$({ grep -o "reeve:spec" <<<"$text" || true; } | wc -l | tr -d " ")
 [ "$marks" -eq 2 ] || none "the text holds $marks reeve:spec marks, and a block has exactly two (its delimiters)"
 
 # Find the delimiter lines outside code fences, and print the metadata lines.
-parsed=$(awk '
-  BEGIN { opn = 0; cls = 0; fence = ""; state = "before" }
+parsed=$(LC_ALL=C awk '
+  # unescape(s): the markdown escapes Linear writes, undone left to right, as
+  # the ESCAPE_RE replacement in Reeve does.
+  function unescape(s,   out, i, c, d) {
+    out = ""
+    for (i = 1; i <= length(s); i++) {
+      c = substr(s, i, 1)
+      if (c == "\\" && i < length(s)) {
+        d = substr(s, i + 1, 1)
+        if (index(ESC, d)) { out = out d; i++; continue }
+      }
+      out = out c
+    }
+    return out
+  }
+  BEGIN { opn = 0; cls = 0; fence = ""; state = "before"; ESC = "\\`*_{}[]()#+-.!|<>~" }
   {
-    line = $0
-    sub(/[ \t]+$/, "", line)
+    # Fences on the line as written; the delimiter and metadata tests on the
+    # line with the escapes undone.
+    written = $0
+    sub(/[ \t]+$/, "", written)
     if (fence == "") {
-      if (match(line, /^ ? ? ?(```+|~~~+)/)) {
-        f = substr(line, RSTART, RLENGTH); sub(/^ +/, "", f); fence = f
+      if (match(written, /^ ? ? ?(```+|~~~+)/)) {
+        f = substr(written, RSTART, RLENGTH); sub(/^ +/, "", f); fence = f
         # Reeve reads metadata lines up to the first blank line, fence or not.
-        if (state == "gap" || state == "meta") { m = line; sub(/^[ \t]+/, "", m); print "M\t" m; state = "body" }
+        if (state == "gap" || state == "meta") { m = unescape(written); sub(/^[ \t]+/, "", m); print "M\t" m; state = "body" }
         next
       }
     } else {
-      c = substr(fence, 1, 1); t = line; sub(/^ ? ? ?/, "", t)
+      c = substr(fence, 1, 1); t = written; sub(/^ ? ? ?/, "", t)
       n = 0; while (substr(t, n + 1, 1) == c) n++
       if (n >= length(fence) && substr(t, n + 1) ~ /^[ \t]*$/) fence = ""
       next
     }
+    line = unescape(written)
+    sub(/[ \t]+$/, "", line)
     if (line == "<!-- reeve:spec v1 -->") { opn++; if (state == "before") state = "gap"; next }
     if (line == "<!-- /reeve:spec -->") {
       # A closing line where Reeve still reads metadata is a metadata line to it.

@@ -98,7 +98,7 @@ gh pr merge --rebase --delete-branch
 ```markdown
 1. Detect platform (GitHub/GitLab/Bitbucket)
 2. Run the merge gate (GitHub) or check approval and pipeline status (GitLab/Bitbucket)
-3. Wait for pending CI with `ccm-ci-status --watch`
+3. Wait for pending CI with `"${CLAUDE_PLUGIN_ROOT}/bin/ccm-ci-status" --watch`
 4. Select merge strategy based on:
    - Project conventions
    - Branch type (feature/hotfix/release)

@@ -206,7 +206,7 @@ After presenting the plan, suggest validation steps:
 > 2. `/ccmagic:test` — Run tests to verify fixes don't break existing behavior
 > 3. `gh pr view {PR_NUMBER} --comments` — Review to confirm all threads addressed
 >
-> When replying to review threads, use `ccm-pr-reply {PR} {comment_id} --disposition fixed|declined|answered|deferred ...` (see *Autonomous mode*, step 4). A plain reply leaves the thread counted as open by `/ccmagic:auto-ticket`.
+> When replying to review threads, use `"${CLAUDE_PLUGIN_ROOT}/bin/ccm-pr-reply" {PR} {comment_id} --disposition fixed|declined|answered|deferred ...` (see *Autonomous mode*, step 4). A plain reply leaves the thread counted as open by `/ccmagic:auto-ticket`.
 
 ## Autonomous mode
 
@@ -233,7 +233,7 @@ Run Steps 1–5 exactly as written (load conventions, fetch threads, classify, v
 3. **Push**: invoke `/ccmagic:push` with the autonomous grounding block prepended (it commits the grouped fixes and pushes; if push returns `needs-human`, propagate that and skip step 4). Replies come after the push because a `fixed` reply must cite a pushed commit.
 4. **Reply on every triaged thread with `ccm-pr-reply`**, using the response templates in `${CLAUDE_SKILL_DIR}/triage-guide.md` for the body. The script appends the disposition marker that `ccm-pr-threads` reads, replies to the thread's root comment, and resolves the thread for `fixed`:
    ```bash
-   ccm-pr-reply {PR} {comment_id} --disposition fixed    --commit {sha that fixed it} --body - <<'CCM_REPLY_EOF'
+   "${CLAUDE_PLUGIN_ROOT}/bin/ccm-pr-reply" {PR} {comment_id} --disposition fixed    --commit {sha that fixed it} --body - <<'CCM_REPLY_EOF'
    {reply body}
    CCM_REPLY_EOF
    ```

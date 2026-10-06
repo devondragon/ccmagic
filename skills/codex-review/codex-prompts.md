@@ -3,7 +3,7 @@
 The dimension prompts live in `bin/ccm-external-review`, which feeds them to Codex and Gemini. Edit them there. To see the exact text a pass sends:
 
 ```bash
-ccm-external-review --print-prompt security   # or architecture, correctness, errors, tests, deps, adversarial
+"${CLAUDE_PLUGIN_ROOT}/bin/ccm-external-review" --print-prompt security   # or architecture, correctness, errors, tests, deps, adversarial
 ```
 
 | Dimension | Scope |

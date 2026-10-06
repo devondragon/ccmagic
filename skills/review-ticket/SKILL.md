@@ -26,14 +26,14 @@ Runs a full code review with the **ticket as the ground truth for intent**. The 
 
 Same cascade as `/ccmagic:work-ticket`:
 
-1. Run `ccm-context`, passing `$1` as the ticket ID when the first argument is present and is not a flag (does not start with `--`):
+1. Run `"${CLAUDE_PLUGIN_ROOT}/bin/ccm-context"`, passing `$1` as the ticket ID when the first argument is present and is not a flag (does not start with `--`):
    ```bash
    "${CLAUDE_PLUGIN_ROOT}/bin/ccm-context" {TICKET-ID}   # first argument present and not a flag
    "${CLAUDE_PLUGIN_ROOT}/bin/ccm-context"        # otherwise
    ```
    It prints JSON with the resolved `config` (project `.claude/ccmagic.local.md` over user `~/.claude/ccmagic.local.md` over built-in defaults), `ticket_id`, `ticket_source` (`arg` or `branch`), `ticket_kind`, `tracker_hint`, `gh_available`, `branch`, and `base_branch`. Read `config.tracker`, `config.ticket_url_base`, `config.ticket_id_regex`, and `config.github_repo` from it; do not re-read the config files or re-derive these fields. The script is also on the Bash `PATH` as `ccm-context` while the plugin is enabled; use the bare name if the `${CLAUDE_PLUGIN_ROOT}` path doesn't resolve.
 
-   `ccm-context` does not check an argument against the regex. If `ticket_source` is `arg` and the ID neither matches `config.ticket_id_regex` nor has `ticket_kind: integer`, `$1` was not a ticket ID: rerun `ccm-context` with no argument, so it parses the branch, and use that output from here on.
+   `ccm-context` does not check an argument against the regex. If `ticket_source` is `arg` and the ID neither matches `config.ticket_id_regex` nor has `ticket_kind: integer`, `$1` was not a ticket ID: rerun `"${CLAUDE_PLUGIN_ROOT}/bin/ccm-context"` with no argument, so it parses the branch, and use that output from here on.
 2. If `config.tracker` is `auto` or unset, run the detection cascade:
    - **Ticket shape:** `tracker_hint` from `ccm-context`: `github` for an integer ID, `linear` or `jira` when a key-shaped ID meets a `ticket_url_base` pointing at that tracker, `linear-or-jira` otherwise.
    - **MCP probe:** Linear MCP — a server available to the session (case-insensitive `mcp__*[Ll]inear*__get_issue`, incl. Cyrus's `mcp__linear__` and a still-connecting server; see contract §7); Atlassian/JIRA MCP (`mcp__*atlassian*__*` or `mcp__*Atlassian*__*`).

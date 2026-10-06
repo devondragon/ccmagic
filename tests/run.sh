@@ -2181,6 +2181,32 @@ skills_use_plugin_root_bin() {
   check "$(grep -rlF 'CLAUDE_SKILL_DIR}/../../bin' "$ROOT/skills" "$ROOT/agents" || true)" ""
 }
 
+# Skills and agents call every bin/ccm-* script by its ${CLAUDE_PLUGIN_ROOT}/bin
+# path: in a Cyrus session the bare name is not on PATH and exits 127 (RV-82).
+# A bare name may still be named in prose and as the fallback, but never as a
+# command: a command line, or a backticked span, that starts with it and
+# carries arguments.
+# shellcheck disable=SC2016 # literal backticks in the markdown and descriptions
+skills_call_scripts_by_plugin_path() {
+  local found
+  found=$(grep -rnE '^[[:space:]>]*ccm-[a-z-]+([[:space:]]|$)|`ccm-[a-z-]+ [^`]*`' "$ROOT/skills" "$ROOT/agents" | sed "s|^$ROOT/||" || true)
+  check "$found" ""
+  # The step agents no longer tell the model to try the bare name first.
+  check "$(grep -lF 'by bare name (`ccm-context`' "$ROOT"/agents/*.md || true)" ""
+}
+
+# A parent spec ticket's parked record carries no openspec key, which Reeve's
+# schema would reject along with the whole record (RV-82).
+# shellcheck disable=SC2016 # literal backticks in the markdown and descriptions
+skills_parent_record_has_no_openspec_key() {
+  local f missing=
+  for f in skills/auto-ticket/SKILL.md skills/auto-ticket/autonomous-contract.md; do
+    awk '$0 == "<!-- ccmagic:spec-only -->" { b = 1 } $0 == "<!-- /ccmagic:spec-only -->" { b = 0 } b' "$ROOT/$f" |
+      grep -E 'parent.*(no `openspec` key|leave the key out)' | grep -qF 'drops a whole record' || missing+=" $f"
+  done
+  check "${missing# }" ""
+}
+
 # docs/cyrus-deployment.md lists the bare-name rules a harness without plain
 # Bash must grant; tests/relay-smoke.sh --narrow-bash grants every bin/ccm-*.
 skills_harness_rules_list_every_script() {
@@ -2895,6 +2921,135 @@ spec_block_matches_reeve_edge_cases() {
   [[ $(jq -r .reason <<<"$OUT") == "unexpected metadata line"* ]]
   spec_block "$(printf '%s\n' '<!-- reeve:spec v1 -->' '' '<!-- /reeve:spec -->')"
   check "$(jq -c .spec <<<"$OUT")" "null"
+}
+
+# Fences are found on the line as written, before Linear's escapes are undone,
+# as Reeve's specDelimiterLines does since RV-77 (its refine-block tests): an
+# escaped backtick or tilde run, which Reeve writes for a fence line in a
+# rendered body, is never a fence and cannot hide the closing delimiter.
+# shellcheck disable=SC2016 # literal backticks in the markdown and descriptions
+spec_block_fences_on_the_raw_line_as_reeve() {
+  local d run text
+  d=$(spec_desc 2 '2.1')
+  for run in '\`\`\`' '\`\`\`ts' '\~\~\~' '\~~~'; do
+    spec_block "$(printf 'Note:\n\n%s\n\n%s' "$run" "$d")"
+    check "$(jq -c .spec.section <<<"$OUT"),$run" "2,$run"
+  done
+  # An odd number of escaped fence lines inside the body (a Why cut inside a
+  # code block): before RV-82 this read as no block.
+  text=$(spec_desc 2 '2.1' | awk '/^Body text\.$/ { print "\\`\\`\\`ts"; print "const x = 1"; next } { print }')
+  spec_block "$text"
+  check "$(jq -c .spec.tasks <<<"$OUT")" '["2.1"]'
+  # Escapes are still undone for the delimiter and the metadata.
+  spec_block "$(sed 's|<!-- /reeve:spec -->|<!-- /reeve:spec --\\>|; s|repo: acme/app|repo: acme/my\\_app|' <<<"$d")"
+  check "$(jq -r .spec.repo <<<"$OUT")" "acme/my_app"
+  # An unescaped fence still hides the block, and one inside the block hides
+  # its closing line.
+  spec_block "$(printf 'Note:\n\n```\n\n%s' "$d")"
+  check "$(jq -c .spec <<<"$OUT")" null
+  spec_block "$(awk '/^Body text\.$/ { print "```" } { print }' <<<"$d")"
+  check "$(jq -c .spec <<<"$OUT")" null
+  # A real block after a closed fence is read.
+  spec_block "$(printf '```\ncode\n```\n\n%s' "$d")"
+  check "$(jq -c .spec.section <<<"$OUT")" 2
+}
+
+# Reeve's quoted-copy cases (refine-block.test.ts, RV-77): each is prose, so
+# the ticket is ordinary; CRLF and trailing spaces on the delimiters are not.
+# shellcheck disable=SC2001,SC2016 # sed indents every line; literal backticks
+spec_block_quoted_copies_are_prose_as_reeve() {
+  local d text
+  d=$(spec_desc 2 '2.1')
+  for text in \
+    "$(printf 'Here is what a block looks like:\n\n'; sed 's/^./    &/' <<<"$d"; printf '\nThat is all.')" \
+    "$(printf 'Example:\n\n'; sed $'s/^./\t&/' <<<"$d")" \
+    "$(printf 'Example:\n\n~~~markdown\n%s\n~~~\n' "$d")" \
+    "$(printf 'Example:\n\n```\n%s\n' "$d")" \
+    "$(printf '   ```\n%s\n````\n' "$d")" \
+    "$(sed 's/^./ &/' <<<"$d")" \
+    "See <!-- reeve:spec v1 --> and <!-- /reeve:spec --> in the docs." \
+    "$(sed 's|<!-- reeve:spec v1 -->|<!--reeve:spec v1-->|; s|<!-- /reeve:spec -->|<!--  /reeve:spec  -->|' <<<"$d")"; do
+    spec_block "$text"
+    [ "$(jq -c .spec <<<"$OUT")" = null ] || { echo "    detected: $text"; return 1; }
+  done
+  spec_block "$(printf 'Above.\n\n%s\n\nBelow.' "$d" | sed $'s/$/\r/; s|<!-- reeve:spec v1 -->|&  |; s|<!-- /reeve:spec -->|&\t|')"
+  check "$(jq -c .spec.section <<<"$OUT")" 2
+}
+
+# A lone carriage return in tasks.md ends a line, as in Reeve's parseTasks,
+# and makes the gate's tasks-text rule fail any difference without naming a
+# task, since its line numbers and a split on LF no longer agree.
+scope_lone_cr_as_reeve_reads() {
+  seed_spec
+  g checkout -q main
+  printf '%s\n' '## 1. Build the helper' '' '- [ ] 1.1 Add the helper' '- [ ] 1.2 Test the helper' '' \
+    '## 2. Wire it up' '' $'- [ ] 2.1 Call the helper\r- [ ] 2.3 Hidden task' '- [ ] 2.2 Document it' >openspec/changes/add-export/tasks.md
+  commit "lone cr" && g checkout -q -B work
+  scope --precheck --repo acme/app add-export 2
+  check "$(rule),$(jq -c .tasks <<<"$OUT")" 'pass,["2.1","2.3","2.2"]'
+  sed -i.bak 's/^- \[ \] 2.1 /- [x] 2.1 /; s/\r- \[ \] 2.3 /\r- [x] 2.3 /; s/^- \[ \] 2.2 /- [x] 2.2 /' openspec/changes/add-export/tasks.md
+  command rm -f openspec/changes/add-export/tasks.md.bak
+  commit
+  scope add-export 2 main
+  check "$(rule),$(jqval .line),$(jqval .task_id)" "tasks-text,8,null"
+  # Without a lone carriage return the same ticks pass.
+  g checkout -q main
+  tr '\r' '\n' <openspec/changes/add-export/tasks.md >"$T/tasks" && command cp -f "$T/tasks" openspec/changes/add-export/tasks.md
+  commit "no lone cr" && g checkout -q -B work
+  tick 2.1; tick 2.3; tick 2.2; commit
+  scope add-export 2 main
+  check "$(rule),$(jq -c .tasks_done <<<"$OUT")" 'pass,["2.1","2.3","2.2"]'
+}
+
+# Submodules (gitlinks) are not files: the gate compares blobs only and takes
+# only trees as archive folders.
+scope_archive_ignores_submodules() {
+  local sha=0123456789abcdef0123456789abcdef01234567
+  seed_spec all
+  g checkout -q main
+  g update-index --add --cacheinfo "160000,$sha,openspec/changes/add-export/vendor"
+  g commit -qm submodule && g checkout -q -B work
+  g rm -rq --cached openspec/changes/add-export
+  mkdir -p openspec/changes/archive
+  command mv openspec/changes/add-export openspec/changes/archive/2026-09-30-add-export
+  echo '### Requirement: Export' >>openspec/specs/export/spec.md
+  commit archive
+  scope add-export archive main
+  check "$(rule),$RC" "pass,0"
+  # A gitlink beside the archive folder is no second folder; it is still a
+  # path outside the archive.
+  g update-index --add --cacheinfo "160000,$sha,openspec/changes/archive/2026-09-29-vendor"
+  g commit -qm "second submodule"
+  scope add-export archive main
+  check "$(rule),$(jqval .file)" "outside-archive,openspec/changes/archive/2026-09-29-vendor"
+}
+
+# .openspec.yaml: the plain form is read as the yaml package reads it, and a
+# file outside it is unreadable (exit 3), never guessed.
+scope_archive_spec_flags_plain_form() {
+  local y want
+  while IFS='|' read -r y want; do
+    setup_fresh
+    seed_spec all
+    g checkout -q main && printf '%b' "$y" >openspec/changes/add-export/.openspec.yaml && commit flags && g checkout -q -B work
+    archive_as 2026-09-30-add-export
+    scope add-export archive main
+    check "$(rule),$RC,$y" "$want,$y"
+  done <<'EOF'
+schema: spec-driven\nskip_specs: True # set\n|specs-changed,1
+---\n# c\n\nskip_specs: TRUE\r\ncreated: 2026-09-29\n|specs-changed,1
+skip_specs: "true"\n|pass,0
+skip_specs: yes\n|pass,0
+skip_specs: false\n|pass,0
+{skip_specs: true}\n|pass,3
+skip_specs: true\nskip_specs: false\n|pass,3
+skip_specs: true\n---\nschema: x\n|pass,3
+  skip_specs: true\n|pass,3
+skip_specs:\ttrue\n|pass,3
+skip_specs: true#x\n|pass,3
+schema: [spec\n|pass,3
+EOF
+  [[ $(jqval .detail) == *"not in the plain form"* ]]
 }
 
 # The handshake validator accepts the work step's tasks_done: line and still

@@ -290,7 +290,7 @@ After the review completes, record the counts as in Step 7d.
 
 Load `${CLAUDE_SKILL_DIR}/codex-pass.md` and follow it. It covers running the pass with `ccm-external-review` and acting on the status it reports.
 
-In short: run `"${CLAUDE_PLUGIN_ROOT}/bin/ccm-external-review" --tools codex --dimensions adversarial` (bare name `ccm-external-review` also works; plugin `bin/` is on `PATH`) in the background alongside the Step 3 agents in an interactive run, or in the foreground with a 600000 ms timeout when running autonomously. The script checks availability, bounds the pass with `timeout --kill-after=30 300`, and classifies it by exit status; act on its `status` rather than re-deriving it. Codex is additive and never blocking — every failure mode continues the review with Explore agent findings only.
+In short: run `"${CLAUDE_PLUGIN_ROOT}/bin/ccm-external-review" --tools codex --dimensions adversarial` (fall back to the bare name `ccm-external-review` only when the path form is not found) in the background alongside the Step 3 agents in an interactive run, or in the foreground with a 600000 ms timeout when running autonomously. The script checks availability, bounds the pass with `timeout --kill-after=30 300`, and classifies it by exit status; act on its `status` rather than re-deriving it. Codex is additive and never blocking — every failure mode continues the review with Explore agent findings only.
 
 ---
 
