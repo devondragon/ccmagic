@@ -2,6 +2,17 @@
 
 All notable changes to ccmagic are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+One change applies to every ticket: skills and agents call the `bin/ccm-*` scripts by their `${CLAUDE_PLUGIN_ROOT}/bin/` path. The other fixes are in `bin/ccm-spec-block` and `bin/ccm-openspec-scope` and in spec-only sentences, so a ticket without a well-formed Reeve spec block runs as before.
+
+### Fixed
+
+- `ccm-spec-block` undid Linear's markdown escapes before it looked for code fences, and Reeve (since RV-77) looks for fences on the line as written. A rendered spec ticket whose body held an odd number of escaped fence lines, such as a Why section cut inside a code block, read as no block here, so the session ran as an ordinary ticket, wrote a run record without the `openspec` key, and Reeve parked it `no-run-record`. Fences are now found on the raw line, by Reeve's rule (three or more backticks or tildes, indented at most three spaces, closed by at least as many of the same character, or open to the end), and the escapes are undone only for the delimiter and metadata tests (RV-82).
+- `ccm-openspec-scope` could pass a branch that Reeve's gate parks. A lone carriage return in `tasks.md` now ends a line, as in Reeve's `parseTasks`, and then any difference from the base fails `tasks-text` without naming a task, as the gate does. The `skip_specs` and `retire_capabilities` flags were read with a `grep`, where the gate parses `.openspec.yaml` as YAML; the script now reads only the plain form OpenSpec writes (blank lines, comments, one leading `---`, and unindented `key: value` lines with a plain word or a quoted string, no key twice) and takes `true`, `True`, or `TRUE` as the yaml package does, and a file in any other form (a flow mapping, an indented or tab-separated line, a second document, a repeated key) exits 3 as unreadable instead of being guessed. Submodule entries (gitlinks) no longer count as files in `not-moved` and `folder-content`, or as archive folders, since the gate compares blobs and trees only (RV-82).
+- Sessions called `ccm-openspec-scope`, `ccm-context`, `ccm-validate`, and the other scripts by bare name first, because the `auto-*` agents said to, and in a Cyrus session plugin `bin/` is not on `PATH`, so every such call failed with `command not found` before the retry by path. The agents and every skill command now use the `${CLAUDE_PLUGIN_ROOT}/bin/` path and fall back to the bare name only when the path form is not found or is denied; `docs/cyrus-deployment.md` says why the narrow-Bash rules still grant the bare names (RV-82).
+- The parked record of a hand-queued parent spec ticket copied `section: "parent"` into the `openspec` key, which Reeve's schema rejects, so Reeve dropped the whole record. A parent's record now carries no `openspec` key (RV-82).
+
 ## [3.16.3] - 2026-10
 
 ### Fixed
