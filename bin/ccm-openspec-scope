@@ -33,8 +33,8 @@
 # repo-unknown, repo-mismatch, tasks-missing, archive-exists (archive only),
 # tasks-unreadable, section-missing (sections only).
 #
-# Exit codes: 0 pass, 1 a rule failed, 3 cannot read the repository or BASE,
-# 4 usage error.
+# Exit codes: 0 pass, 1 a rule failed, 3 cannot read the repository or BASE
+# (or, archive mode, a .openspec.yaml outside the plain form), 4 usage error.
 # Output: {pass, mode, change, section, rule, detail, file, line, task_id,
 #          tasks, unchecked, tasks_done, base, merge_base}
 
@@ -116,7 +116,9 @@ unreadable() { jq -n --arg d "$1" '{pass: false, rule: null, detail: $d}'; exit 
 # one "E<TAB>rule<TAB>line<TAB>reason" line on the first rejection. It reads
 # bytes (LC_ALL=C, the same under gawk, mawk, and BSD awk): the box holds one
 # character as JavaScript's "." reads it, so one UTF-8 sequence of up to three
-# bytes, and a no-break space (U+00A0) counts as whitespace, as in "\s".
+# bytes, and a no-break space (U+00A0) counts as whitespace, as in "\s". Line
+# breaks are Reeve's: CRLF and a lone carriage return each end a line, so the
+# file is rewritten with LF line ends before it is read.
 parse_tasks() {
   LC_ALL=C awk '
     # boxlen(s, p): the byte length of the one character at p when s[p + len]
@@ -199,7 +201,13 @@ parse_tasks() {
       closesec()
       if (!bad && nsec == 0) reject("no-section", "", "The file has no numbered section heading (## 1. Title).")
     }
-  ' "$1"
+  ' < <(LC_ALL=C awk '{ sub(/\r$/, ""); gsub(/\r/, "\n"); print }' "$1")
+}
+
+# lone_cr FILE: whether FILE holds a carriage return that does not start a
+# CRLF, which parse_tasks (as Reeve's parseTasks) reads as a line break.
+lone_cr() {
+  LC_ALL=C grep -aq $'\r.' "$1" || [ "$(tail -c1 "$1" | od -An -c | tr -d ' ')" = '\r' ]
 }
 
 # ids_json PARSED SECTION FILTER: task ids of SECTION ("all" for every
@@ -345,8 +353,14 @@ if [ "$mode" = section ]; then
     jq -R . | jq -sc .)
 
   # tasks-text: line by line against the base tip. Only a task line of this
-  # section may differ, and only in its box, from unchecked to x or X.
-  diffline=$(LC_ALL=C awk -F'\t' -v s="$section" '
+  # section may differ, and only in its box, from unchecked to x or X. Lines
+  # are split on LF alone and keep any carriage return, so line endings count.
+  # A lone carriage return makes parse_tasks and that split number lines
+  # differently, so then, as in Reeve's gate, any difference fails and names
+  # no task.
+  trust=1
+  if lone_cr "$B" || lone_cr "$H"; then trust=0; fi
+  diffline=$(LC_ALL=C awk -F'\t' -v s="$section" -v trust="$trust" '
     FNR == 1 { fileno++ }
     fileno == 1 { if ($1 == "T") { id[$2] = $4; if ($3 == s) { own[$2] = 1; openbox[$2] = ($5 == 0); boxbytes[$2] = $6 } } next }
     fileno == 2 { b[FNR] = $0; nb = FNR; next }
@@ -355,14 +369,14 @@ if [ "$mode" = section ]; then
       m = nb > nh ? nb : nh
       for (i = 1; i <= m; i++) {
         if ((i in b) && (i in h) && b[i] == h[i]) continue
-        if ((i in own) && openbox[i] && (i in b) && (i in h)) {
+        if (trust && (i in own) && openbox[i] && (i in b) && (i in h)) {
           # The box is the first "[" on a task line: only the list marker and
           # whitespace come before it.
           p = index(b[i], "[")
           pre = substr(b[i], 1, p); post = substr(b[i], p + boxbytes[i] + 1)
           if (h[i] == pre "x" post || h[i] == pre "X" post) continue
         }
-        printf "%s\t%s\n", i, ((i in id) ? id[i] : ""); exit
+        printf "%s\t%s\n", i, ((trust && (i in id)) ? id[i] : ""); exit
       }
     }' <(printf '%s\n' "$pb") "$B" "$H")
   if [ -z "$diffline" ]; then
@@ -393,9 +407,10 @@ fi
 # script, not a command substitution.
 
 # list_files REV PREFIX OUT: "relative-path<TAB>blob" for every file under
-# PREFIX/, sorted, into OUT.
+# PREFIX/, sorted, into OUT. Only blob entries count: a submodule (a gitlink,
+# mode 160000, type commit) is left out, as Reeve's gate compares blobs only.
 list_files() {
-  local entry meta path
+  local entry meta path type
   git ls-tree -r -z --full-tree "$1" -- "$2/" >"$scratch/ls-tree.z" ||
     unreadable "cannot list $2 at $1"
   : >"$3.unsorted"
@@ -404,19 +419,25 @@ list_files() {
     case $path in
       *$'\t'* | *$'\n'*) unreadable "$(printf %q "$path") at $1 holds a tab or a newline; no OpenSpec file has one, and this check cannot read it" ;;
     esac
+    type=${meta#* }; type=${type%% *}
+    [ "$type" = blob ] || continue
     meta=${meta##* }
     printf '%s\t%s\n' "${path:${#2}+1}" "$meta" >>"$3.unsorted"
   done <"$scratch/ls-tree.z"
   LC_ALL=C sort "$3.unsorted" >"$3"
 }
 # list_folders REV OUT: the folder names directly under openspec/changes/archive/
-# at REV, sorted, into OUT.
+# at REV, sorted, into OUT. Only tree entries count: git ls-tree -d also lists
+# a submodule, which Reeve's gate does not take as an archive folder.
 list_folders() {
-  local path a=openspec/changes/archive/
-  git ls-tree -d -z --name-only --full-tree "$1" -- "$a" >"$scratch/ls-tree.z" ||
+  local entry meta path a=openspec/changes/archive/
+  git ls-tree -d -z --full-tree "$1" -- "$a" >"$scratch/ls-tree.z" ||
     unreadable "cannot list $a at $1"
   : >"$2.unsorted"
-  while IFS= read -r -d '' path; do
+  while IFS= read -r -d '' entry; do
+    meta=${entry%%$'\t'*} path=${entry#*$'\t'}
+    meta=${meta#* }
+    [ "${meta%% *}" = tree ] || continue
     case $path in
       *$'\t'* | *$'\n'*) unreadable "$(printf %q "$path") at $1 holds a tab or a newline; no OpenSpec folder has one, and this check cannot read it" ;;
     esac
@@ -467,11 +488,56 @@ first=$(touched | CAPS=$caps awk -v d="$dir/" -v a="$adir/" '
   { print; exit }')
 [ -z "$first" ] || fail outside-archive "$first is outside what openspec archive writes for $change (the change folder's move and openspec/specs/<cap>/spec.md for the capabilities its specs/ folder names)" "$first"
 
+# The two flags of the change's .openspec.yaml at the base tip. Reeve's gate
+# parses the file as YAML and sets a flag only when its top-level key is the
+# boolean true; a missing file, invalid YAML, a document that is not a
+# mapping, or a duplicate key leaves both off. This reader takes only the
+# plain form OpenSpec writes, every line one of: blank, a comment, a single
+# leading "---", or an unindented "key: value" whose key is a lowercase
+# letter or "_" followed by lowercase letters, digits, "_", and "-" (and not
+# true, false, or null), and whose value is empty, a plain word (letters,
+# digits, and "_./+-", a ":" only between them), or a quoted string without
+# escapes, each followed by spaces and an optional " #" comment. With no key
+# repeated, such a file parses to a flat mapping in YAML 1.2, and a flag is
+# set when its value is true, True, or TRUE, as the yaml package reads it.
+# Anything else (a flow mapping, an indented or tab-separated line, a second
+# document, a repeated key) is reported as unreadable, exit 3, rather than
+# guessed, so the check never passes or fails where the gate would not.
 meta=$scratch/meta.yaml
-flag() { show "$base_sha" "$dir/.openspec.yaml" "$meta" && grep -qE "^$1:[[:space:]]*(true|True|TRUE)[[:space:]]*(#.*)?$" "$meta"; }
 skip=false retire=false
-flag skip_specs && skip=true
-flag retire_capabilities && retire=true
+if show "$base_sha" "$dir/.openspec.yaml" "$meta"; then
+  flags=$(LC_ALL=C awk '
+    function bad(why) { printf "E\tline %d: %s\n", NR, why; failed = 1; exit }
+    {
+      line = $0
+      sub(/\r$/, "", line)
+      if (index(line, "\r")) bad("a carriage return inside the line")
+      if (index(line, "\t")) bad("a tab")
+      if (line ~ /^ *$/ || line ~ /^ *#/) next
+      if (line == "---") { if (seen_doc || nkeys) bad("a document marker after the start"); seen_doc = 1; next }
+      if (!match(line, /^[a-z_][a-z0-9_-]*:/)) bad("not an unindented key: value line")
+      key = substr(line, 1, RLENGTH - 1); rest = substr(line, RLENGTH + 1)
+      if (key == "true" || key == "false" || key == "null") bad("the key " key)
+      if (key in keys) bad("the key " key " twice")
+      keys[key] = 1; nkeys++
+      if (rest != "" && rest !~ /^ /) bad("no space after the colon")
+      sub(/^ +/, "", rest)
+      val = ""
+      if (match(rest, /^[A-Za-z0-9][A-Za-z0-9_.\/+-]*(:[A-Za-z0-9_.\/+-]+)*/) || match(rest, /^"[^"\\]*"/) || match(rest, /^\047[^\047]*\047/)) {
+        val = substr(rest, 1, RLENGTH); rest = substr(rest, RLENGTH + 1)
+        if (rest != "" && rest !~ /^ +(#.*)?$/) bad("a value this reader does not take")
+      } else if (rest != "" && rest !~ /^#/) bad("a value this reader does not take")
+      if (val == "true" || val == "True" || val == "TRUE") on[key] = 1
+    }
+    END {
+      if (failed) exit
+      printf "%s %s\n", (("skip_specs" in on) ? "true" : "false"), (("retire_capabilities" in on) ? "true" : "false")
+    }' "$meta")
+  case $flags in
+    E*) unreadable "$dir/.openspec.yaml on the base branch ($base) is not in the plain form this check reads (${flags#E$'\t'}); Reeve's gate parses it as YAML, so write each flag as an unindented skip_specs: true or retire_capabilities: true line" ;;
+  esac
+  read -r skip retire <<<"$flags"
+fi
 specs=$(awk -F'\t' '($2 ~ /^openspec\/specs\//) || ($3 ~ /^openspec\/specs\//)' "$changes")
 if [ "$skip" = true ]; then
   [ -z "$specs" ] || fail specs-changed "$dir/.openspec.yaml sets skip_specs: true, and the branch changes $(head -1 <<<"$specs" | cut -f3)" "$(head -1 <<<"$specs" | cut -f3)"
