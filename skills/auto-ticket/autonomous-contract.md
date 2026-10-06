@@ -97,6 +97,17 @@ On a fix pass `work-ticket` skips its Steps 2 to 4 and follows its *Fix pass* se
 
 The push step's grounding block after a fix pass may carry a `commit_notes:` section, copied from the fix pass's report (§3); only `push` reads it.
 
+The finish step's grounding block ends with a `steps:` section: the run record's `steps` array so far (the orchestrator's Step 6), one `{"step", "status", "reason"}` object per step invocation in order, as JSON on one line in a `~~~` fence. Only `finish-ticket` reads it:
+
+```
+steps:
+~~~
+[{"step": "work-ticket", "status": "done"}, {"step": "review-ticket", "status": "clean"}, {"step": "validate", "status": "done", "reason": "validation passed"}]
+~~~
+```
+
+`ccm-finish-guard` checks it before the run can merge or hand off: the latest `validate` entry must be `done`, the latest `review-ticket` entry `clean`, and no `work-ticket` or `pr-feedback` entry may come after that validate. The plugin's PreToolUse hook (`hooks/pre-tool-use-finish-guard.sh`) runs it on the orchestrator's call that starts `auto-finish` and denies the call when it fails, a missing or malformed section included; the finish agent runs it again as its first action and returns `needs-human` when it fails (RV-86).
+
 A sub-skill that sees `orchestrator:` in its grounding block must **not** park on `needs-human` — it emits the handshake and returns control so the orchestrator performs the single route-and-stop.
 
 `auto-ticket` always runs each step in a per-step subagent (`agents/auto-*.md`) on the step's model, passing this grounding block as the child's task prompt and reading back the child's handshake (§3). The child agents preload their lifecycle skill rather than invoking it, so the step runs on the agent's model. The grounding block and handshake are unchanged by this — they're identical to how a directly-invoked sub-skill reads and emits them.
@@ -146,7 +157,7 @@ commit_notes:
 
 `applied_findings:` lists every item from `findings_to_fix:`, one line each, in the `previous_findings:` format; for a validate fix the id/title is the check name. The orchestrator copies it into the re-review's `previous_findings:` and treats a missing section, or a missing item, as a failed pass. `commit_notes:` is omitted when there is nothing to note. Each line starts with the repository file it concerns (for a §9 note, the invariant test). The orchestrator appends the section to the push step's grounding block, and `push` writes each line into the body of the commit that holds that file, or into the first commit's body when no commit holds it, so no note is dropped. The fix pass's handshake is `status: done | needs-human`, `reason: fix pass {n} ({fix_source}): applied {k} items` (or on `needs-human`, the item it could not fix; for a §9 fix that still fails, the finding and the first failing input), and `follow_ups:`, with no `requested_state:`.
 
-When a check fails, the validate step's report carries a `failures:` section just before its handshake, and its `reason` starts with `failed:`. The orchestrator copies the section into a validate fix pass's `findings_to_fix:`:
+A validate `needs-human` has one of two reasons. `environment:` means `ccm-validate` found the root `package.json`'s dependencies missing and could not install them (no lockfile, the lockfile's tool missing, or the install failing or timing out), so no check ran; there is no `failures:` section, and the orchestrator parks without a fix pass. `failed:` means a check ran and failed. When a check fails, the validate step's report carries a `failures:` section just before its handshake, and its `reason` starts with `failed:`. The orchestrator copies the section into a validate fix pass's `findings_to_fix:`:
 
 ```
 failures:
@@ -260,6 +271,7 @@ A project file overrides the user file, which overrides the built-in default. Th
 
 - **Autonomous is additive.** Interactive behavior is never changed; every autonomous default is gated behind the signal above.
 - **Every decision is recorded** in the PR body/comments and/or a ticket comment, so an unattended run leaves an audit trail.
+- **Never finish past a failed validate.** The run reaches `finish-ticket` only when its latest validate step returned `done` and its latest review `clean`; `ccm-finish-guard` checks the `steps:` section (§2) in the PreToolUse hook and again in the finish agent. A failed check gets the bounded fix passes of orchestrator Step 4b, an `environment:` result parks, and no orchestrator judgment (such as "the failure is environmental") replaces either.
 - **Never finish on a stale review.** The last clean review's `head:` must be the PR head when `finish-ticket` runs. A late push (Step 4a or 4b) gets a re-review (orchestrator Step 4f) within the existing loop limits, and a run that can't re-review the pushed head parks.
 - **Every exit is `merged`, `handed-off` (only with `merge_owner: reeve`), or `parked-needs-human` (with a reason).** Never `stalled`, never a silent hang, never a merge on a guess.
 

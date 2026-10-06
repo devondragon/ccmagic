@@ -137,11 +137,11 @@ fi
 
 area="Hooks and scripts"
 emit OK "$area" "plugin root: $plugin_root"
-for f in hooks/pre-tool-use-guard.sh hooks/subagent-stop-handshake.sh hooks/post-tool-use-commit.sh \
-  hooks/lib-commit.sh hooks/lib-handshake.sh \
+for f in hooks/pre-tool-use-guard.sh hooks/pre-tool-use-finish-guard.sh hooks/subagent-stop-handshake.sh \
+  hooks/post-tool-use-commit.sh hooks/lib-commit.sh hooks/lib-handshake.sh \
   bin/ccm-lib.sh bin/ccm-context bin/ccm-ci-status bin/ccm-merge-gate bin/ccm-pr-threads \
   bin/ccm-pr-reply bin/ccm-validate bin/ccm-review-route bin/ccm-post-review bin/ccm-doctor \
-  bin/ccm-external-review; do
+  bin/ccm-external-review bin/ccm-finish-guard; do
   if [ -f "$plugin_root/$f" ]; then
     emit OK "$area" "$f"
   else

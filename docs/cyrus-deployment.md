@@ -92,7 +92,7 @@ Granting one without the other still strands the run (a fork hits `File is in a 
    "Bash(ccm-external-review *)", "Bash(ccm-merge-gate *)", "Bash(ccm-post-review *)",
    "Bash(ccm-pr-reply *)", "Bash(ccm-pr-threads *)", "Bash(ccm-review-route *)",
    "Bash(ccm-validate *)", "Bash(ccm-openspec-scope *)", "Bash(ccm-spec-block *)",
-   "Bash(openspec:*)"
+   "Bash(ccm-finish-guard *)", "Bash(openspec:*)"
    ```
 
    Without the `ccm-*` rules a run stalls on its first script call. `tests/relay-smoke.sh --narrow-bash` runs with exactly this set.
