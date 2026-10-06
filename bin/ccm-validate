@@ -2,9 +2,11 @@
 # ccm-validate: run the project's format, lint, types, test, and build checks, as JSON.
 #
 # Usage: ccm-validate [--only CHECK[,CHECK...]] [--list]
+#        ccm-validate --install
 #
-#   --only   run only these checks (format, lint, types, test, build)
-#   --list   print the resolved commands without running them
+#   --only     run only these checks (format, lint, types, test, build)
+#   --list     print the resolved commands without running them
+#   --install  only install missing Node dependencies (below), run no check
 #
 # Each check has at most one command, and its exit code is the verdict. The
 # command comes from config key validate_<check> (a value of `none` disables
@@ -31,14 +33,32 @@
 # output says so in `note`. Full output goes to a log file under the git dir;
 # a failed check also carries its last 40 lines as `tail`.
 #
-# Output: {status, checks: [{name, command, source, status, exit_code,
-# duration_s, log, reason?, tail?}]}
+# Missing Node dependencies (Node only; no other ecosystem is installed):
+# when the root package.json declares dependencies (or workspaces) and there
+# is neither node_modules nor a Yarn Plug'n'Play map (.pnp.cjs, .pnp.js), the
+# first check that runs is preceded by the install its lockfile calls for:
+# `pnpm install --frozen-lockfile` (pnpm-lock.yaml), `yarn install
+# --frozen-lockfile` (yarn.lock; `--immutable` with .yarnrc.yml), `bun install
+# --frozen-lockfile` (bun.lock, bun.lockb), or `npm ci` (package-lock.json,
+# npm-shrinkwrap.json), under the same time limit as a check, with its output
+# in install.log. With no lockfile, or without the lockfile's tool installed,
+# nothing is installed. An install that fails, times out, or cannot be done is
+# an environment problem, not a check failure: no check runs, and the status
+# is `environment`. The output's `install` object says what happened
+# ({tool, command, status: planned | installed | failed | unavailable,
+# duration_s?, log?, reason?, tail?}); it is absent when nothing was needed.
+#
+# Output: {status, timeout_seconds, install?, checks: [{name, command, source,
+# status, exit_code, duration_s, log, reason?, tail?}]}
 #
 # Status values and exit codes:
 #   pass            0  every check that ran passed
 #   fail            1  at least one check failed or timed out
 #   nothing-to-run  2  every check was skipped
 #   listed          0  (--list) at least one check would run
+#   environment     5  missing dependencies could not be installed; no check ran
+#   installed       0  (--install) the dependencies were installed
+#   not-needed      0  (--install) nothing to install
 #   (not a git repository 3, usage error 4)
 
 set -euo pipefail
@@ -47,16 +67,20 @@ set -euo pipefail
 
 ALL_CHECKS="format lint types test build"
 
-only="" list=false
+only="" list=false install_only=false
 while [ $# -gt 0 ]; do
   case $1 in
     --only) only=${2:-}; [ -n "$only" ] || { echo "ccm-validate: --only needs a value" >&2; exit 4; }; shift ;;
     --list) list=true ;;
-    -h|--help) sed -n '2,42p' "$0"; exit 0 ;;
+    --install) install_only=true ;;
+    -h|--help) sed -n '2,62p' "$0"; exit 0 ;;
     *) echo "ccm-validate: unknown argument $1" >&2; exit 4 ;;
   esac
   shift
 done
+if [ "$install_only" = true ] && { [ -n "$only" ] || [ "$list" = true ]; }; then
+  echo "ccm-validate: --install takes no other option" >&2; exit 4
+fi
 
 checks=$ALL_CHECKS
 if [ -n "$only" ]; then
@@ -179,8 +203,6 @@ detect() {
   return 0
 }
 
-# ---- resolve and run -------------------------------------------------------
-
 timeout_bin=""
 if command -v timeout >/dev/null 2>&1; then
   timeout_bin=timeout
@@ -189,6 +211,128 @@ elif command -v gtimeout >/dev/null 2>&1; then
 fi
 
 logdir=""
+ensure_logdir() { [ -n "$logdir" ] || { logdir="$(ccm_state_dir)/validate"; mkdir -p "$logdir"; }; }
+
+# run_bounded CMD LOG: run CMD from the repo root under the time limit, output
+# to LOG, and return its exit code.
+run_bounded() {
+  local rc
+  set +e
+  if [ -n "$timeout_bin" ]; then
+    "$timeout_bin" --kill-after=10 "$timeout_s" bash -c "$1" >"$2" 2>&1 </dev/null
+  else
+    bash -c "$1" >"$2" 2>&1 </dev/null
+  fi
+  rc=$?
+  set -e
+  return "$rc"
+}
+
+# timeout exits 124 on SIGTERM and 137 when --kill-after had to SIGKILL.
+timed_out() { [ -n "$timeout_bin" ] && { [ "$1" -eq 124 ] || [ "$1" -eq 137 ]; }; }
+
+# ---- missing Node dependencies ---------------------------------------------
+
+# The root package.json declares dependencies or workspaces, and neither
+# node_modules nor a Yarn Plug'n'Play map is there.
+deps_missing() {
+  [ -f package.json ] || return 1
+  [ -d node_modules ] && return 1
+  { [ -f .pnp.cjs ] || [ -f .pnp.js ]; } && return 1
+  jq -e '([.dependencies, .devDependencies, .optionalDependencies, .peerDependencies]
+    | map(objects | length) | add) > 0 or has("workspaces")' package.json >/dev/null 2>&1
+}
+
+# The install the lockfile calls for, in the same order the checks pick their
+# package manager. Sets install_tool, install_cmd, and, when it cannot run,
+# install_reason.
+install_tool="" install_cmd="" install_reason=""
+plan_install() {
+  local lock
+  if [ -f pnpm-lock.yaml ]; then
+    lock=pnpm-lock.yaml install_tool=pnpm install_cmd="pnpm install --frozen-lockfile"
+  elif [ -f yarn.lock ]; then
+    lock=yarn.lock install_tool=yarn install_cmd="yarn install --frozen-lockfile"
+    [ -f .yarnrc.yml ] && install_cmd="yarn install --immutable"
+  elif [ -f bun.lock ] || [ -f bun.lockb ]; then
+    lock=bun.lock install_tool=bun install_cmd="bun install --frozen-lockfile"
+    [ -f bun.lock ] || lock=bun.lockb
+  elif [ -f package-lock.json ] || [ -f npm-shrinkwrap.json ]; then
+    lock=package-lock.json install_tool=npm install_cmd="npm ci"
+    [ -f package-lock.json ] || lock=npm-shrinkwrap.json
+  else
+    install_reason="package.json declares dependencies and node_modules is missing, but there is no lockfile, so ccm-validate does not install them"
+    return
+  fi
+  command -v "$install_tool" >/dev/null 2>&1 ||
+    install_reason="node_modules is missing and $install_tool is not installed, so the dependencies $lock calls for cannot be installed"
+}
+
+install_json="" install_state=none   # none | planned | installed | failed
+need_install=false
+if deps_missing; then
+  need_install=true
+  plan_install
+fi
+
+# install_info STATUS [KEY VALUE...]: the install object, as JSON.
+install_info() {
+  local st=$1; shift
+  # shellcheck disable=SC2016 # jq variables, expanded by jq
+  local args=(--arg st "$st" --arg tool "$install_tool" --arg cmd "$install_cmd") f='{tool: (if $tool == "" then null else $tool end), command: (if $cmd == "" then null else $cmd end), status: $st}'
+  while [ $# -gt 0 ]; do
+    case $1 in
+      duration_s) args+=(--argjson "$1" "$2"); f+=" + {$1: \$$1}" ;;
+      *) args+=(--arg "$1" "$2"); f+=" + {$1: \$$1}" ;;
+    esac
+    shift 2
+  done
+  jq -cn "${args[@]}" "$f"
+}
+
+# Install the dependencies. Sets install_json and install_state.
+do_install() {
+  if [ -n "$install_reason" ]; then
+    install_json=$(install_info unavailable reason "$install_reason")
+    install_state=failed
+    return
+  fi
+  ensure_logdir
+  local log="$logdir/install.log" start rc duration
+  start=$(date +%s)
+  run_bounded "$install_cmd" "$log" && rc=0 || rc=$?
+  duration=$(($(date +%s) - start))
+  if [ "$rc" -eq 0 ]; then
+    install_json=$(install_info installed duration_s "$duration" log "$log")
+    install_state=installed
+    return
+  fi
+  local reason="$install_cmd exited $rc"
+  timed_out "$rc" && reason="$install_cmd timed out after ${timeout_s}s"
+  install_json=$(install_info failed duration_s "$duration" log "$log" reason "$reason" tail "$(tail -n 40 "$log")")
+  install_state=failed
+}
+
+# no_timeout_note: the note for output when no timeout binary bounded a run.
+no_timeout_note() { echo "neither timeout nor gtimeout is installed (brew install coreutils), so checks run without a time limit"; }
+
+if [ "$install_only" = true ]; then
+  if [ "$need_install" = false ]; then
+    jq -n --argjson t "$timeout_s" '{status: "not-needed", timeout_seconds: $t}'
+    exit 0
+  fi
+  do_install
+  status=installed rc=0
+  [ "$install_state" = installed ] || { status=environment rc=5; }
+  note=""
+  [ -n "$timeout_bin" ] || [ -n "$install_reason" ] || note=$(no_timeout_note)
+  jq -n --arg status "$status" --argjson t "$timeout_s" --argjson i "$install_json" --arg note "$note" \
+    '{status: $status, timeout_seconds: $t, install: $i} + (if $note == "" then {} else {note: $note} end)'
+  exit "$rc"
+fi
+
+# ---- resolve and run -------------------------------------------------------
+
 results=()
 ran=0 failed=0
 
@@ -218,17 +362,19 @@ for check in $checks; do
     continue
   fi
 
-  [ -n "$logdir" ] || { logdir="$(ccm_state_dir)/validate"; mkdir -p "$logdir"; }
+  if [ "$need_install" = true ] && [ "$install_state" = none ]; then
+    do_install
+  fi
+  if [ "$install_state" = failed ]; then
+    results+=("$(jq -n --arg n "$check" --arg c "$cmd" --arg s "$source" \
+      '{name: $n, command: $c, source: $s, status: "skipped", reason: "dependencies are not installed"}')")
+    continue
+  fi
+
+  ensure_logdir
   log="$logdir/$check.log"
   start=$(date +%s)
-  set +e
-  if [ -n "$timeout_bin" ]; then
-    "$timeout_bin" --kill-after=10 "$timeout_s" bash -c "$cmd" >"$log" 2>&1 </dev/null
-  else
-    bash -c "$cmd" >"$log" 2>&1 </dev/null
-  fi
-  rc=$?
-  set -e
+  run_bounded "$cmd" "$log" && rc=0 || rc=$?
   duration=$(($(date +%s) - start))
 
   if [ "$rc" -eq 0 ]; then
@@ -238,8 +384,7 @@ for check in $checks; do
   else
     failed=$((failed + 1))
     reason=""
-    # timeout exits 124 on SIGTERM and 137 when --kill-after had to SIGKILL.
-    if [ -n "$timeout_bin" ] && { [ "$rc" -eq 124 ] || [ "$rc" -eq 137 ]; }; then
+    if timed_out "$rc"; then
       reason="timed out after ${timeout_s}s"
     fi
     results+=("$(jq -n --arg n "$check" --arg c "$cmd" --arg s "$source" --arg l "$log" \
@@ -249,7 +394,9 @@ for check in $checks; do
   fi
 done
 
-if [ "$ran" -eq 0 ]; then
+if [ "$install_state" = failed ]; then
+  status=environment rc=5
+elif [ "$ran" -eq 0 ]; then
   status=nothing-to-run rc=2
 elif [ "$list" = true ]; then
   status=listed rc=0
@@ -259,11 +406,22 @@ else
   status=pass rc=0
 fi
 
+# --list shows the install the first check would be preceded by.
+if [ "$list" = true ] && [ "$need_install" = true ] && [ "$ran" -gt 0 ]; then
+  if [ -n "$install_reason" ]; then
+    install_json=$(install_info unavailable reason "$install_reason")
+  else
+    install_json=$(install_info planned)
+  fi
+fi
+
 note=""
 if [ -z "$timeout_bin" ] && [ "$ran" -gt 0 ]; then
-  note="neither timeout nor gtimeout is installed (brew install coreutils), so checks run without a time limit"
+  note=$(no_timeout_note)
 fi
 
 printf '%s\n' "${results[@]}" | jq -s --arg status "$status" --arg note "$note" --argjson t "$timeout_s" \
-  '{status: $status, timeout_seconds: $t, checks: .} + (if $note == "" then {} else {note: $note} end)'
+  --arg install "$install_json" \
+  '{status: $status, timeout_seconds: $t} + (if $install == "" then {} else {install: ($install | fromjson)} end)
+   + {checks: .} + (if $note == "" then {} else {note: $note} end)'
 exit "$rc"

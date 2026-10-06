@@ -11,7 +11,7 @@ You are running the **validate** step of an autonomous ticket run driven by `/cc
 
 Follow the **preloaded `validate` procedure** to run the project's checks. Use the grounding block in your task prompt for context.
 
-Report the outcome as a handshake, following `ccm-validate`'s JSON: `done` when every check that ran passed or there was nothing to run; `needs-human` when any check failed, naming the failed checks (the orchestrator decides whether to fix-and-retry or park). Follow the preloaded procedure directly; do not re-invoke `/ccmagic:validate` as a skill.
+Report the outcome as a handshake, following `ccm-validate`'s JSON: `done` when every check that ran passed or there was nothing to run; `needs-human` when any check failed, with a reason starting `failed:` and naming the failed checks (the orchestrator decides whether to fix-and-retry or park); `needs-human` with a reason starting `environment:` when `ccm-validate` reported `status: environment` (missing Node dependencies it could not install), quoting its `install.reason`. An `environment:` result is not a check failure, so it gets no `failures:` section, and the orchestrator parks it without a fix pass. Never turn a failed check into `environment:` because its output looks environmental: only the script's `environment` status is one. Follow the preloaded procedure directly; do not re-invoke `/ccmagic:validate` as a skill.
 
 When a check failed, put a `failures:` section just before the handshake, as in contract §3: one entry per failed check with its command, exit code, log path, and the lines of its `tail` that show the cause. The orchestrator hands that section to the fix pass, so copy the lines from the JSON rather than summarizing them.
 
@@ -19,7 +19,7 @@ End your output with this handshake, verbatim:
 
 ```
 status: done | needs-human
-reason: <one line: "validation passed" or "no checks configured" on done; the failed check names on needs-human>
+reason: <one line: "validation passed" or "no checks configured" on done; "failed: <check names>" or "environment: <install.reason>" on needs-human>
 follow_ups: []
 ```
 

@@ -1,0 +1,161 @@
+# Every-ticket changes to the skill and agent files since SPEC_BASELINE in
+# tests/run.sh, spec-only blocks removed on both sides. Written by
+#   CCM_WRITE_EVERY_TICKET_DIFF=1 bash tests/run.sh skills_non_spec
+### agents/auto-finish.md
+@@ -9,7 +9,20 @@ tools: Read, Edit, Bash, Glob, Grep
+ 
+ You are running the **finish** step of an autonomous ticket run driven by `/ccmagic:auto-ticket`.
+ 
+-Follow the **preloaded `finish-ticket` procedure in autonomous mode**: enforce the merge gate (mergeable + CI green + no unaddressed change-requests), take the Done path, merge with the strategy the skill determines (or, when the grounding block carries `merge_owner: reeve`, hand off per the skill's *Merge hand-off* section instead of merging), and auto-resolve only trivial conflicts. Use the grounding block in your task prompt.
++**First, check the run may finish.** Before any other call, pass the grounding block's `steps:` section (the line `steps:` and its `~~~` fence, verbatim) to `ccm-finish-guard` on stdin, as its own Bash call:
++
++```bash
++ccm-finish-guard <<'CCM_STEPS_EOF'
++steps:
++~~~
++{the JSON array from the grounding block, verbatim}
++~~~
++CCM_STEPS_EOF
++```
++
++It exits 0 only when the latest validate step is `done`, the latest review-ticket step is `clean`, and no work-ticket or pr-feedback step ran after that validate. On any other exit, a missing `steps:` section included, do not run the merge gate, merge, or hand off: return `needs-human` with the reason `finish guard ({rule}): {detail}` from its JSON. A PreToolUse hook runs the same check on the orchestrator's call that starts this step; this call covers a harness that does not run plugin hooks.
++
++Then follow the **preloaded `finish-ticket` procedure in autonomous mode**: enforce the merge gate (mergeable + CI green + no unaddressed change-requests), take the Done path, merge with the strategy the skill determines (or, when the grounding block carries `merge_owner: reeve`, hand off per the skill's *Merge hand-off* section instead of merging), and auto-resolve only trivial conflicts. Use the grounding block in your task prompt.
+ 
+ Because you were invoked with an autonomous grounding block, you are **orchestrated** — on `needs-human` (gate not satisfied, or a business-logic conflict), do NOT merge and do NOT park the ticket yourself; emit the handshake and stop so the orchestrator routes it.
+ 
+### agents/auto-validate.md
+@@ -11,7 +11,7 @@ You are running the **validate** step of an autonomous ticket run driven by `/cc
+ 
+ Follow the **preloaded `validate` procedure** to run the project's checks. Use the grounding block in your task prompt for context.
+ 
+-Report the outcome as a handshake, following `ccm-validate`'s JSON: `done` when every check that ran passed or there was nothing to run; `needs-human` when any check failed, naming the failed checks (the orchestrator decides whether to fix-and-retry or park). Follow the preloaded procedure directly; do not re-invoke `/ccmagic:validate` as a skill.
++Report the outcome as a handshake, following `ccm-validate`'s JSON: `done` when every check that ran passed or there was nothing to run; `needs-human` when any check failed, with a reason starting `failed:` and naming the failed checks (the orchestrator decides whether to fix-and-retry or park); `needs-human` with a reason starting `environment:` when `ccm-validate` reported `status: environment` (missing Node dependencies it could not install), quoting its `install.reason`. An `environment:` result is not a check failure, so it gets no `failures:` section, and the orchestrator parks it without a fix pass. Never turn a failed check into `environment:` because its output looks environmental: only the script's `environment` status is one. Follow the preloaded procedure directly; do not re-invoke `/ccmagic:validate` as a skill.
+ 
+ When a check failed, put a `failures:` section just before the handshake, as in contract §3: one entry per failed check with its command, exit code, log path, and the lines of its `tail` that show the cause. The orchestrator hands that section to the fix pass, so copy the lines from the JSON rather than summarizing them.
+ 
+@@ -19,7 +19,7 @@ End your output with this handshake, verbatim:
+ 
+ ```
+ status: done | needs-human
+-reason: <one line: "validation passed" or "no checks configured" on done; the failed check names on needs-human>
++reason: <one line: "validation passed" or "no checks configured" on done; "failed: <check names>" or "environment: <install.reason>" on needs-human>
+ follow_ups: []
+ ```
+ 
+### skills/auto-ticket/SKILL.md
+@@ -155,7 +155,7 @@ Everything this pass pushes is measured against `H`, so bot reviews triggered *b
+ **4a. Apply feedback.** Run the pr-feedback step via `run_step` — `/ccmagic:pr-feedback {PR_NUMBER}` with the grounding block. Autonomous `pr-feedback` applies address-now fixes, replies to declined/question threads, records each defer/out-of-scope item as a short description in `follow_ups` (it files no tickets in an orchestrated run; Step 6 does), and pushes. Collect its handshake counts; its `follow_ups` go on the run's list like every step's.
+   - `needs-human` (e.g. a genuine reviewer tie) → **route-and-stop** (stage = `pr-feedback`).
+ 
+-**4b. Validate locally before trusting CI.** Run the validate step via `run_step`: `/ccmagic:validate`. `done` → continue to 4c. A `needs-human` whose `reason` starts with `failed:` means a check failed. Any other `needs-human` (including "validate produced no handshake") is not a check failure: **route-and-stop** (stage = `validate`) with its reason. On a check failure, fix the regressions in up to `max_validate_attempts` attempts (default **2**). Each attempt runs a fix pass on the work step via `run_step`, as in Step 3 items 1 and 2 (including the fix-pass git check), with `fix_source: validate`, `fix_pass: {attempt}`, and a `findings_to_fix:` section holding the validate step's `failures:` section as reported (contract §3); then runs the validate step again. A fix pass that returns `needs-human` → **route-and-stop** (stage = `validate`) with its reason. Once validate returns `done`, commit and push via `/ccmagic:push` (run this via `run_step`, with every attempt's `commit_notes:` lines combined into one section when they reported any); if push returns `needs-human`, **route-and-stop**. If validation still fails after the attempts → **route-and-stop** (reason: "local validation fails: {summary}"). Doing this locally keeps CI + bot-review round-trips rare.
++**4b. Validate locally before trusting CI.** Run the validate step via `run_step`: `/ccmagic:validate`. `done` → continue to 4c. A `needs-human` whose `reason` starts with `failed:` means a check failed. A `needs-human` whose `reason` starts with `environment:` means the checks could not run because the repository's Node dependencies are missing and `ccm-validate` could not install them (contract §3): **route-and-stop** (stage = `validate`) with its reason, without a fix pass. Any other `needs-human` (including "validate produced no handshake") is not a check failure either: **route-and-stop** (stage = `validate`) with its reason. A `failed:` reason is always a check failure, even when the failure looks environmental to you (a missing module, a missing binary): run the fix passes below, and park if they don't make it pass; never go on to 4c or Step 5 past it. On a check failure, fix the regressions in up to `max_validate_attempts` attempts (default **2**). Each attempt runs a fix pass on the work step via `run_step`, as in Step 3 items 1 and 2 (including the fix-pass git check), with `fix_source: validate`, `fix_pass: {attempt}`, and a `findings_to_fix:` section holding the validate step's `failures:` section as reported (contract §3); then runs the validate step again. A fix pass that returns `needs-human` → **route-and-stop** (stage = `validate`) with its reason. Once validate returns `done`, commit and push via `/ccmagic:push` (run this via `run_step`, with every attempt's `commit_notes:` lines combined into one section when they reported any); if push returns `needs-human`, **route-and-stop**. If validation still fails after the attempts → **route-and-stop** (reason: "local validation fails: {summary}"). Doing this locally keeps CI + bot-review round-trips rare.
+ 
+ **4c. Wait for CI and new reviews.** This pass's push(es) already happened (in 4a via `pr-feedback`, and possibly again in 4b); `H` was captured before them at the top of the pass. Now that they've landed:
+   - **Wait for CI to settle** with one command, repeated only while it says so:
+@@ -198,11 +198,13 @@ Each 4f follows a feedback pass that pushed, so a run makes at most `max_feedbac
+ 
+ Only 4e (with the PR head still at `reviewed_head`) and 4f (with a clean re-review of the PR head) lead here, so the last clean review read the commit the gate will merge. Never run this step while the PR head differs from `reviewed_head`: that is a stale review, which Reeve parks as `review-not-clean`; route-and-stop instead (stage = `review-ticket`).
+ 
+-Run the finish-ticket step via `run_step` — `/ccmagic:finish-ticket` with the grounding block. Its Step 3 sanity check is the **merge gate**: it merges only if the PR is mergeable, CI is green, and there are no unaddressed change-requests.
++Run the finish-ticket step via `run_step` — `/ccmagic:finish-ticket` with the grounding block, ending it with a `steps:` section (contract §2): the run record's `steps` array so far, every step invocation of this run in order with its status and reason, exactly as Step 6 will write it, as one line of JSON in a `~~~` fence. Its Step 3 sanity check is the **merge gate**: it merges only if the PR is mergeable, CI is green, and there are no unaddressed change-requests.
++
++**Finish guard.** `ccm-finish-guard` reads that `steps:` section and refuses a run whose latest validate is not `done`, whose latest review-ticket is not `clean`, or that ran work-ticket or pr-feedback after its latest validate (RV-86). The plugin's PreToolUse hook runs it on your call that starts `auto-finish` and denies the call when it fails, and the finish agent runs it again first. A denied call names the rule: **route-and-stop** with the stage and reason the denial gives. Do not start the finish step again with a changed step list, and do not move the ticket yourself. The one exception is a denial for a missing or malformed `steps:` section (`steps-unreadable`): add the section and start the step once more.
+ 
+ - `done` with `reason` beginning `handed off to reeve` → the PR is open and nothing merged; the handshake carries `requested_state: {merge_handoff_state}`, which the after-step routine applies (a missing state parks the run there). Continue to Step 6 with outcome **handed-off**.
+ - `done` otherwise → the PR merged; the handshake carries `requested_state: Done`, which the after-step routine applies. Continue to Step 6 with outcome **merged**.
+-- `needs-human` → the gate wasn't satisfied. It did **not** merge → **route-and-stop** (stage = `finish-ticket`, reason: its blockers).
++- `needs-human` → the gate wasn't satisfied. It did **not** merge → **route-and-stop** (stage = `finish-ticket`, reason: its blockers). A reason starting `finish guard (` is the guard's refusal: route-and-stop with that reason, at stage `validate` for a validate rule and `review-ticket` for a review rule.
+ 
+ ---
+ 
+@@ -312,7 +314,9 @@ There is no stalled outcome. Never hang waiting for input.
+ | `work-ticket` → `needs-human` | route-and-stop (stage `work-ticket`). |
+ | `review-ticket` → `needs-human`, or `fixable-findings` unresolved after the bounded loop | route-and-stop (stage `review-ticket`). |
+ | A fix pass on the work step (Step 3 or 4b) returns `needs-human`, does not report an item it was sent, commits or switches branch, or changes no files | route-and-stop (stage `review-ticket` or `validate`); nothing from that pass is pushed, and the parked comment lists the uncommitted files it left. |
+-| `validate` → `needs-human` whose reason does not start with `failed:` (a crash, no handshake) | route-and-stop (stage `validate`) without a fix pass. |
++| `validate` → `needs-human` whose reason starts with `environment:` (missing Node dependencies that `ccm-validate` could not install), or does not start with `failed:` (a crash, no handshake) | route-and-stop (stage `validate`) without a fix pass. |
++| `validate` → `needs-human` whose reason starts with `failed:`, however environmental the failure looks | Step 4b's fix passes, then route-and-stop if validation still fails. Never go on to finish. |
++| `ccm-finish-guard` refuses the finish step (the hook denies the `auto-finish` call, or the finish step returns `finish guard (...)`) | route-and-stop (stage `validate` or `review-ticket`, as the denial names); nothing is merged or handed off. |
+ | `pr-feedback` → `needs-human` (genuine reviewer tie) | route-and-stop (stage `pr-feedback`). |
+ | Local `/ccmagic:validate` can't be made green within the bounded attempts | route-and-stop (reason: validation failures). |
+ | CI never settles within `ci_timeout_minutes` (watch loop cap) | route-and-stop (reason: CI timeout). |
+### skills/auto-ticket/autonomous-contract.md
+@@ -83,6 +83,17 @@ On a fix pass `work-ticket` skips its Steps 2 to 4 and follows its *Fix pass* se
+ 
+ The push step's grounding block after a fix pass may carry a `commit_notes:` section, copied from the fix pass's report (§3); only `push` reads it.
+ 
++The finish step's grounding block ends with a `steps:` section: the run record's `steps` array so far (the orchestrator's Step 6), one `{"step", "status", "reason"}` object per step invocation in order, as JSON on one line in a `~~~` fence. Only `finish-ticket` reads it:
++
++```
++steps:
++~~~
++[{"step": "work-ticket", "status": "done"}, {"step": "review-ticket", "status": "clean"}, {"step": "validate", "status": "done", "reason": "validation passed"}]
++~~~
++```
++
++`ccm-finish-guard` checks it before the run can merge or hand off: the latest `validate` entry must be `done`, the latest `review-ticket` entry `clean`, and no `work-ticket` or `pr-feedback` entry may come after that validate. The plugin's PreToolUse hook (`hooks/pre-tool-use-finish-guard.sh`) runs it on the orchestrator's call that starts `auto-finish` and denies the call when it fails, a missing or malformed section included; the finish agent runs it again as its first action and returns `needs-human` when it fails (RV-86).
++
+ A sub-skill that sees `orchestrator:` in its grounding block must **not** park on `needs-human` — it emits the handshake and returns control so the orchestrator performs the single route-and-stop.
+ 
+ `auto-ticket` always runs each step in a per-step subagent (`agents/auto-*.md`) on the step's model, passing this grounding block as the child's task prompt and reading back the child's handshake (§3). The child agents preload their lifecycle skill rather than invoking it, so the step runs on the agent's model. The grounding block and handshake are unchanged by this — they're identical to how a directly-invoked sub-skill reads and emits them.
+@@ -128,7 +139,7 @@ commit_notes:
+ 
+ `applied_findings:` lists every item from `findings_to_fix:`, one line each, in the `previous_findings:` format; for a validate fix the id/title is the check name. The orchestrator copies it into the re-review's `previous_findings:` and treats a missing section, or a missing item, as a failed pass. `commit_notes:` is omitted when there is nothing to note. Each line starts with the repository file it concerns (for a §9 note, the invariant test). The orchestrator appends the section to the push step's grounding block, and `push` writes each line into the body of the commit that holds that file, or into the first commit's body when no commit holds it, so no note is dropped. The fix pass's handshake is `status: done | needs-human`, `reason: fix pass {n} ({fix_source}): applied {k} items` (or on `needs-human`, the item it could not fix; for a §9 fix that still fails, the finding and the first failing input), and `follow_ups:`, with no `requested_state:`.
+ 
+-When a check fails, the validate step's report carries a `failures:` section just before its handshake, and its `reason` starts with `failed:`. The orchestrator copies the section into a validate fix pass's `findings_to_fix:`:
++A validate `needs-human` has one of two reasons. `environment:` means `ccm-validate` found the root `package.json`'s dependencies missing and could not install them (no lockfile, the lockfile's tool missing, or the install failing or timing out), so no check ran; there is no `failures:` section, and the orchestrator parks without a fix pass. `failed:` means a check ran and failed. When a check fails, the validate step's report carries a `failures:` section just before its handshake, and its `reason` starts with `failed:`. The orchestrator copies the section into a validate fix pass's `findings_to_fix:`:
+ 
+ ```
+ failures:
+@@ -234,6 +245,7 @@ A project file overrides the user file, which overrides the built-in default. Th
+ 
+ - **Autonomous is additive.** Interactive behavior is never changed; every autonomous default is gated behind the signal above.
+ - **Every decision is recorded** in the PR body/comments and/or a ticket comment, so an unattended run leaves an audit trail.
++- **Never finish past a failed validate.** The run reaches `finish-ticket` only when its latest validate step returned `done` and its latest review `clean`; `ccm-finish-guard` checks the `steps:` section (§2) in the PreToolUse hook and again in the finish agent. A failed check gets the bounded fix passes of orchestrator Step 4b, an `environment:` result parks, and no orchestrator judgment (such as "the failure is environmental") replaces either.
+ - **Never finish on a stale review.** The last clean review's `head:` must be the PR head when `finish-ticket` runs. A late push (Step 4a or 4b) gets a re-review (orchestrator Step 4f) within the existing loop limits, and a run that can't re-review the pushed head parks.
+ - **Every exit is `merged`, `handed-off` (only with `merge_owner: reeve`), or `parked-needs-human` (with a reason).** Never `stalled`, never a silent hang, never a merge on a guess.
+ 
+### skills/validate/SKILL.md
+@@ -27,6 +27,16 @@ The script is also on the Bash `PATH` as `ccm-validate` while the plugin is enab
+ 
+ It prints `{status, timeout_seconds, checks: [{name, command, source, status, reason?}]}` without running anything. `status: planned` checks will run; `skipped` checks carry a `reason` ("not configured" or "disabled in config"). Show the plan to the user as a short table. If the top-level `status` is `nothing-to-run` (exit 2), skip to the report: there is nothing to run, and the user can add `validate_*` keys to `.claude/ccmagic.local.md`.
+ 
++### 1b. Install missing Node dependencies
++
++If the `--list` output has an `install` object, the repository's `package.json` declares dependencies and `node_modules` is missing, so the checks would fail for a reason that is not the code. Install them first, as its own call with the maximum Bash tool timeout (600000 ms):
++
++```bash
++"${CLAUDE_PLUGIN_ROOT}/bin/ccm-validate" --install
++```
++
++It runs the install the lockfile calls for (`npm ci` for `package-lock.json` or `npm-shrinkwrap.json`; `pnpm`, `yarn`, or `bun` for their lockfiles, only when that tool is installed) under `validate_timeout_seconds` and prints `{status: installed | not-needed | environment, install}`. `installed` or `not-needed`: go on to step 2. `environment` (exit 5): the install failed, timed out, or could not be done (no lockfile, or the lockfile's tool is missing); `install.reason` says which, and `install.tail` shows the end of the install's output. Run no check: report the environment problem, since every check would fail for the same reason. This is Node only; other ecosystems are never installed. A step 2 call that finds the dependencies still missing installs them itself and reports `environment` the same way.
++
+ ### 2. Run each planned check, one call per check
+ 
+ For each check with `status: planned`, in the listed order:
+@@ -37,7 +47,7 @@ For each check with `status: planned`, in the listed order:
+ 
+ Give each call the maximum Bash tool timeout (600000 ms). One call per check keeps each under the tool's 10-minute limit; the script enforces its own `validate_timeout_seconds` limit (default 540, which leaves room to report before the tool's limit) and reports a check that hits it as `failed` with reason "timed out". If the output has a `note`, no `timeout` binary was found and the checks ran unbounded; repeat the note in the report. If the Bash call itself times out and prints no JSON, count that check as failed with reason "timed out".
+ 
+-Each call prints `{status: pass | fail, checks: [{name, command, source, status, exit_code, duration_s, log, reason?, tail?}]}` and exits 0 on pass, 1 on fail. A failed check carries the last 40 lines of its output as `tail`; the full output is in the `log` file. Keep going after a failure so the report covers every check, unless the user asked to stop at the first failure.
++Each call prints `{status: pass | fail | environment, install?, checks: [{name, command, source, status, exit_code, duration_s, log, reason?, tail?}]}` and exits 0 on pass, 1 on fail, and 5 on `environment` (missing dependencies it could not install, so no check ran; stop and report it as step 1b says). A failed check carries the last 40 lines of its output as `tail`; the full output is in the `log` file. Keep going after a failure so the report covers every check, unless the user asked to stop at the first failure.
+ 
+ ### 3. Optional checks (interactive only)
+ 
+@@ -166,13 +176,14 @@ The handshake follows the script's JSON, with no judgment of your own:
+ 
+ - Every step 2 call returned `status: pass`: emit `done` with reason `validation passed`.
+ - `--list` returned `nothing-to-run`: emit `done` with reason `no checks configured`.
++- `--install` or a step 2 call returned `status: environment`: emit `needs-human` with a reason starting `environment:` and quoting `install.reason` (for example `environment: npm ci exited 1`), and no `failures:` section. An environment problem is not a check failure: the orchestrator parks it without a fix pass. Only the script's `environment` status is one; a check the script reports `failed` stays `failed:` however environmental its output looks.
+ - Any step 2 call returned `status: fail`: emit `needs-human` with a reason listing the failed check names from the JSON (for example `failed: lint, test`; add "(timed out)" after a check whose `reason` says so). Just before the handshake, emit a `failures:` section (contract §3) with one entry per failed check: its `command`, `exit_code`, `log` path, and the lines of its `tail` that show the cause, copied from the JSON. The orchestrator decides whether to fix-and-retry or park, and hands that section to the fix pass.
+ 
+ ### Handshake (emit last, in autonomous mode)
+ 
+ ```
+ status: done | needs-human
+-reason: <one line: "validation passed" or "no checks configured" on done; the failed check names on needs-human>
++reason: <one line: "validation passed" or "no checks configured" on done; "failed: <check names>" or "environment: <install.reason>" on needs-human>
+ follow_ups: []
+ ```
+ 

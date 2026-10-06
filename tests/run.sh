@@ -17,8 +17,13 @@ FILTER=${1:-}
 # (RV-75): the spec-only regression tests compare the skill and agent files
 # against it, both sides with their spec-only blocks removed. One ref, set
 # here: the last commit before RV-75. A later change that is meant to alter
-# every ticket's behavior moves it to that change's parent commit.
+# every ticket's behavior records its edits in $EVERY_TICKET_DIFF, which the
+# comparison must then equal (a squash merge leaves no commit on main to move
+# the baseline to). Regenerate it with
+#   CCM_WRITE_EVERY_TICKET_DIFF=1 bash tests/run.sh skills_non_spec
+# and review the diff of that file like any other change.
 SPEC_BASELINE=491a05cad5e520a648ce9eda411ccc75c560c5af
+EVERY_TICKET_DIFF=$ROOT/tests/every-ticket-since-baseline.diff
 PASS=0 FAIL=0 FAILED=()
 
 # ---- helpers ---------------------------------------------------------------
@@ -1163,21 +1168,39 @@ threads_graphql_error() {
 
 # ---- ccm-validate ----------------------------------------------------------
 
-# seed_pkg SCRIPTS_JSON: a package.json with these scripts, plus npm, pnpm,
-# and yarn stubs on PATH that log the call to $T/pm.log and run the script, so
-# the tests don't depend on Node being installed.
+# seed_pkg SCRIPTS_JSON [EXTRA_JSON]: a package.json with these scripts (and
+# EXTRA_JSON's keys, such as dependencies), plus npm, pnpm, and yarn stubs on
+# PATH that log the call to $T/pm.log and run the script, so the tests don't
+# depend on Node being installed. `ci` and `install` are installs: they exit
+# with the code in $T/install-rc (default 0) and create node_modules on 0.
 seed_pkg() {
-  printf '{"name":"x","scripts":%s}\n' "$1" >package.json
+  jq -n --argjson s "$1" --argjson e "${2:-{\}}" '{name: "x", scripts: $s} + $e' >package.json
   mkdir -p "$T/bin"
   local pm
   for pm in npm pnpm yarn; do
-    # shellcheck disable=SC2016 # the stub expands these, not this shell
-    printf '#!/bin/sh\necho "%s $*" >>"%s/pm.log"\nexec sh -c "$(jq -r --arg s "$2" %s package.json)"\n' \
-      "$pm" "$T" "'.scripts[\$s]'" >"$T/bin/$pm"
-    chmod +x "$T/bin/$pm"
+    seed_pm "$pm"
   done
   export PATH="$T/bin:$PATH"
 }
+
+# seed_pm NAME: one package manager stub in $T/bin, as seed_pkg describes.
+seed_pm() {
+  mkdir -p "$T/bin"
+  # shellcheck disable=SC2016 # the stub expands these, not this shell
+  printf '#!/bin/sh
+echo "%s $*" >>"%s/pm.log"
+case $1 in
+  ci|install)
+    rc=$(cat "%s/install-rc" 2>/dev/null || echo 0)
+    [ "$rc" -eq 0 ] && mkdir -p node_modules
+    echo "installing"; exit "$rc" ;;
+esac
+exec sh -c "$(jq -r --arg s "$2" %s package.json)"
+' "$1" "$T" "$T" "'.scripts[\$s]'" >"$T/bin/$1"
+  chmod +x "$T/bin/$1"
+}
+
+DEPS='{"dependencies":{"left-pad":"1.3.0"}}'
 
 # check_status NAME: print the status of one check from OUT.
 check_status() { jq -r --arg n "$1" '.checks[] | select(.name == $n) | .status' <<<"$OUT"; }
@@ -1342,6 +1365,134 @@ validate_jvm_without_wrapper_uses_tool_name() {
   printf '#!/bin/sh\n' >mvnw
   run "$BIN/ccm-validate" --list
   check "$(commands)" '-|-|-|sh ./mvnw -B test|sh ./mvnw -B verify'
+}
+
+# ---- ccm-validate: missing dependencies (RV-86) ----------------------------
+
+validate_installs_missing_deps_with_npm_ci() {
+  seed_pkg '{"lint":"true","test":"test -d node_modules"}' "$DEPS"
+  echo '{}' >package-lock.json
+  run "$BIN/ccm-validate"
+  check "$(jqval .status),$RC,$(check_status lint),$(check_status test)" "pass,0,passed,passed"
+  check "$(jqval .install.status),$(jqval .install.command),$(jqval .install.tool)" "installed,npm ci,npm"
+  check "$(command cat "$T/pm.log")" $'npm ci\nnpm run lint\nnpm run test'
+  grep -q installing "$(jqval .install.log)"
+  # The next call finds node_modules and installs nothing.
+  run "$BIN/ccm-validate" --only lint
+  check "$(jqval .status),$(jqval '.install // "none"')" "pass,none"
+  check "$(grep -c '^npm ci' "$T/pm.log")" "1"
+}
+
+validate_shrinkwrap_uses_npm_ci() {
+  seed_pkg '{"lint":"true"}' "$DEPS"
+  echo '{}' >npm-shrinkwrap.json
+  run "$BIN/ccm-validate" --install
+  check "$(jqval .status),$RC,$(jqval .install.command)" "installed,0,npm ci"
+  [ -d node_modules ]
+}
+
+validate_install_failure_is_environment() {
+  seed_pkg '{"lint":"true","test":"true"}' "$DEPS"
+  echo '{}' >package-lock.json
+  echo 1 >"$T/install-rc"
+  run "$BIN/ccm-validate"
+  check "$(jqval .status),$RC,$(jqval .install.status)" "environment,5,failed"
+  check "$(jqval .install.reason)" "npm ci exited 1"
+  [[ $(jqval .install.tail) == *installing* ]]
+  # No check ran: each is skipped and says why.
+  check "$(command cat "$T/pm.log")" "npm ci"
+  check "$(check_status lint),$(jq -r '.checks[] | select(.name == "lint") | .reason' <<<"$OUT")" \
+    "skipped,dependencies are not installed"
+}
+
+validate_no_lockfile_is_environment() {
+  seed_pkg '{"lint":"true"}' '{"devDependencies":{"vitest":"^3.0.0"}}'
+  run "$BIN/ccm-validate" --only lint
+  check "$(jqval .status),$RC,$(jqval .install.status),$(jqval '.install.command // "none"')" \
+    "environment,5,unavailable,none"
+  [[ $(jqval .install.reason) == *"no lockfile"* ]]
+  [ ! -e "$T/pm.log" ]
+}
+
+validate_node_modules_present_installs_nothing() {
+  seed_pkg '{"lint":"true"}' "$DEPS"
+  echo '{}' >package-lock.json
+  mkdir node_modules
+  run "$BIN/ccm-validate"
+  check "$(jqval .status),$RC,$(jqval '.install // "none"')" "pass,0,none"
+  check "$(command cat "$T/pm.log")" "npm run lint"
+  run "$BIN/ccm-validate" --install
+  check "$(jqval .status),$RC" "not-needed,0"
+}
+
+validate_no_dependencies_installs_nothing() {
+  seed_pkg '{"lint":"true"}'
+  run "$BIN/ccm-validate"
+  check "$(jqval .status),$RC,$(jqval '.install // "none"')" "pass,0,none"
+  check "$(command cat "$T/pm.log")" "npm run lint"
+}
+
+validate_yarn_pnp_counts_as_installed() {
+  seed_pkg '{"lint":"true"}' "$DEPS"
+  touch yarn.lock .pnp.cjs
+  run "$BIN/ccm-validate"
+  check "$(jqval .status),$(jqval '.install // "none"')" "pass,none"
+}
+
+validate_pnpm_lockfile_installs_with_pnpm() {
+  seed_pkg '{"lint":"true"}' "$DEPS"
+  touch pnpm-lock.yaml
+  run "$BIN/ccm-validate"
+  check "$(jqval .status),$(jqval .install.command)" "pass,pnpm install --frozen-lockfile"
+  check "$(command cat "$T/pm.log")" $'pnpm install --frozen-lockfile\npnpm run lint'
+}
+
+validate_missing_lockfile_tool_is_environment() {
+  if command -v bun >/dev/null; then
+    echo "  (skipped: bun is installed)"; return 0
+  fi
+  seed_pkg '{"lint":"true"}' "$DEPS"
+  touch bun.lock
+  run "$BIN/ccm-validate"
+  check "$(jqval .status),$RC,$(jqval .install.status),$(jqval .install.tool)" "environment,5,unavailable,bun"
+  [[ $(jqval .install.reason) == *"bun is not installed"* ]]
+  [ ! -e "$T/pm.log" ]
+}
+
+validate_list_plans_install_without_running_it() {
+  seed_pkg '{"lint":"true"}' "$DEPS"
+  echo '{}' >package-lock.json
+  run "$BIN/ccm-validate" --list
+  check "$(jqval .status),$RC,$(jqval .install.status),$(jqval .install.command)" "listed,0,planned,npm ci"
+  [ ! -e "$T/pm.log" ]
+  [ ! -e node_modules ]
+}
+
+validate_install_mode_runs_no_checks() {
+  seed_pkg '{"lint":"touch ran"}' "$DEPS"
+  echo '{}' >package-lock.json
+  run "$BIN/ccm-validate" --install
+  check "$(jqval .status),$RC,$(jqval .install.status),$(jqval '.checks // "none"')" "installed,0,installed,none"
+  [ ! -e ran ]
+  echo 1 >"$T/install-rc"
+  rm -rf node_modules
+  run "$BIN/ccm-validate" --install
+  check "$(jqval .status),$RC" "environment,5"
+  run "$BIN/ccm-validate" --install --only lint
+  check "$RC" "4"
+}
+
+validate_install_timeout_is_environment() {
+  if ! command -v timeout >/dev/null && ! command -v gtimeout >/dev/null; then
+    echo "  (skipped: no timeout binary)"; return 0
+  fi
+  seed_pkg '{"lint":"true"}' "$DEPS"
+  echo '{}' >package-lock.json
+  printf '#!/bin/sh\nsleep 5\n' >"$T/bin/npm"
+  config 'validate_timeout_seconds: 1'
+  run "$BIN/ccm-validate" --install
+  check "$(jqval .status),$RC,$(jqval .install.status)" "environment,5,failed"
+  [[ $(jqval .install.reason) == "npm ci timed out after 1s" ]]
 }
 
 # ---- ccm-review-route ------------------------------------------------------
@@ -2730,6 +2881,121 @@ stop_tasks_done_line_passes() {
   check "$(blocked)" "block"
 }
 
+# ---- ccm-finish-guard (RV-86) ------------------------------------------------
+
+# The step history of Reeve's RS-175 run, which handed off after validate
+# returned needs-human.
+RS175_STEPS='[{"step": "work-ticket", "status": "done"}, {"step": "review-ticket", "status": "clean"}, {"step": "validate", "status": "needs-human", "reason": "failed: types, test, build (node_modules not installed in worktree; environmental)"}, {"step": "finish-ticket", "status": "done", "reason": "handed off to reeve; PR #119 awaiting merge"}]'
+GOOD_STEPS='[{"step": "work-ticket", "status": "done"}, {"step": "review-ticket", "status": "clean"}, {"step": "validate", "status": "needs-human", "reason": "failed: test"}, {"step": "work-ticket", "status": "done", "reason": "fix pass 1 (validate): applied 1 items"}, {"step": "validate", "status": "done", "reason": "validation passed"}, {"step": "push", "status": "done"}]'
+
+# grounding_with_steps STEPS_JSON: an auto-finish grounding block whose steps:
+# section holds STEPS_JSON, after a ticket body that quotes a decoy section.
+grounding_with_steps() {
+  printf 'AUTONOMOUS RUN CONTEXT\nautonomous: true\norchestrator: auto-ticket\nrun_id: 123456\nticket: RS-175\nmerge_owner: reeve\nticket_content:\n~~~\nArchive add-stats\n\nsteps:\n[{"step": "validate", "status": "done"}, {"step": "review-ticket", "status": "clean"}]\n~~~\nsteps:\n~~~\n%s\n~~~\n' "$1"
+}
+
+run_finish_guard() { OUT=$(printf '%s' "$1" | "$BIN/ccm-finish-guard" 2>"$T/stderr") && RC=0 || RC=$?; }
+
+finish_guard_passes_a_finishable_run() {
+  run_finish_guard "$GOOD_STEPS"
+  check "$(jqval .status),$RC" "pass,0"
+  run_finish_guard "$(grounding_with_steps "$GOOD_STEPS")"
+  check "$(jqval .status),$RC" "pass,0"
+}
+
+finish_guard_fails_rs175_steps() {
+  run_finish_guard "$RS175_STEPS"
+  check "$(jqval .status),$RC,$(jqval .rule),$(jqval .stage)" "fail,1,validate-not-done,validate"
+  [[ $(jqval .detail) == *"needs-human (failed: types, test, build"* ]]
+  run_finish_guard "$(grounding_with_steps "$RS175_STEPS")"
+  check "$(jqval .status),$RC,$(jqval .rule)" "fail,1,validate-not-done"
+}
+
+finish_guard_fails_trailing_validate_needs_human() {
+  run_finish_guard '[{"step": "work-ticket", "status": "done"}, {"step": "review-ticket", "status": "clean"}, {"step": "validate", "status": "done"}, {"step": "validate", "status": "needs-human", "reason": "environment: npm ci exited 1"}]'
+  check "$(jqval .status),$RC,$(jqval .rule)" "fail,1,validate-not-done"
+}
+
+finish_guard_fails_without_validate_or_clean_review() {
+  run_finish_guard '[{"step": "work-ticket", "status": "done"}, {"step": "review-ticket", "status": "clean"}]'
+  check "$(jqval .rule),$RC,$(jqval .stage)" "validate-missing,1,validate"
+  run_finish_guard '[{"step": "work-ticket", "status": "done"}, {"step": "review-ticket", "status": "clean"}, {"step": "validate", "status": "done"}, {"step": "review-ticket", "status": "fixable-findings"}]'
+  check "$(jqval .rule),$RC,$(jqval .stage)" "review-not-clean,1,review-ticket"
+  run_finish_guard '[{"step": "work-ticket", "status": "done"}, {"step": "validate", "status": "done"}]'
+  check "$(jqval .rule),$RC" "review-missing,1"
+}
+
+finish_guard_fails_change_after_validate() {
+  run_finish_guard '[{"step": "work-ticket", "status": "done"}, {"step": "review-ticket", "status": "clean"}, {"step": "validate", "status": "done"}, {"step": "pr-feedback", "status": "done"}]'
+  check "$(jqval .rule),$RC" "changed-after-validate,1"
+  # A late-push re-review and its push after validate are fine.
+  run_finish_guard '[{"step": "work-ticket", "status": "done"}, {"step": "review-ticket", "status": "clean"}, {"step": "pr-feedback", "status": "done"}, {"step": "validate", "status": "done"}, {"step": "push", "status": "done"}, {"step": "review-ticket", "status": "clean"}]'
+  check "$(jqval .status),$RC" "pass,0"
+}
+
+finish_guard_fails_closed_on_unreadable_steps() {
+  run_finish_guard 'AUTONOMOUS RUN CONTEXT
+autonomous: true'
+  check "$(jqval .status),$RC,$(jqval .rule)" "fail,1,steps-unreadable"
+  run_finish_guard '[]'
+  check "$(jqval .rule),$RC" "steps-unreadable,1"
+  run_finish_guard '[{"step": "validate"}]'
+  check "$(jqval .rule),$RC" "steps-unreadable,1"
+  run_finish_guard 'steps:
+~~~
+not json
+~~~'
+  check "$(jqval .rule),$RC" "steps-unreadable,1"
+  OUT=$("$BIN/ccm-finish-guard" extra </dev/null 2>/dev/null) && RC=0 || RC=$?
+  check "$RC" "4"
+}
+
+# run_finish_hook TOOL SUBAGENT_TYPE PROMPT: run the PreToolUse finish hook on a
+# step agent spawn.
+run_finish_hook() {
+  OUT=$(jq -n --arg t "$1" --arg s "$2" --arg p "$3" \
+    '{hook_event_name: "PreToolUse", tool_name: $t, tool_input: {description: "finish", prompt: $p, subagent_type: $s}, agent_type: "general-purpose"}' |
+    ${HOOK_BASH:-bash} "$HOOKS/pre-tool-use-finish-guard.sh" 2>"$T/stderr") && RC=0 || RC=$?
+}
+
+finish_hook_denies_rs175_hand_off() {
+  run_finish_hook Agent ccmagic:auto-finish "$(grounding_with_steps "$RS175_STEPS")"
+  check "$(denied),$RC" "deny,0"
+  local r
+  r=$(jq -r .hookSpecificOutput.permissionDecisionReason <<<"$OUT")
+  [[ $r == *"validate-not-done"* && $r == *"Route-and-stop now"* && $r == *"stage validate"* ]]
+  run_finish_hook Task ccmagic:auto-finish "$(grounding_with_steps "$RS175_STEPS")"
+  check "$(denied)" "deny"
+}
+
+finish_hook_allows_a_finishable_run_and_other_agents() {
+  run_finish_hook Agent ccmagic:auto-finish "$(grounding_with_steps "$GOOD_STEPS")"
+  check "$(denied),$RC,$OUT" "allow,0,"
+  run_finish_hook Agent ccmagic:auto-validate "$(grounding_with_steps "$RS175_STEPS")"
+  check "$(denied),$OUT" "allow,"
+  run_finish_hook Agent general-purpose "no steps here"
+  check "$(denied),$OUT" "allow,"
+}
+
+finish_hook_denies_without_steps() {
+  run_finish_hook Agent ccmagic:auto-finish $'AUTONOMOUS RUN CONTEXT\nautonomous: true\norchestrator: auto-ticket'
+  check "$(denied)" "deny"
+  [[ $(jq -r .hookSpecificOutput.permissionDecisionReason <<<"$OUT") == *"steps-unreadable"* ]]
+}
+
+finish_hook_registered_and_documented() {
+  local missing=
+  jq -e '.hooks.PreToolUse[] | select(.matcher == "Agent|Task") | .hooks[] | select(.command | contains("pre-tool-use-finish-guard.sh"))' "$ROOT/hooks/hooks.json" >/dev/null || missing+=" [hooks.json]"
+  grep -qF 'ccm-finish-guard' "$ROOT/agents/auto-finish.md" || missing+=" [auto-finish]"
+  grep -qF 'steps:' "$ROOT/agents/auto-finish.md" || missing+=" [auto-finish steps]"
+  grep -qF 'ccm-finish-guard' "$ROOT/skills/auto-ticket/SKILL.md" || missing+=" [auto-ticket]"
+  grep -qF '"Bash(ccm-finish-guard *)"' "$ROOT/docs/cyrus-deployment.md" || missing+=" [cyrus-deployment]"
+  grep -qF 'environment:' "$ROOT/skills/auto-ticket/SKILL.md" || missing+=" [auto-ticket environment]"
+  grep -qF 'environment:' "$ROOT/agents/auto-validate.md" || missing+=" [auto-validate environment]"
+  grep -qF 'environment:' "$ROOT/skills/validate/SKILL.md" || missing+=" [validate environment]"
+  check "${missing# }" ""
+}
+
 # ---- Reeve spec tickets: no change for other tickets (RV-75) --------------------
 
 # Every line RV-75 added to a skill or agent file sits in a block between
@@ -2772,27 +3038,49 @@ skills_spec_only_blocks_well_formed() {
   check "${missing# }" ""
 }
 
+# Outside the spec-only blocks, every skill and agent file is the baseline's
+# plus the every-ticket changes recorded in $EVERY_TICKET_DIFF (RV-86 so far),
+# hunk for hunk.
 skills_non_spec_tickets_unchanged_since_baseline() {
   local f missing=
   git -C "$ROOT" rev-parse -q --verify "$SPEC_BASELINE^{commit}" >/dev/null || { echo "    baseline $SPEC_BASELINE is not in this clone (CI needs fetch-depth: 0)"; return 1; }
+  : >"$T/every"
   for f in $(spec_prompt_files); do
     if ! git -C "$ROOT" cat-file -e "$SPEC_BASELINE:$f" 2>/dev/null; then missing+=" added:$f"; continue; fi
     [ -f "$ROOT/$f" ] || { missing+=" removed:$f"; continue; }
     git -C "$ROOT" show "$SPEC_BASELINE:$f" >"$T/base-raw"
     strip_spec_only "$T/base-raw" >"$T/base"
     strip_spec_only "$ROOT/$f" >"$T/stripped"
-    cmp -s "$T/base" "$T/stripped" || { missing+=" $f"; diff "$T/base" "$T/stripped" | sed -n '1,6s/^/    /p'; }
+    cmp -s "$T/base" "$T/stripped" && continue
+    { echo "### $f"
+      git diff --no-index --no-color --no-ext-diff --diff-algorithm=myers "$T/base" "$T/stripped" | sed -n '/^@@/,$p' || true
+    } >>"$T/every"
   done
+  if [ -n "${CCM_WRITE_EVERY_TICKET_DIFF:-}" ]; then
+    { echo "# Every-ticket changes to the skill and agent files since SPEC_BASELINE in"
+      echo "# tests/run.sh, spec-only blocks removed on both sides. Written by"
+      echo "#   CCM_WRITE_EVERY_TICKET_DIFF=1 bash tests/run.sh skills_non_spec"
+      command cat "$T/every"; } >|"$EVERY_TICKET_DIFF"
+  fi
+  grep -v '^# ' "$EVERY_TICKET_DIFF" >"$T/recorded"
+  cmp -s "$T/recorded" "$T/every" || { missing+=" every-ticket-diff"; diff "$T/recorded" "$T/every" | sed -n '1,12s/^/    /p'; }
   check "${missing# }" ""
 }
 
-# The hooks change only to accept the work step's tasks_done: line: these two
-# added lines in hooks/lib-handshake.sh, and nothing else.
+# The hooks change only to accept the work step's tasks_done: line (these two
+# added lines in hooks/lib-handshake.sh) and, for every ticket, by the RV-86
+# finish guard: its own hook file and one PreToolUse entry in hooks.json.
 skills_hooks_only_accept_tasks_done() {
   local changed
-  changed=$(git -C "$ROOT" diff "$SPEC_BASELINE" -- hooks | grep -E '^[-+]' | grep -vE '^(\+\+\+|---) ' || true)
+  changed=$(git -C "$ROOT" diff "$SPEC_BASELINE" -- hooks ':(exclude)hooks/hooks.json' ':(exclude)hooks/pre-tool-use-finish-guard.sh' |
+    grep -E '^[-+]' | grep -vE '^(\+\+\+|---) ' || true)
   check "$changed" "+#   tasks_done: [ids]            (optional: work step on a Reeve spec ticket only)
 +        if (l ~ /^[[:space:]]*tasks_done:/) continue"
+  git -C "$ROOT" show "$SPEC_BASELINE:hooks/hooks.json" | jq -S . >"$T/hooks-base"
+  jq -S 'del(.hooks.PreToolUse[] | select(.matcher == "Agent|Task" and .hooks == [{type: "command",
+    command: "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/pre-tool-use-finish-guard.sh\"", timeout: 10}]))' \
+    "$ROOT/hooks/hooks.json" >"$T/hooks-now"
+  cmp -s "$T/hooks-base" "$T/hooks-now" || { diff "$T/hooks-base" "$T/hooks-now" | sed 's/^/    /'; return 1; }
 }
 
 # A spec ticket's run record is the ordinary template with the openspec key
@@ -2818,7 +3106,7 @@ skills_run_record_openspec_key_only_for_spec_tickets() {
 MIRRORS=$(mktemp -d)
 trap 'rm -rf "$MIRRORS"' EXIT
 
-for fn in $(declare -F | awk '{print $3}' | grep -E '^(context|ci|merge_gate|guard|post|postreview|stop|threads|reply|validate|route|doctor|extreview|skills|spec_block|scope)_'); do
+for fn in $(declare -F | awk '{print $3}' | grep -E '^(context|ci|merge_gate|guard|post|postreview|stop|threads|reply|validate|route|doctor|extreview|skills|spec_block|scope|finish)_'); do
   t "$fn" "$fn"
 done
 

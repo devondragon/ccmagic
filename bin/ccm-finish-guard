@@ -1,0 +1,94 @@
+#!/usr/bin/env bash
+# ccm-finish-guard: read an auto-ticket run's step history on stdin and say,
+# as JSON, whether the run may reach finish-ticket (merge or hand off).
+#
+# Usage: ccm-finish-guard < grounding-block-or-steps
+#
+# Input is either the finish step's grounding block, whose `steps:` section
+# holds the history, or the JSON array alone. The section is a line that is
+# exactly `steps:`, then a `~~~` fence holding a JSON array, then a closing
+# `~~~`; when the text has more than one, the last is read, since the
+# orchestrator puts it at the end of the block, after the ticket body. The
+# array is the run record's `steps` so far (skills/auto-ticket/SKILL.md
+# Step 6): one {step, status, reason?} object per step invocation, in order.
+#
+# A run auto-ticket may finish has, among the entries other than finish-ticket
+# (RV-86):
+#   - a validate entry, and the latest one is `done` (Step 4b runs on every
+#     feedback pass, and only a `done` lets the run go on);
+#   - a review-ticket entry, and the latest one is `clean` (Step 5 is reached
+#     only from a clean review of the PR head);
+#   - no work-ticket or pr-feedback entry after the latest validate: those
+#     steps change code, and every change is validated before the run ends.
+# The first rule that fails is reported. A missing, empty, or malformed step
+# list fails as `steps-unreadable`, so the guard never passes on input it
+# could not read.
+#
+# Output: {status: "pass"} or {status: "fail", rule, stage, detail}
+#   rule  steps-unreadable | validate-missing | validate-not-done |
+#         review-missing | review-not-clean | changed-after-validate
+#   stage the auto-ticket stage to park at (validate, review-ticket, or
+#         finish-ticket for a step list it could not read)
+#
+# Exit codes: 0 pass, 1 fail, 4 usage error.
+
+set -euo pipefail
+
+for a in "$@"; do
+  case $a in
+    -h|--help) sed -n '2,33p' "$0"; exit 0 ;;
+    *) echo "ccm-finish-guard: unexpected argument $a" >&2; exit 4 ;;
+  esac
+done
+
+text=$(cat | tr -d '\r')
+
+fail() {
+  jq -n --arg r "$1" --arg s "$2" --arg d "$3" '{status: "fail", rule: $r, stage: $s, detail: $d}'
+  exit 1
+}
+
+# The JSON array: the whole input when it starts with `[`, else the last
+# `steps:` section's fenced body.
+trimmed=$(sed -e '/./,$!d' <<<"$text")
+if [[ $trimmed == \[* ]]; then
+  steps=$trimmed
+else
+  steps=$(awk '
+    /^[[:space:]]*steps:[[:space:]]*$/ { want = 1; next }
+    want && /^[[:space:]]*~~~[[:space:]]*$/ { want = 0; inb = 1; body = ""; next }
+    want { want = 0 }
+    inb && /^[[:space:]]*~~~[[:space:]]*$/ { inb = 0; last = body; found = 1; next }
+    inb { body = body $0 "\n"; next }
+    END { if (found) printf "%s", last }' <<<"$text")
+fi
+
+[ -n "$steps" ] || fail steps-unreadable finish-ticket "no steps: section with a fenced JSON array of the run's steps"
+valid=$(jq -r 'if type == "array" and length > 0
+    and all(.[]; type == "object" and (.step | type) == "string" and (.status | type) == "string")
+  then "yes" else "no" end' <<<"$steps" 2>/dev/null || echo no)
+[ "$valid" = yes ] || fail steps-unreadable finish-ticket "the steps are not a non-empty JSON array of {step, status} objects"
+
+# Index and entry of the latest step NAME, ignoring finish-ticket entries.
+latest() {
+  jq -c --arg s "$1" '[.[] | select(.step != "finish-ticket")] | to_entries
+    | map(select(.value.step == $s)) | last // empty' <<<"$steps"
+}
+describe() { jq -r '.value.status + (if .value.reason then " (" + .value.reason + ")" else "" end)' <<<"$1"; }
+
+v=$(latest validate)
+[ -n "$v" ] || fail validate-missing validate "the run has no validate step, so its changes were never validated"
+[ "$(jq -r .value.status <<<"$v")" = "done" ] ||
+  fail validate-not-done validate "the latest validate step returned $(describe "$v"), not done"
+
+r=$(latest review-ticket)
+[ -n "$r" ] || fail review-missing review-ticket "the run has no review-ticket step"
+[ "$(jq -r .value.status <<<"$r")" = clean ] ||
+  fail review-not-clean review-ticket "the latest review-ticket step returned $(describe "$r"), not clean"
+
+after=$(jq -r --argjson i "$(jq .key <<<"$v")" '[.[] | select(.step != "finish-ticket")] | .[($i + 1):]
+  | map(select(.step == "work-ticket" or .step == "pr-feedback")) | first | .step // empty' <<<"$steps")
+[ -z "$after" ] ||
+  fail changed-after-validate validate "a $after step ran after the latest validate step, so its changes were not validated"
+
+jq -n '{status: "pass"}'

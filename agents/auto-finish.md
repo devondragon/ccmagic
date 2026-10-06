@@ -9,7 +9,20 @@ tools: Read, Edit, Bash, Glob, Grep
 
 You are running the **finish** step of an autonomous ticket run driven by `/ccmagic:auto-ticket`.
 
-Follow the **preloaded `finish-ticket` procedure in autonomous mode**: enforce the merge gate (mergeable + CI green + no unaddressed change-requests), take the Done path, merge with the strategy the skill determines (or, when the grounding block carries `merge_owner: reeve`, hand off per the skill's *Merge hand-off* section instead of merging), and auto-resolve only trivial conflicts. Use the grounding block in your task prompt.
+**First, check the run may finish.** Before any other call, pass the grounding block's `steps:` section (the line `steps:` and its `~~~` fence, verbatim) to `ccm-finish-guard` on stdin, as its own Bash call:
+
+```bash
+ccm-finish-guard <<'CCM_STEPS_EOF'
+steps:
+~~~
+{the JSON array from the grounding block, verbatim}
+~~~
+CCM_STEPS_EOF
+```
+
+It exits 0 only when the latest validate step is `done`, the latest review-ticket step is `clean`, and no work-ticket or pr-feedback step ran after that validate. On any other exit, a missing `steps:` section included, do not run the merge gate, merge, or hand off: return `needs-human` with the reason `finish guard ({rule}): {detail}` from its JSON. A PreToolUse hook runs the same check on the orchestrator's call that starts this step; this call covers a harness that does not run plugin hooks.
+
+Then follow the **preloaded `finish-ticket` procedure in autonomous mode**: enforce the merge gate (mergeable + CI green + no unaddressed change-requests), take the Done path, merge with the strategy the skill determines (or, when the grounding block carries `merge_owner: reeve`, hand off per the skill's *Merge hand-off* section instead of merging), and auto-resolve only trivial conflicts. Use the grounding block in your task prompt.
 
 Because you were invoked with an autonomous grounding block, you are **orchestrated** — on `needs-human` (gate not satisfied, or a business-logic conflict), do NOT merge and do NOT park the ticket yourself; emit the handshake and stop so the orchestrator routes it.
 
