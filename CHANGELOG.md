@@ -2,7 +2,7 @@
 
 All notable changes to ccmagic are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [3.16.4] - 2026-10
 
 One change applies to every ticket: skills and agents call the `bin/ccm-*` scripts by their `${CLAUDE_PLUGIN_ROOT}/bin/` path. The other fixes are in `bin/ccm-spec-block` and `bin/ccm-openspec-scope` and in spec-only sentences, so a ticket without a well-formed Reeve spec block runs as before.
 
