@@ -29,7 +29,7 @@ It prints `{status, timeout_seconds, checks: [{name, command, source, status, re
 
 ### 1b. Install missing Node dependencies
 
-If the `--list` output has an `install` object, the repository's `package.json` declares dependencies and `node_modules` is missing, so the checks would fail for a reason that is not the code. Install them first, as its own call with the maximum Bash tool timeout (600000 ms):
+If the `--list` output has an `install` object, the repository's `package.json` declares dependencies and one of them is not installed in `node_modules`, so the checks would fail for a reason that is not the code. Install them first, as its own call with the maximum Bash tool timeout (600000 ms):
 
 ```bash
 "${CLAUDE_PLUGIN_ROOT}/bin/ccm-validate" --install
