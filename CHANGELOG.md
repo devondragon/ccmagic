@@ -2,6 +2,12 @@
 
 All notable changes to ccmagic are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- `ccm-validate` took any `node_modules` directory as an install, so it planned no install for a checkout whose `node_modules` held only a tool's cache. In Reeve's RS-193 (2026-10-06, on 3.16.2) the work step ran `npx vitest run` with nothing installed, which leaves `node_modules/.vite`, and the validate step then failed `types`, `test`, and `build` on `tsc: not found`; the finish guard parked the run, as it should. A dependency now counts as installed only when every name under `dependencies` and `devDependencies` is present in `node_modules`; a `package.json` that declares only optional or peer dependencies, or workspaces, still checks for the directory, since those packages may be absent on purpose (RV-86).
+
 ## [3.16.2] - 2026-10
 
 These changes apply to every ticket, not only Reeve spec tickets. `ccm-validate` now installs missing Node dependencies; a repository without a root `package.json` that declares dependencies, or one whose `node_modules` is already there, validates exactly as before. Every `auto-ticket` run's finish step now carries a `steps:` section and passes the finish guard below.

@@ -34,9 +34,9 @@
 # a failed check also carries its last 40 lines as `tail`.
 #
 # Missing Node dependencies (Node only; no other ecosystem is installed):
-# when the root package.json declares dependencies (or workspaces) and there
-# is neither node_modules nor a Yarn Plug'n'Play map (.pnp.cjs, .pnp.js), the
-# first check that runs is preceded by the install its lockfile calls for:
+# when the root package.json declares dependencies (or workspaces), there is
+# no Yarn Plug'n'Play map (.pnp.cjs, .pnp.js), and a package it needs is not
+# installed (deps_missing below says which count), the first check that runs is preceded by the install its lockfile calls for:
 # `pnpm install --frozen-lockfile` (pnpm-lock.yaml), `yarn install
 # --frozen-lockfile` (yarn.lock; `--immutable` with .yarnrc.yml), `bun install
 # --frozen-lockfile` (bun.lock, bun.lockb), or `npm ci` (package-lock.json,
@@ -233,14 +233,27 @@ timed_out() { [ -n "$timeout_bin" ] && { [ "$1" -eq 124 ] || [ "$1" -eq 137 ]; }
 
 # ---- missing Node dependencies ---------------------------------------------
 
-# The root package.json declares dependencies or workspaces, and neither
-# node_modules nor a Yarn Plug'n'Play map is there.
+# The root package.json declares dependencies or workspaces, there is no Yarn
+# Plug'n'Play map, and a package it needs is not installed: a name under
+# `dependencies` or `devDependencies` with no node_modules/<name>, or, when it
+# declares only optional or peer dependencies or workspaces, no node_modules
+# at all. A bare node_modules directory is not enough: `npx vitest` in a
+# checkout with nothing installed leaves node_modules/.vite behind (Reeve's
+# RS-193, 2026-10-06).
 deps_missing() {
   [ -f package.json ] || return 1
-  [ -d node_modules ] && return 1
   { [ -f .pnp.cjs ] || [ -f .pnp.js ]; } && return 1
-  jq -e '([.dependencies, .devDependencies, .optionalDependencies, .peerDependencies]
-    | map(objects | length) | add) > 0 or has("workspaces")' package.json >/dev/null 2>&1
+  local names name
+  names=$(jq -r '[.dependencies, .devDependencies] | map(objects | keys[]) | .[]' package.json 2>/dev/null) || return 1
+  if [ -n "$names" ]; then
+    while IFS= read -r name; do
+      [ -e "node_modules/$name" ] || return 0
+    done <<<"$names"
+    return 1
+  fi
+  [ -d node_modules ] && return 1
+  jq -e '([.optionalDependencies, .peerDependencies] | map(objects | length) | add) > 0
+    or has("workspaces")' package.json >/dev/null 2>&1
 }
 
 # The install the lockfile calls for, in the same order the checks pick their

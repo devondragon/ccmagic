@@ -1172,7 +1172,8 @@ threads_graphql_error() {
 # EXTRA_JSON's keys, such as dependencies), plus npm, pnpm, and yarn stubs on
 # PATH that log the call to $T/pm.log and run the script, so the tests don't
 # depend on Node being installed. `ci` and `install` are installs: they exit
-# with the code in $T/install-rc (default 0) and create node_modules on 0.
+# with the code in $T/install-rc (default 0) and, on 0, create node_modules
+# with a directory for each name under dependencies and devDependencies.
 seed_pkg() {
   jq -n --argjson s "$1" --argjson e "${2:-{\}}" '{name: "x", scripts: $s} + $e' >package.json
   mkdir -p "$T/bin"
@@ -1192,7 +1193,7 @@ echo "%s $*" >>"%s/pm.log"
 case $1 in
   ci|install)
     rc=$(cat "%s/install-rc" 2>/dev/null || echo 0)
-    [ "$rc" -eq 0 ] && mkdir -p node_modules
+    [ "$rc" -eq 0 ] && { mkdir -p node_modules; jq -r '\''[.dependencies, .devDependencies] | map(objects | keys[]) | .[]'\'' package.json | while IFS= read -r n; do mkdir -p "node_modules/$n"; done; }
     echo "installing"; exit "$rc" ;;
 esac
 exec sh -c "$(jq -r --arg s "$2" %s package.json)"
@@ -1417,12 +1418,38 @@ validate_no_lockfile_is_environment() {
 validate_node_modules_present_installs_nothing() {
   seed_pkg '{"lint":"true"}' "$DEPS"
   echo '{}' >package-lock.json
-  mkdir node_modules
+  mkdir -p node_modules/left-pad
   run "$BIN/ccm-validate"
   check "$(jqval .status),$RC,$(jqval '.install // "none"')" "pass,0,none"
   check "$(command cat "$T/pm.log")" "npm run lint"
   run "$BIN/ccm-validate" --install
   check "$(jqval .status),$RC" "not-needed,0"
+}
+
+# RS-193: `npx vitest` in a checkout with nothing installed leaves only
+# node_modules/.vite, which is not an install.
+validate_partial_node_modules_installs() {
+  seed_pkg '{"lint":"true"}' '{"devDependencies":{"vitest":"^5.0.0","@types/node":"^24.0.0"}}'
+  echo '{}' >package-lock.json
+  mkdir -p node_modules/.vite node_modules/vitest
+  run "$BIN/ccm-validate" --list
+  check "$(jqval .install.status),$(jqval .install.command)" "planned,npm ci"
+  run "$BIN/ccm-validate" --install
+  check "$(jqval .status),$RC" "installed,0"
+  [ -d node_modules/@types/node ]
+  run "$BIN/ccm-validate" --install
+  check "$(jqval .status),$RC" "not-needed,0"
+}
+
+# Only optional dependencies: a node_modules directory counts as installed.
+validate_optional_only_checks_the_directory() {
+  seed_pkg '{"lint":"true"}' '{"optionalDependencies":{"fsevents":"^2.0.0"}}'
+  echo '{}' >package-lock.json
+  run "$BIN/ccm-validate" --list
+  check "$(jqval .install.status)" "planned"
+  mkdir node_modules
+  run "$BIN/ccm-validate" --list
+  check "$(jqval '.install // "none"')" "none"
 }
 
 validate_no_dependencies_installs_nothing() {
