@@ -13,6 +13,12 @@ jobs:
         with:
           # The spec-only regression tests read the files at SPEC_BASELINE (tests/run.sh).
           fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: openspec CLI
+        # The spec-baseline fixture test validates its spec with it (RV-84).
+        run: npm install -g @fission-ai/openspec@1.13.2 && openspec --version
       - name: shellcheck
         run: shellcheck -x bin/ccm-* hooks/*.sh tests/run.sh tests/relay-smoke.sh tests/stubs/gh evals/run.sh
       - name: tests
