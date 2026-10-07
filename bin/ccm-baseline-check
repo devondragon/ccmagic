@@ -39,6 +39,16 @@
 #   test-missing        a test reference that does not resolve
 #   dash                an em or en dash in a spec, openspec/config.yaml, or
 #       the evidence file
+#   personal-identifier an email address written out in a spec or the
+#       evidence file, as user@domain.tld or spelled "<word> at <domain>.<tld>"
+#       (case-insensitive). The spelled form needs a domain ending in a common
+#       TLD (com net org edu gov io co us uk de fr ca au info biz dev app me),
+#       so "at the edge", "at most 4", "at 10 minutes", and "looked at
+#       config.yaml" pass. Limits: a hostname after a word and "at" ("listens
+#       at api.example.com") is flagged and is reworded; an address spelled
+#       with brackets or "dot" is not seen; phone numbers and account IDs are
+#       not checked (the skill's rule covers them). The message never repeats
+#       the address.
 #   outside-allowlist   a changed path outside openspec/ and
 #       docs/openspec-baseline.md (not checked under --stale)
 #
@@ -91,7 +101,7 @@
 # Exit codes: 0 clean, 1 findings (or stale citations), 3 cannot read (not a
 # git repository, no evidence file, no spec, an unknown --base, or with
 # --stale a baseline commit that is not in the repository), 4 usage error.
-# Output: {clean, specs, requirements, scenarios, citations,
+# Output: {clean, specs, requirements, scenarios, citations, untested,
 #          base: {ref, commit}, findings: [{rule, file, line, message}]}
 #   with --stale also stale_count and stale: [{capability, requirement,
 #   citations: [{kind (scenario, flag, prose), scenario (name or null), flag
@@ -151,6 +161,18 @@ for f in "${specs[@]}" openspec/config.yaml "$EV"; do
   [ -f "$f" ] || continue
   { LC_ALL=C grep -n -e $'\xe2\x80\x93' -e $'\xe2\x80\x94' "$f" || true; } | cut -d: -f1 |
     while read -r n; do finding dash "$f" "$n" "em or en dash"; done
+done
+
+# ---- personal identifiers ----------------------------------------------------
+# An email address, written out or spelled. The skill says to name the constant
+# or config key instead. The pattern is ERE for grep -i; the message omits the
+# match so the finding does not carry the address either.
+tld='com|net|org|edu|gov|io|co|us|uk|de|fr|ca|au|info|biz|dev|app|me'
+email_re='[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}'
+spelled_re="(^|[^A-Za-z0-9._@-])[A-Za-z][A-Za-z0-9._-]*[ ]+at[ ]+[A-Za-z0-9-]+(\\.[A-Za-z0-9-]+)*\\.($tld)([^A-Za-z0-9-]|\$)"
+for f in "${specs[@]}" "$EV"; do
+  { grep -n -i -E -e "$email_re" -e "$spelled_re" "$f" || true; } | cut -d: -f1 |
+    while read -r n; do finding personal-identifier "$f" "$n" "an email address is written out; name the constant or config key, or write \"a hard-coded personal address\""; done
 done
 
 # ---- project context ---------------------------------------------------------
@@ -361,6 +383,7 @@ ecap != "" && /^Path key/ {
   for (j = 2; j < m; j += 2) {
     if (index(Q[j], "::") > 0 || Q[j] ~ /^[A-Za-z_$][A-Za-z0-9_$]*\.[A-Za-z_$][A-Za-z0-9_$]*$/) { refs++; testref(Q[j], EV, FNR) }
   }
+  if (tf ~ /UNTESTED/) nuntested++
   if (refs == 0 && tf !~ /UNTESTED/) emit("no-test", EV, FNR, "scenario \"" scen "\" names no test and is not marked UNTESTED")
 }
 END {
@@ -387,7 +410,7 @@ END {
     if (((kp[1] SUBSEP kp[2]) in RL) && !(k in SL)) emit("evidence-orphan-scenario", EV, EL[k], "requirement \"" kp[2] "\" in the " kp[1] " spec has no scenario \"" kp[3] "\"")
   }
   n = 0; for (c in SPEC) n++
-  printf "N\t%d\t%d\t%d\t%d\n", n, nreq, nscen, ncites
+  printf "N\t%d\t%d\t%d\t%d\t%d\n", n, nreq, nscen, ncites, nuntested
 }' "${specs[@]}" "$EV" >>"$tmp/out"
 
 # ---- changed paths -----------------------------------------------------------
@@ -472,11 +495,11 @@ fi
 # ---- output ------------------------------------------------------------------
 jq -R -s --arg base "$base" --arg base_ref "$base_ref" '
   split("\n") | map(select(length > 0) | split("\t")) as $rows
-  | ($rows | map(select(.[0] == "N")) | first // ["N", "0", "0", "0", "0"]) as $n
+  | ($rows | map(select(.[0] == "N")) | first // ["N", "0", "0", "0", "0", "0"]) as $n
   | ($rows | map(select(.[0] == "F") | {rule: .[1], file: .[2], line: (.[3] | tonumber), message: .[4]})
       | sort_by(.file, .line, .rule)) as $f
   | {clean: (($f | length) == 0), specs: ($n[1] | tonumber), requirements: ($n[2] | tonumber),
-     scenarios: ($n[3] | tonumber), citations: ($n[4] | tonumber),
+     scenarios: ($n[3] | tonumber), citations: ($n[4] | tonumber), untested: ($n[5] | tonumber),
      base: {ref: $base_ref, commit: $base}, findings: $f}
 ' "$tmp/out" >"$tmp/json"
 if $stale; then

@@ -50,9 +50,11 @@ State it as the code behaves, in neutral words, and flag it in the evidence unde
 
 - A key that governs a qualitatively different mode gets one scenario per mode. Per-environment values go in the evidence under `Config`.
 - A setting an operator would expect to matter but that has no effect is specified as "has no effect" under a concern-shaped name, so a later change that wires it is a MODIFIED delta against a real requirement. Unreachable code nobody would expect to act (an unused constant, a method with no caller) goes under "Not specified" in the evidence.
-- Never copy a secret. Refer to credential keys by name. Name them under "Secrets in configuration" and warn at Stop 2.
+- Never copy a secret or a personal identifier (an email address, phone number, or account identifier). Refer to credential keys and constants by name, or write "a hard-coded personal address"; never spell an address out as "name at domain". Name credential keys under "Secrets in configuration" and warn at Stop 2.
 
 ## Error paths and security
+
+Before writing a scenario about an input variant (spaces, case, null, empty, malformed) or a refusal or error status, read every check on the path from the entry point yourself (controller or route guards, validation helpers, parsers, the caller's earlier checks). An earlier check may refuse first with a different status, and an empty collection may take a different path. Never take the extraction's word for an error path or a status code.
 
 Every refusal, rejection, timeout, and fallback is a scenario of the requirement that owns the decision, with the observable result. An error whose visible form depends on a library is stated as far as the code decides it; the rest is an `Open question`. A swallowed exception is a scenario when it changes what the caller sees (a failed send that still returns 200). Security-relevant behavior is stated flatly ("the system SHALL NOT authenticate requests to the admin routes"), with a `Security` note in the evidence.
 
@@ -61,5 +63,6 @@ Every refusal, rejection, timeout, and fallback is a scenario of the requirement
 12. Every requirement and scenario has its evidence line with at least one resolvable citation and a test reference or `UNTESTED` (format: `evidence-format.md`).
 13. Every `Looks unintended`, `Open question`, `Docs disagree`, `Config`, and `Security` item from the extraction is in the evidence or consciously dropped.
 14. No extraction claim that something is unreachable, unused, dead, or has no effect was taken on trust: you grepped for its callers or readers yourself and read each hit before leaving it out of the spec or stating "has no effect".
+14a. Every input-variant scenario and every refusal or error status was checked against the whole path from the entry point, read by you, not taken from the extraction. Every doc claim about the capability is confirmed or recorded as `Docs disagree` with both citations.
 15. Every behavior the extraction left out as another capability's is in that capability's spec or, when that capability is not specified yet, listed under its name in the evidence file's `### Not specified`. A behavior is left out as another capability's only when that capability is in the map.
 16. `openspec validate --all --strict --no-interactive` passes, `ccm-baseline-check` reports no finding, and nothing outside `openspec/` and `docs/openspec-baseline.md` changed. A finding is fixed, never silenced: no placeholder text, no Purpose padded with filler, no scenario dropped to satisfy uniqueness instead of being renamed by condition.

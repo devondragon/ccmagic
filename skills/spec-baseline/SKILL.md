@@ -18,7 +18,7 @@ This skill is standalone and interactive. No ticket workflow (`auto-ticket`, `wo
 
 Only `openspec/**` and `docs/openspec-baseline.md`. It never changes code, tests, CI, configuration, or policy files. The `Write` and `Edit` grants above are restricted to those paths, and `ccm-baseline-check` fails on any other changed or untracked path before the commit. If a fix seems to need another file, report it at Stop 2 instead.
 
-Never write a secret. Configuration files often hold credentials; refer to keys by name only.
+Never write a secret or a personal identifier. Configuration files often hold credentials; refer to keys by name only. The same goes for personal email addresses, phone numbers, and account identifiers found in code or configuration: name the constant or config key, or write "a hard-coded personal address". Do not spell an address out ("name at domain") to get past the `@` rule; `ccm-baseline-check` reports a written or spelled-out address as `personal-identifier`.
 
 ## Step 0: Parse arguments
 
@@ -54,7 +54,7 @@ Full and one modes continue:
 
 ## Step 2: Orientation
 
-Read the repository's own docs first: `CLAUDE.md`, `README*`, `docs/`, `.planning/`, `context/knowledge/` (written by `/ccmagic:map-codebase`, if it ran), and the CI workflow for the build and test commands. Docs are for orientation; code is the source of every fact, and docs often disagree with it.
+Read the repository's own docs first: `CLAUDE.md`, `README*`, `docs/`, `.planning/`, `context/knowledge/` (written by `/ccmagic:map-codebase`, if it ran), and the CI workflow for the build and test commands. Docs are for orientation; code is the source of every fact, and docs often disagree with it. Record the doc list: every doc file you found, and for each capability the doc lines (`path:line`) that describe it, found by searching the docs for the capability's route names, config keys, and terms. Step 4 hands this list to each extraction agent as `{docs}`.
 
 Then inventory entry points by search, not by reading everything: HTTP routes and router files, listening ports, scheduled or cron jobs, filters and middleware, CLI commands, message or queue consumers, startup hooks. Note the test layout and the configuration files (base and per environment). The inventory is the raw material for the map.
 
@@ -77,7 +77,7 @@ In every mode, a behavior may be left out of a capability as belonging to anothe
 
 ## Step 4: Extraction
 
-For each accepted capability, dispatch one read-only subagent with the prompt in `${CLAUDE_SKILL_DIR}/extraction-template.md`, filled in for that capability (`subagent_type: Explore`, `model: "sonnet"`). Its `{neighbors}` are only capabilities in the map. Dispatch at most 4 at once, each batch in one message, then wait until every agent in the batch has returned before dispatching the next batch or authoring anything. The subagents never write files. Order: specify a client-side capability (browser script, UI) last.
+For each accepted capability, dispatch one read-only subagent with the prompt in `${CLAUDE_SKILL_DIR}/extraction-template.md`, filled in for that capability (`subagent_type: Explore`, `model: "sonnet"`). Its `{neighbors}` are only capabilities in the map. Fill `{docs}` from Step 2's doc list: the repository's doc files and, where known, the lines about this capability. Dispatch at most 4 at once, each batch in one message, then wait until every agent in the batch has returned before dispatching the next batch or authoring anything. The subagents never write files. Order: specify a client-side capability (browser script, UI) last.
 
 When an agent's "Capability boundary" note says the cut is wrong, decide before authoring: move the behavior to the right capability, or come back to the user with a revised map row (a second Stop 1 for that row). When it hands behavior to a capability not in the map, either add that capability to the map (in one mode, as a `not yet specified` row) or keep the behavior in the capability being specified.
 
@@ -87,7 +87,7 @@ The session writes every spec and evidence section itself, from the extraction o
 
 For each capability, applying `${CLAUDE_SKILL_DIR}/quality-checklist.md` item by item:
 
-0. Verify every extraction claim that something is unreachable, unused, dead, or has no effect before acting on it: grep for its callers, readers, or references yourself (method and function names, configuration keys, routes, event names) and read each hit. Extraction agents miss callers. A claim that turns out wrong makes the item a behavior, specified like any other.
+0. Verify every extraction claim that something is unreachable, unused, dead, or has no effect before acting on it: grep for its callers, readers, or references yourself (method and function names, configuration keys, routes, event names) and read each hit. Extraction agents miss callers. A claim that turns out wrong makes the item a behavior, specified like any other. The same applies to every scenario about an input variant (spaces, case, null, empty, malformed) and to every refusal or error status: before writing it, read every check on the path from the entry point yourself (controller or route guards, validation helpers, parsers, the caller's earlier checks). Never take the extraction's word for an error path or a status code; an earlier check can refuse first with a different status, and an empty collection can take a different path.
 1. Write `openspec/specs/<capability>/spec.md`: `# <capability> Specification`, `## Purpose`, `## Requirements`, then `### Requirement:` blocks with `#### Scenario:` blocks. One decision per requirement, named by concern; one branch per scenario, named by condition, never by a value; SHALL statements of current behavior, bugs included; configuration keys with their shipped default; no code, file, class, method, line, or citation in a spec.
 2. Write the capability's section of `docs/openspec-baseline.md` in the exact format of `${CLAUDE_SKILL_DIR}/evidence-format.md`: a `### Requirement:` heading per requirement, a `- Scenario:` line per scenario with full-path citations and `Tests:`, then the flag lines from the extraction, then `### Left out of the spec on purpose`. Re-read each cited line before writing its citation; never cite from the agent's numbers alone.
 3. On the first capability, write the evidence file's header with `Baseline commit: $BASELINE_SHA`, the `## 1. Capability map` table (every capability from Stop 1, specified, mapped, or not yet specified), `### Not specified`, and `### Secrets in configuration`. Both subsections are written in every mode, one mode included; when one has nothing in it, it holds `None found.`
@@ -117,7 +117,7 @@ On yes:
 1. Read `base_branch` from `"${CLAUDE_PLUGIN_ROOT}/bin/ccm-context"`; it gives no naming convention. If the current branch is the base branch, create a branch from it: named by the repository's documented branch convention when it has one (`CLAUDE.md`, `CONTRIBUTING*`, `context/branching.md`), else `docs/openspec-baseline` in full mode and `docs/openspec-baseline-<name>` in one mode.
 2. Run `ccm-baseline-check` one last time; it must be clean.
 3. `git add openspec docs/openspec-baseline.md`, then one commit: `docs(openspec): baseline <capabilities>` (comma-separated names; the repository's commit convention if it differs). No attribution lines.
-4. Invoke `/ccmagic:pr`. The description's first section is the capability map, copied from the evidence file; the second is the Stop 2 review summary; then a line pointing at `docs/openspec-baseline.md` as the evidence and saying `/ccmagic:spec-baseline --check` reports stale citations later.
+4. Invoke `/ccmagic:pr`. Take the description's counts (capabilities, requirements, scenarios, citations, untested) from the final `ccm-baseline-check` JSON (`specs`, `requirements`, `scenarios`, `citations`) and quote them, not from the session's own tally; `untested` is the count of scenario lines marked `UNTESTED`. The description's first section is the capability map, copied from the evidence file; the second is the Stop 2 review summary; then a line pointing at `docs/openspec-baseline.md` as the evidence and saying `/ccmagic:spec-baseline --check` reports stale citations later.
 
 On a repository Reeve governs, the PR lands at whatever tier its policy gives `openspec/**`; keep baseline specs out of any tier that merges without review.
 

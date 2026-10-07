@@ -2,6 +2,12 @@
 
 All notable changes to ccmagic are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- `/ccmagic:spec-baseline` closes four gaps a review of the first real baseline found (RV-88). The extraction prompt now receives the repository's doc list (`{docs}`, recorded in Step 2) and must confirm each doc claim about the capability or report `Docs disagree` with both citations. Step 5 and the quality checklist require the session to read every check on the path from the entry point itself before writing a scenario about an input variant or a refusal or error status, instead of verifying only "unreachable" claims. "Never write a secret" now covers personal email addresses, phone numbers, and account identifiers, and `bin/ccm-baseline-check` has a `personal-identifier` rule for an email address written as `user@domain.tld` or spelled "word at domain.tld" in a spec or the evidence file (documented limits in the script header and `evidence-format.md`). The PR description's counts come from the final checker JSON, which now also reports `untested`.
+
 ## [3.17.1] - 2026-10
 
 ### Changed

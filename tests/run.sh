@@ -3344,6 +3344,7 @@ baseline_fixture_is_clean() {
   bl_repo
   bcheck
   check "$RC,$(jqval .clean),$(jqval .specs),$(jqval .requirements),$(jqval .scenarios),$(jqval .citations),$(jqval '.findings | length')" "0,true,1,3,6,7,0"
+  check "$(jqval .untested)" "3"
   check "$(jqval .base.commit)" "$(git rev-parse HEAD)"
   # The checked-in fixture as it is, before any commit, passes too.
   cd "$T" && mkdir plain && cd plain && git init -q -b main && cp -R "$BASELINE_FIXTURE/." . && gcommit fixture
@@ -3457,6 +3458,24 @@ baseline_spec_shape_limits() {
   cp "$T/spec" openspec/specs/counting/spec.md
   bcheck
   check "$RC,$(brules)" "1,body-length,name-characters,no-evidence-line,scenario-count"
+}
+
+baseline_personal_identifier() {
+  bl_repo
+  bedit "$BASELINE_EV" 's/^- Open question: whether/- Open question: mail jane at example.com whether/'
+  bedit openspec/specs/counting/spec.md 's/^Defines how a counter starts,/Defines how a counter starts, as Jane AT Example.COM does,/'
+  bcheck
+  check "$RC,$(brules),$(jqval '[.findings[] | select(.rule == "personal-identifier") | "\(.file):\(.line)"] | join(" ")')" "1,personal-identifier,docs/openspec-baseline.md:30 openspec/specs/counting/spec.md:4"
+  check "$(jqval '[.findings[] | select(.rule == "personal-identifier") | .message] | unique | length')" "1"
+  bl_reset_all
+  bedit "$BASELINE_EV" 's/^- Open question: whether/- Open question: ask user@domain.tld whether/'
+  bcheck
+  check "$RC,$(jqval '[.findings[] | select(.rule == "personal-identifier") | .line] | join(" ")')" "1,30"
+  # Ordinary prose is not an address.
+  bl_reset_all
+  bedit "$BASELINE_EV" 's/^- Open question: whether/- Open question: at the edge, at most 4, at 10 minutes, looked at config.yaml whether/'
+  bcheck
+  check "$RC,$(brules)" "0,"
 }
 
 # shellcheck disable=SC2016 # literal backticks in the spec markdown
