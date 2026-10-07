@@ -2214,6 +2214,7 @@ skills_harness_rules_list_every_script() {
   for script in "$BIN"/ccm-*; do
     name=$(basename "$script")
     [ "$name" = ccm-lib.sh ] && continue
+    [[ " ${STANDALONE_SCRIPTS_SINCE_BASELINE[*]} " == *" $name "* ]] && continue
     grep -qF "\"Bash($name *)\"" "$ROOT/docs/cyrus-deployment.md" || missing+=" $name"
   done
   check "${missing# }" ""
@@ -3199,9 +3200,20 @@ strip_spec_only() {
     { print }' "$1"
 }
 
+# Standalone skills added since $SPEC_BASELINE that no ticket path runs
+# (RV-84). Their directories are left out of the comparison, and
+# skills_standalone_not_on_ticket_path checks that no ticket-path file names
+# them.
+STANDALONE_SKILLS_SINCE_BASELINE=(spec-baseline)
+# Their scripts, which docs/cyrus-deployment.md need not grant.
+STANDALONE_SCRIPTS_SINCE_BASELINE=(ccm-baseline-check)
+
 spec_prompt_files() {
   { git -C "$ROOT" ls-tree -r --name-only "$SPEC_BASELINE" -- skills agents
-    git -C "$ROOT" ls-files -- skills agents; } | LC_ALL=C sort -u
+    git -C "$ROOT" ls-files -- skills agents; } | LC_ALL=C sort -u |
+    awk -v skip="${STANDALONE_SKILLS_SINCE_BASELINE[*]}" '
+      BEGIN { n = split(skip, s, " ") }
+      { for (i = 1; i <= n; i++) if (index($0, "skills/" s[i] "/") == 1) next; print }'
 }
 
 skills_spec_only_blocks_well_formed() {
@@ -3283,12 +3295,350 @@ skills_run_record_openspec_key_only_for_spec_tickets() {
   check "${missing# }" ""
 }
 
+# The standalone skills are not on any ticket path: no ticket-path skill,
+# agent, hook, script, or the Cyrus deployment doc names them or the script
+# they bring, and none of them existed at the baseline (RV-84).
+skills_standalone_not_on_ticket_path() {
+  local name f hits=
+  local paths=(skills/auto-ticket skills/work-ticket skills/finish-ticket skills/review-ticket skills/pr-feedback
+    skills/validate skills/review skills/push skills/pr agents hooks bin/ccm-openspec-scope bin/ccm-spec-block
+    bin/ccm-finish-guard docs/cyrus-deployment.md)
+  git -C "$ROOT" rev-parse -q --verify "$SPEC_BASELINE^{commit}" >/dev/null || { echo "    baseline $SPEC_BASELINE is not in this clone (CI needs fetch-depth: 0)"; return 1; }
+  for name in "${STANDALONE_SKILLS_SINCE_BASELINE[@]}" "${STANDALONE_SCRIPTS_SINCE_BASELINE[@]}"; do
+    if [ -d "$ROOT/skills/$name" ] || [ ! -e "$ROOT/bin/$name" ]; then
+      git -C "$ROOT" cat-file -e "$SPEC_BASELINE:skills/$name" 2>/dev/null && hits+=" $name:at-baseline"
+      [ -f "$ROOT/skills/$name/SKILL.md" ] || hits+=" $name:no-skill"
+    fi
+    for f in $(git -C "$ROOT" grep -lF -e "$name" -- "${paths[@]}" || true); do hits+=" $name:$f"; done
+  done
+  check "${hits# }" ""
+}
+
+# ---- ccm-baseline-check and /ccmagic:spec-baseline (RV-84) ------------------
+
+BASELINE_FIXTURE=$ROOT/tests/fixtures/baseline
+BASELINE_EV=docs/openspec-baseline.md
+ZERO_SHA=0000000000000000000000000000000000000000
+
+gcommit() { git add -A && git -c user.email=t@t -c user.name=t commit -q -m "$1"; }
+
+# bl_repo: the fixture as a repository. Its code is committed first, as
+# the baseline commit the evidence header then names ($BASE_SHA), and the
+# spec and evidence after it, so the checker's base is clean.
+bl_repo() {
+  cp -R "$BASELINE_FIXTURE/." .
+  git add src test
+  git -c user.email=t@t -c user.name=t commit -q -m code
+  BASE_SHA=$(git rev-parse HEAD)
+  bedit "$BASELINE_EV" "s/$ZERO_SHA/$BASE_SHA/"
+  gcommit spec
+}
+
+# bedit FILE SED-SCRIPT: rewrite a file in place, the same on GNU and BSD sed.
+bedit() { sed "$2" "$1" >"$T/bedit" && cp "$T/bedit" "$1"; }
+
+bcheck() { run "$BIN/ccm-baseline-check" "$@"; }
+brules() { jq -r '[.findings[].rule] | unique | join(",")' <<<"$OUT"; }
+
+baseline_fixture_is_clean() {
+  bl_repo
+  bcheck
+  check "$RC,$(jqval .clean),$(jqval .specs),$(jqval .requirements),$(jqval .scenarios),$(jqval .citations),$(jqval '.findings | length')" "0,true,1,3,6,7,0"
+  check "$(jqval .base.commit)" "$(git rev-parse HEAD)"
+  # The checked-in fixture as it is, before any commit, passes too.
+  cd "$T" && mkdir plain && cd plain && git init -q -b main && cp -R "$BASELINE_FIXTURE/." . && gcommit fixture
+  bcheck
+  check "$RC,$(brules)" "0,"
+}
+
+baseline_fixture_passes_openspec_validate() {
+  if ! command -v openspec >/dev/null 2>&1; then
+    echo "    skipped: openspec CLI not on PATH (CI installs @fission-ai/openspec@1.13.2)"
+    return 0
+  fi
+  cp -R "$BASELINE_FIXTURE/." .
+  OPENSPEC_TELEMETRY=0 DO_NOT_TRACK=1 openspec validate --all --strict --no-interactive >"$T/validate" 2>&1 || { sed 's/^/    /' "$T/validate"; return 1; }
+}
+
+baseline_missing_evidence_heading() {
+  bl_repo
+  bedit "$BASELINE_EV" 's/^### Requirement: Increment$/### Requirement: Increments/'
+  bcheck
+  check "$RC,$(brules)" "1,evidence-orphan-requirement,no-evidence-heading"
+  check "$(jqval '.findings[] | select(.rule == "no-evidence-heading") | "\(.file):\(.line)"')" "openspec/specs/counting/spec.md:19"
+}
+
+baseline_missing_evidence_line() {
+  bl_repo
+  bedit "$BASELINE_EV" '/^- Scenario: At the cap\./d'
+  bcheck
+  check "$RC,$(brules)" "1,no-evidence-line"
+  check "$(jqval '.findings[0].message')" 'scenario "At the cap" of "Increment" has no evidence line'
+}
+
+# shellcheck disable=SC2016 # literal backticks in the evidence markdown
+baseline_citation_past_end_of_file() {
+  bl_repo
+  bedit "$BASELINE_EV" 's/`Counter:8-14`/`Counter:8-17`/'
+  bcheck
+  check "$RC,$(brules)" "1,citation-out-of-range"
+  check "$(jqval '.findings[0].message')" "src/counter.js:8-17 is outside the file (it has 16 lines)"
+  bedit "$BASELINE_EV" 's/`Counter:8-17`/`Counter:9-8`/'
+  bcheck
+  check "$RC,$(brules)" "1,citation-out-of-range"
+}
+
+# shellcheck disable=SC2016 # literal backticks in the evidence markdown
+baseline_citation_missing_file_bare_or_without_path() {
+  bl_repo
+  bedit "$BASELINE_EV" 's/`src\/format.js:6`/`src\/fmt.js:6`/; s/`src\/format.js:3-5`/src\/format.js:3-5/; s/Code: `Counter:2`, `:5`/Code: `:5`/'
+  bcheck
+  check "$RC,$(brules)" "1,citation-bare,citation-file-missing,citation-no-path,no-citation"
+  # A backticked host and port is not a citation.
+  bl_reset
+  printf -- '- Note: the server listens on `localhost:8080`.\n' >>"$BASELINE_EV"
+  bcheck
+  check "$RC,$(brules)" "0,"
+}
+
+bl_reset() { git checkout -q -- "$BASELINE_EV"; }
+
+# shellcheck disable=SC2016 # literal backticks in the evidence markdown
+baseline_missing_test_name() {
+  bl_repo
+  bedit "$BASELINE_EV" 's/::increments by one`/::increments by two`/; /Scenario: Single item/s/ Tests: UNTESTED\.//'
+  bcheck
+  check "$RC,$(brules)" "1,no-test,test-missing"
+  check "$(jqval '.findings[] | select(.rule == "test-missing") | .message')" 'test "increments by two" not found in test/counter.test.js'
+}
+
+# shellcheck disable=SC2016 # literal backticks in the evidence markdown
+baseline_symbol_member_test_reference() {
+  bl_repo
+  mkdir -p test/java
+  printf 'class CounterTest {\n  void capsAtMax() {}\n}\n' >test/java/CounterTest.java
+  gcommit java
+  bedit "$BASELINE_EV" '/Scenario: Single item/s/Tests: UNTESTED\./Tests: `CounterTest.capsAtMax`./'
+  bcheck
+  check "$RC,$(brules)" "0,"
+  bedit "$BASELINE_EV" 's/`CounterTest.capsAtMax`/`CounterTest.capsAt`/'
+  bcheck
+  check "$RC,$(brules)" "1,test-missing"
+}
+
+baseline_duplicate_names() {
+  bl_repo
+  bedit openspec/specs/counting/spec.md 's/^#### Scenario: At the cap$/#### Scenario: Below the cap/'
+  bcheck
+  check "$RC,$(brules)" "1,duplicate-scenario,evidence-orphan-scenario"
+  bl_reset_all
+  bedit openspec/specs/counting/spec.md 's/^### Requirement: Count display$/### Requirement: Increment/'
+  bcheck
+  check "$RC,$(brules)" "1,duplicate-requirement,evidence-orphan-requirement"
+}
+
+bl_reset_all() { git checkout -q -- openspec docs; }
+
+baseline_em_or_en_dash() {
+  bl_repo
+  bedit "$BASELINE_EV" $'s/^- Open question: whether/- Open question: \xe2\x80\x94 whether/'
+  bedit openspec/specs/counting/spec.md $'s/^Defines how a counter starts,/Defines how a counter starts \xe2\x80\x93/'
+  bcheck
+  check "$RC,$(brules),$(jqval '[.findings[] | "\(.file):\(.line)"] | join(" ")')" "1,dash,docs/openspec-baseline.md:30 openspec/specs/counting/spec.md:4"
+}
+
+baseline_spec_shape_limits() {
+  bl_repo
+  bedit openspec/specs/counting/spec.md "/^The system SHALL start a counter/s/\$/ $(printf 'The cap is checked on every start. %.0s' 1 2 3 4 5 6 7 8 9 10 11 12)/"
+  bedit openspec/specs/counting/spec.md 's/^#### Scenario: Single item$/#### Scenario: One \& only/'
+  bedit "$BASELINE_EV" 's/^- Scenario: Single item\./- Scenario: One \& only./'
+  for n in 1 2 3; do printf '\n#### Scenario: Extra %s\n- **WHEN** x\n- **THEN** y\n' "$n" >>"$T/extra"; done
+  awk -v extra="$T/extra" '{ print } /^- \*\*THEN\*\* its value stays at the cap/ { while ((getline l < extra) > 0) print l }' openspec/specs/counting/spec.md >"$T/spec"
+  cp "$T/spec" openspec/specs/counting/spec.md
+  bcheck
+  check "$RC,$(brules)" "1,body-length,name-characters,no-evidence-line,scenario-count"
+}
+
+# shellcheck disable=SC2016 # literal backticks in the spec markdown
+baseline_characters_reeve_rewrites() {
+  bl_repo
+  bedit openspec/specs/counting/spec.md 's/or at 0 when none is given/or at 0 \& when none is given/; s/^- \*\*THEN\*\* its value is 0$/- **THEN** its value is `0`/; s/^- \*\*WHEN\*\* the count is 1$/- **WHEN** the count is <2 and @1/'
+  bcheck
+  check "$RC,$(brules),$(jqval '[.findings[].line] | join(" ")')" "1,body-characters,9 13 34"
+  check "$(jqval '.findings[1].message')" 'scenario "No start value" of "Counter start" holds a backtick, @, <, >, or &'
+}
+
+baseline_purpose_missing_or_short() {
+  bl_repo
+  bedit openspec/specs/counting/spec.md 's/^Defines how a counter starts,.*/Counts things. It is short./'
+  bcheck
+  check "$RC,$(brules),$(jqval '.findings[0].line')" "1,purpose-length,3"
+  bl_reset_all
+  bedit openspec/specs/counting/spec.md '/^## Purpose$/d; /^Defines how a counter starts,/d'
+  bcheck
+  check "$RC,$(brules)" "1,no-purpose"
+}
+
+baseline_config_without_context() {
+  bl_repo
+  printf 'schema: spec-driven\n\n# context: |\n#   Project background goes here.\n' >openspec/config.yaml
+  bcheck
+  check "$RC,$(brules),$(jqval '.findings[0].file')" "1,no-config-context,openspec/config.yaml"
+  rm openspec/config.yaml
+  bcheck
+  check "$RC,$(brules),$(jqval '.findings[0].message')" "1,no-config-context,openspec/config.yaml is missing"
+}
+
+baseline_stale_skips_changed_paths() {
+  bl_repo
+  git checkout -q -b feature
+  bedit src/counter.js 's|^// A counter that stops at a fixed cap.$|// A capped counter.|'
+  echo notes >notes.txt
+  gcommit 'chore: comment'
+  bcheck
+  check "$RC,$(brules)" "1,outside-allowlist"
+  bcheck --stale
+  check "$RC,$(jqval .clean),$(jqval '.findings | length'),$(jqval .stale_count)" "0,true,0,0"
+}
+
+# shellcheck disable=SC2016 # literal backticks in the evidence markdown
+baseline_stale_citation_on_flag_line() {
+  bl_repo
+  bedit "$BASELINE_EV" 's/^- Open question: whether/- Looks unintended: the increment at `Counter:12` is not atomic. Open question: whether/'
+  gcommit 'docs: flag'
+  bedit src/counter.js 's/counter.value += 1;/counter.value = counter.value + 1;/'
+  gcommit 'refactor: increment'
+  bcheck --stale
+  check "$(jqval '[.stale[].citations[] | "\(.kind)|\(.scenario)|\(.flag)|\(.citation)"] | join(" ")')" \
+    "scenario|Below the cap|null|Counter:8-14 flag|null|Looks unintended|Counter:12"
+}
+
+baseline_changed_file_outside_allowlist() {
+  bl_repo
+  echo '// edited' >>src/counter.js
+  echo notes >notes.txt
+  echo ok >openspec/extra.md
+  bcheck
+  check "$RC,$(brules),$(jqval '[.findings[].file] | join(" ")')" "1,outside-allowlist,notes.txt src/counter.js"
+  # Committed on a branch, the change is still measured from the default branch.
+  git checkout -q -b docs/openspec-baseline
+  gcommit 'docs(openspec): baseline'
+  bcheck
+  check "$RC,$(jqval '[.findings[].file] | join(" ")'),$(jqval .base.ref)" "1,notes.txt src/counter.js,merge-base of HEAD and main"
+  bcheck --base HEAD
+  check "$RC,$(brules)" "0,"
+}
+
+baseline_unreadable_and_usage() {
+  bl_repo
+  bcheck --bogus
+  check "$RC" "4"
+  bcheck --base no-such-ref
+  check "$RC,$(jqval .unreadable)" "3,--base no-such-ref is not a commit"
+  rm "$BASELINE_EV"
+  bcheck
+  check "$RC,$(jqval .unreadable)" "3,no docs/openspec-baseline.md"
+  git checkout -q -- "$BASELINE_EV"
+  rm -r openspec/specs
+  bcheck
+  check "$RC" "3"
+  cd "$T" && mkdir not-git && cd not-git
+  bcheck
+  check "$RC,$(jqval .unreadable)" "3,not inside a git repository"
+}
+
+baseline_no_baseline_commit() {
+  bl_repo
+  bedit "$BASELINE_EV" "s/Baseline commit: $BASE_SHA/Baseline commit: abc123/"
+  bcheck
+  check "$RC,$(brules)" "1,no-baseline-commit"
+}
+
+baseline_check_stale_citations() {
+  bl_repo
+  bcheck --stale
+  check "$RC,$(jqval .clean),$(jqval .stale_count),$(jqval '.stale | length')" "0,true,0,0"
+  # An edit to a line no citation covers is not stale.
+  bedit src/counter.js 's|^// A counter that stops at a fixed cap.$|// A capped counter.|'
+  gcommit 'chore: comment'
+  local comment_sha edit_sha
+  comment_sha=$(git rev-parse --short HEAD)
+  bcheck --stale
+  check "$RC,$(jqval .stale_count)" "0,0"
+  # An edit inside Counter:8-14 and Counter:9-11 (line 12) makes the Increment
+  # requirement's two citations stale, and nothing else.
+  bedit src/counter.js 's/counter.value += 1;/counter.value = counter.value + 1;/'
+  gcommit 'refactor: increment'
+  edit_sha=$(git rev-parse --short HEAD)
+  bcheck --stale
+  check "$RC,$(jqval .clean),$(jqval .stale_count)" "1,false,1"
+  check "$(jqval '.stale[] | "\(.capability)/\(.requirement): \(.citations | map("\(.scenario) \(.citation) \(.reason)") | join("; "))"')" \
+    "counting/Increment: Below the cap Counter:8-14 changed"
+  # Every commit since the baseline that touched the file, newest first.
+  check "$(jqval '.stale[0].citations[0].file_commits | join(",")')" "$edit_sha,$comment_sha"
+  # Lines inserted inside a range are stale too.
+  bedit src/counter.js 's/^    return counter.value;$/    \/\/ at the cap\n    return counter.value;/'
+  gcommit 'chore: note'
+  bcheck --stale
+  check "$(jqval '[.stale[].citations[].citation] | join(" ")')" "Counter:8-14 Counter:9-11"
+  # A removed file makes each of its citations stale.
+  git rm -q src/format.js
+  gcommit 'refactor: drop format'
+  bcheck --stale
+  check "$(jqval '[.stale[] | select(.requirement == "Count display") | .citations[].reason] | join(",")'),$(brules)" \
+    "removed,removed,citation-file-missing"
+}
+
+baseline_check_section_baseline_overrides_header() {
+  bl_repo
+  bedit src/counter.js 's/counter.value += 1;/counter.value = counter.value + 1;/'
+  gcommit 'refactor: increment'
+  bcheck --stale
+  check "$(jqval .stale_count)" "1"
+  bedit "$BASELINE_EV" "s/^Path key: /Baseline commit: $(git rev-parse HEAD)\\
+Path key: /"
+  gcommit 'docs: rebaseline counting'
+  bcheck --stale
+  check "$RC,$(jqval .stale_count)" "0,0"
+  # A baseline commit the repository does not have cannot be checked.
+  bedit "$BASELINE_EV" "s/^Baseline commit: [0-9a-f]*$/Baseline commit: $ZERO_SHA/"
+  bcheck --stale
+  check "$RC,$(jqval .unreadable)" "3,baseline commit $ZERO_SHA is not in this repository"
+}
+
+skills_spec_baseline_write_grants() {
+  local f=$ROOT/skills/spec-baseline/SKILL.md tools writes
+  tools=$(awk 'NR > 1 && /^---$/ { exit } /^allowed-tools:/ { sub(/^allowed-tools:[ ]*/, ""); print }' "$f")
+  writes=$(grep -oE '(Write|Edit|MultiEdit|NotebookEdit)(\([^)]*\))?' <<<"$tools" | LC_ALL=C sort | paste -sd' ' -)
+  check "$writes" "Edit(docs/openspec-baseline.md) Edit(openspec/**) Write(docs/openspec-baseline.md) Write(openspec/**)"
+  if grep -qE '(^|, )Bash(\(\*\))?(,|$)' <<<"$tools"; then echo "    unrestricted Bash grant"; return 1; fi
+  [[ $tools == *"Agent(Explore)"* && $tools != *"Agent(*)"* && $tools != *"Task(*)"* ]] || { echo "    agents not limited to Explore"; return 1; }
+}
+
+skills_spec_baseline_workflow() {
+  local d=$ROOT/skills/spec-baseline missing=
+  grep -qF '**Stop 1.**' "$d/SKILL.md" || missing+=" stop1"
+  grep -qF '**Stop 2.**' "$d/SKILL.md" || missing+=" stop2"
+  grep -qF 'openspec validate --all --strict --no-interactive' "$d/SKILL.md" || missing+=" validate"
+  grep -qF 'ccm-baseline-check" --stale' "$d/SKILL.md" || missing+=" stale"
+  grep -qF 'model: "sonnet"' "$d/SKILL.md" || missing+=" sonnet"
+  grep -qF 'at most 4' "$d/SKILL.md" || missing+=" four"
+  grep -qF 'Never copy a credential' "$d/extraction-template.md" || missing+=" secrets"
+  grep -qF '## Per scenario' "$d/quality-checklist.md" || missing+=" checklist"
+  grep -qF 'Baseline commit: <40-hex SHA>' "$d/evidence-format.md" || missing+=" format"
+  grep -qF 'Baseline commit: <40-hex SHA>' "$ROOT/bin/ccm-baseline-check" || missing+=" script-format"
+  grep -qF '`/ccmagic:spec-baseline' "$ROOT/README.md" || missing+=" readme"
+  grep -qF '/ccmagic:spec-baseline' "$ROOT/skills/help/SKILL.md" || missing+=" help"
+  grep -qF 'RV-84' "$ROOT/CHANGELOG.md" || missing+=" changelog"
+  check "${missing# }" ""
+}
+
 # ---- run -------------------------------------------------------------------
 
 MIRRORS=$(mktemp -d)
 trap 'rm -rf "$MIRRORS"' EXIT
 
-for fn in $(declare -F | awk '{print $3}' | grep -E '^(context|ci|merge_gate|guard|post|postreview|stop|threads|reply|validate|route|doctor|extreview|skills|spec_block|scope|finish)_'); do
+for fn in $(declare -F | awk '{print $3}' | grep -E '^(context|ci|merge_gate|guard|post|postreview|stop|threads|reply|validate|route|doctor|extreview|skills|spec_block|scope|finish|baseline)_'); do
   t "$fn" "$fn"
 done
 

@@ -1,0 +1,6 @@
+schema: spec-driven
+
+context: |
+  Project: tally, a test fixture for ccm-baseline-check. Plain Node.js, tests with node --test.
+  Specs describe current behavior at the commit named in docs/openspec-baseline.md; evidence
+  lives in that file, never in a spec.

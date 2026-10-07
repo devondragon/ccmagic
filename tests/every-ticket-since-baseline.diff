@@ -247,6 +247,19 @@
  - **Step 4 (Disposition):** always take the **Done** path. The QA path needs an interactive hand-off (QA-assignee lookup, status confirmation) that would hang an unattended run, so autonomous mode never enters it — **even if `default_qa_workflow: true`**. If the QA path was explicitly forced (`--qa` passed *together with* an autonomous signal), that's a conflict autonomous mode can't satisfy → `needs-human` (reason: "QA disposition requires a human — re-run without `--qa`, or complete QA manually"); do **not** merge. A project that requires QA on every ticket should not be driven by `/ccmagic:auto-ticket`.
  - **Step 5 (Merge confirmation):** proceed with the determined strategy — squash for `feature/`/`bugfix/`/`hotfix/`/`chore/`, merge commit for `release/` — no pause.
  - **Step 6 (Merge conflicts):** auto-resolve **trivial** conflicts (version bumps, import lists, config values) exactly as Step 6 already describes. A **business-logic** conflict → `needs-human` (do not merge; leave the branch unmerged, `reason` names the conflicting files).
+### skills/help/SKILL.md
+@@ -93,6 +93,11 @@ End-to-end ticket lifecycle backed by Linear, GitHub Issues, or JIRA. Auto-detec
+ - **When to use:** First-time ccmagic onboarding, or after major structural changes.
+ - **What it does:** Three parallel Explore agents extract the tech stack, architecture, and conventions into reference files that `/ccmagic:review` and `/ccmagic:analyze-impact` later consume.
+ 
++**`/ccmagic:spec-baseline [--capability <name>] [--check]`**
++- **Purpose:** Write OpenSpec baseline specs (`openspec/specs/<capability>/spec.md`) that describe the code's current behavior, with the evidence (code citations, pinning tests, flagged findings) in `docs/openspec-baseline.md`.
++- **When to use:** Before a repository's first OpenSpec change, or with `--capability <name>` right before a change has to MODIFY a capability that has no spec. `--check` later reports citations whose lines changed since the baseline commit, and writes nothing.
++- **What it does:** Proposes a capability map and stops for your confirmation, runs read-only sonnet extraction agents (four at a time), writes each spec and evidence section itself, runs `openspec validate --all --strict --no-interactive` and `ccm-baseline-check` after each capability, stops again with the findings for your review, then commits on a branch and runs `/ccmagic:pr`. Writes only under `openspec/` and the evidence file; needs the `openspec` CLI 1.13.x.
++
+ **`/ccmagic:research <topic>`**
+ - **Purpose:** Deep iterative research with parallel exploration, source evaluation, and confidence scoring.
+ - **When to use:** Before designing a non-trivial feature, or to investigate a library/pattern.
 ### skills/merge/SKILL.md
 @@ -98,7 +98,7 @@ gh pr merge --rebase --delete-branch
  ```markdown
