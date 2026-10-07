@@ -12,8 +12,9 @@ You are extracting the current behavior of one capability of the repository at `
 **Tests that may pin it:** {tests}
 **Other capabilities in the map (behavior that belongs to one of these may be left out):** {neighbors}
 **Configuration files:** {config_files}
+**Docs (the repository's doc files and, where known, their lines about this capability):** {docs}
 
-Read the code for facts. Read docs only to report where they disagree with the code.
+Read the code for facts. Read the docs above to compare them with the code: for each doc claim about this capability, confirm it against the code or report a `Docs disagree` flag with both the doc citation and the code citation. A capability with doc lines and no `Docs disagree` or confirmation in your notes is incomplete.
 
 ## Output
 
@@ -29,7 +30,7 @@ N. <one present-tense sentence: what a client, operator, or sender observes, inc
    Flags: <zero or more of the lines below>
      Looks unintended: <why a maintainer would probably not have chosen this>
      Open question: <what the code does not settle>
-     Docs disagree: `path:line` says <...>
+     Docs disagree: `doc/path:line` says <...>; the code (`path:line`) <...>
      Config: `key` = <value> in <file or profile> (`path:line`), for each file or profile that sets it; the code default when none does
      Security: <what a reviewer should look at>
 ```
@@ -40,10 +41,11 @@ Rules:
 2. A test counts only if it asserts the behavior. A test that merely executes the code is not a pin: say UNTESTED and name the test in parentheses.
 3. State bugs as behavior, in neutral words, and flag them `Looks unintended`. Do not describe a fix or the intended behavior.
 4. A setting that is read but has no effect, or never read at all, is a behavior ("`key` has no effect"). Code with no caller is not a behavior: list it under "Unreachable". Before calling anything unreachable, unused, or without effect, search the whole repository for its callers or readers and say what you searched for.
-5. **Never copy a credential, token, password, API key, or other secret value into your output.** Name the key and say it holds a credential-looking value.
+5. **Never copy a credential, token, password, API key, or other secret value into your output, and never copy a personal email address, phone number, or account identifier.** Name the key or constant and say it holds a credential-looking value or a hard-coded personal address.
 6. Leave out log text, thread pool sizes, class and method names as behavior, and anything observable only in a debugger; a race goes in as a behavior flagged `Looks unintended` with the interleaving.
-7. Order check sequences as the code runs them when the order changes the outcome.
-8. Leave a behavior out as another capability's only when that capability is in the list above, and then list it under "Capability boundary" with the capability's name. A behavior that belongs to no listed capability is extracted here, with a boundary note saying where you think it belongs.
+7. For input variants (spaces, case, null, empty, malformed) and for each refusal or error status, trace every check on the path from the entry point, in order, and cite each; say which check decides first.
+8. Order check sequences as the code runs them when the order changes the outcome.
+9. Leave a behavior out as another capability's only when that capability is in the list above, and then list it under "Capability boundary" with the capability's name. A behavior that belongs to no listed capability is extracted here, with a boundary note saying where you think it belongs.
 
 After the list:
 
