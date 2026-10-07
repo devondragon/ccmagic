@@ -38,7 +38,7 @@ claude --plugin-dir .claude/plugins/ccmagic
 
 ## What ships in v3
 
-24 skills organized by purpose:
+25 skills organized by purpose:
 
 ### Tracker workflow
 
@@ -82,6 +82,7 @@ All four auto-detect the tracker (Linear MCP → GitHub CLI → Atlassian/JIRA M
 | Skill | Purpose |
 |---|---|
 | `/ccmagic:map-codebase` | Brownfield onboarding — three parallel agents produce STACK / ARCHITECTURE / CONVENTIONS knowledge files |
+| `/ccmagic:spec-baseline [--capability <name>] [--check]` | OpenSpec baseline of current behavior: proposes a capability map (you confirm it), extracts behavior with read-only agents, writes `openspec/specs/<capability>/spec.md` and the evidence file `docs/openspec-baseline.md`, checks both, and opens a PR after your review; `--check` reports citations gone stale since the baseline. Writes only under `openspec/` and the evidence file |
 
 ### Design & visual QA (require Chrome DevTools MCP)
 
@@ -277,6 +278,7 @@ Rules that have one right answer are enforced in code, not left to the skill tex
 | `ccm-spec-block` | Is this ticket a Reeve spec ticket: reads the description on stdin and prints the `repo`, `change`, `section`, and `tasks` of a well-formed `<!-- reeve:spec v1 -->` block, or `null` with the reason (a prose mention of `reeve:spec`, a missing delimiter, or bad metadata is an ordinary ticket); exits 0 either way |
 | `ccm-openspec-scope` | Does a Reeve spec ticket's branch keep to its OpenSpec section or archive: applies the file rules of Reeve's `openspec` merge gate check against the base branch tip (`outside-section`, `tasks-text`, `tasks-unchecked`, `not-moved`, `folder-content`, `outside-archive`, and the rest) and names the first that fails; `--worktree` includes uncommitted changes and new files under `openspec/`, and `--precheck` checks the checkout before any work |
 | `ccm-finish-guard` | May an `/auto-ticket` run reach `finish-ticket`: reads the run's step history (the finish grounding block's `steps:` section) on stdin and passes only when the latest validate is `done`, the latest review `clean`, and no work-ticket or pr-feedback step ran after that validate; a missing or malformed history fails |
+| `ccm-baseline-check` | Does an OpenSpec baseline hold up: every spec requirement and scenario has its line in `docs/openspec-baseline.md`, every `path:line` citation resolves, every cited test exists, names are unique and free of characters Reeve rewrites, no em or en dash, and nothing outside `openspec/` and the evidence file changed since the merge base with the default branch; `--stale` adds each citation whose lines a commit after the baseline commit touched. Used by `/ccmagic:spec-baseline` |
 | `ccm-pr-reply` | Reply to a review thread with a disposition (`fixed --commit`, `declined`, `answered`, `deferred --ticket`); appends the marker, refuses an unpushed fix commit, and resolves the thread for `fixed` |
 
 **Hooks** (`hooks/hooks.json`):

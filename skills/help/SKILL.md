@@ -93,6 +93,11 @@ End-to-end ticket lifecycle backed by Linear, GitHub Issues, or JIRA. Auto-detec
 - **When to use:** First-time ccmagic onboarding, or after major structural changes.
 - **What it does:** Three parallel Explore agents extract the tech stack, architecture, and conventions into reference files that `/ccmagic:review` and `/ccmagic:analyze-impact` later consume.
 
+**`/ccmagic:spec-baseline [--capability <name>] [--check]`**
+- **Purpose:** Write OpenSpec baseline specs (`openspec/specs/<capability>/spec.md`) that describe the code's current behavior, with the evidence (code citations, pinning tests, flagged findings) in `docs/openspec-baseline.md`.
+- **When to use:** Before a repository's first OpenSpec change, or with `--capability <name>` right before a change has to MODIFY a capability that has no spec. `--check` later reports citations whose lines changed since the baseline commit, and writes nothing.
+- **What it does:** Proposes a capability map and stops for your confirmation, runs read-only sonnet extraction agents (four at a time), writes each spec and evidence section itself, runs `openspec validate --all --strict --no-interactive` and `ccm-baseline-check` after each capability, stops again with the findings for your review, then commits on a branch and runs `/ccmagic:pr`. Writes only under `openspec/` and the evidence file; needs the `openspec` CLI 1.13.x.
+
 **`/ccmagic:research <topic>`**
 - **Purpose:** Deep iterative research with parallel exploration, source evaluation, and confidence scoring.
 - **When to use:** Before designing a non-trivial feature, or to investigate a library/pattern.
