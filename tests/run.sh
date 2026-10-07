@@ -3309,7 +3309,7 @@ skills_standalone_not_on_ticket_path() {
       git -C "$ROOT" cat-file -e "$SPEC_BASELINE:skills/$name" 2>/dev/null && hits+=" $name:at-baseline"
       [ -f "$ROOT/skills/$name/SKILL.md" ] || hits+=" $name:no-skill"
     fi
-    for f in $(cd "$ROOT" && grep -rlF -e "$name" "${paths[@]}" || true); do hits+=" $name:$f"; done
+    for f in $(git -C "$ROOT" grep -lF -e "$name" -- "${paths[@]}" || true); do hits+=" $name:$f"; done
   done
   check "${hits# }" ""
 }
