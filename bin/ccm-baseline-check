@@ -433,7 +433,7 @@ jq -R -s --arg base "$base" --arg base_ref "$base_ref" '
   | ($rows | map(select(.[0] == "N")) | first // ["N", "0", "0", "0", "0"]) as $n
   | ($rows | map(select(.[0] == "F") | {rule: .[1], file: .[2], line: (.[3] | tonumber), message: .[4]})
       | sort_by(.file, .line, .rule)) as $f
-  | {clean: ($f | length) == 0, specs: ($n[1] | tonumber), requirements: ($n[2] | tonumber),
+  | {clean: (($f | length) == 0), specs: ($n[1] | tonumber), requirements: ($n[2] | tonumber),
      scenarios: ($n[3] | tonumber), citations: ($n[4] | tonumber),
      base: {ref: $base_ref, commit: $base}, findings: $f}
 ' "$tmp/out" >"$tmp/json"
