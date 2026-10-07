@@ -5,7 +5,7 @@ A baseline spec describes what the code does today, at a named commit, in the sh
 ## Why names are identifiers
 
 - `openspec archive` matches a MODIFIED requirement to the main spec by its exact header text. A name that does not match aborts the archive.
-- A MODIFIED block replaces the whole requirement, and archive refuses it when a scenario name in the main spec is missing from the block (OpenSpec 1.13.2). Renaming a scenario fails `validate --strict`; keeping the name and changing the body archives cleanly.
+- A MODIFIED block replaces the whole requirement, and archive refuses it when a scenario name in the main spec is missing from the block (OpenSpec 1.x archive). Renaming a scenario fails `validate --strict`; keeping the name and changing the body archives cleanly.
 - Reeve copies every delta requirement, body and scenarios, into generated ticket bodies, and rewrites `&`, `@`, `<`, `>`, dashes, and markdown in them. Large blocks make large tickets; names holding those characters render differently from how they are written.
 
 So: name requirements by concern and scenarios by condition, never by a value or an outcome. Values change; concerns and conditions do not.
