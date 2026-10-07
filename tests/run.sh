@@ -3194,7 +3194,7 @@ strip_spec_only() {
     skip && $0 == "<!-- /ccmagic:spec-only -->" { skip = 0; eat = 1; next }
     skip { next }
     /^allowed-tools:/ {
-      n = split(" Bash(${CLAUDE_PLUGIN_ROOT}/bin/ccm-openspec-scope *), Bash(ccm-openspec-scope *),| Bash(${CLAUDE_PLUGIN_ROOT}/bin/ccm-spec-block *), Bash(ccm-spec-block *),", g, "|")
+      n = split(" Bash(${CLAUDE_PLUGIN_ROOT}/bin/ccm-openspec-scope *), Bash(ccm-openspec-scope *),| Bash(${CLAUDE_PLUGIN_ROOT}/bin/ccm-openspec-version *), Bash(ccm-openspec-version *),| Bash(${CLAUDE_PLUGIN_ROOT}/bin/ccm-spec-block *), Bash(ccm-spec-block *),", g, "|")
       for (i = 1; i <= n; i++) while ((k = index($0, g[i])) > 0) $0 = substr($0, 1, k - 1) substr($0, k + length(g[i]))
     }
     { print }' "$1"
@@ -3353,7 +3353,7 @@ baseline_fixture_is_clean() {
 
 baseline_fixture_passes_openspec_validate() {
   if ! command -v openspec >/dev/null 2>&1; then
-    echo "    skipped: openspec CLI not on PATH (CI installs @fission-ai/openspec@1.13.2)"
+    echo "    skipped: openspec CLI not on PATH (CI installs @fission-ai/openspec@1.14.1)"
     return 0
   fi
   cp -R "$BASELINE_FIXTURE/." .
@@ -3633,12 +3633,81 @@ skills_spec_baseline_workflow() {
   check "${missing# }" ""
 }
 
+# ---- ccm-openspec-version (RV-87) --------------------------------------------
+
+# ov_run OUTPUT [EXIT]: put a stub `openspec` printing OUTPUT first on PATH and
+# run the helper; with no argument, no stub (and no other openspec) on PATH.
+ov_run() {
+  mkdir -p "$T/ovbin" "$T/ovempty"
+  command rm -f "$T/ovbin/openspec"
+  local p=$T/ovempty:/usr/bin:/bin
+  if [ $# -gt 0 ]; then
+    printf '#!/bin/sh\nprintf "%%s\\n" %q\n' "$1" >|"$T/ovbin/openspec"
+    chmod +x "$T/ovbin/openspec"
+    p=$T/ovbin:$p
+  fi
+  OUT=$(PATH=$p "$BIN/ccm-openspec-version" 2>"$T/stderr") && RC=0 || RC=$?
+}
+
+openspecver_ok() {
+  ov_run 1.14.1
+  check "$RC,$OUT" '0,{"version": "1.14.1", "tested": "1.14.1", "status": "ok"}'
+}
+
+openspecver_newer() {
+  local v got=
+  for v in 1.14.2 1.20.0 1.15.0; do
+    ov_run "$v"
+    got+="$RC,$(jq -r .status <<<"$OUT"),$(jq -r .version <<<"$OUT");"
+  done
+  check "$got" "0,newer,1.14.2;0,newer,1.20.0;0,newer,1.15.0;"
+}
+
+openspecver_too_old() {
+  local v got=
+  for v in 1.13.2 1.14.0 1.9.9 0.99.0; do
+    ov_run "$v"
+    got+="$RC,$(jq -r .status <<<"$OUT");"
+  done
+  check "$got" "1,too-old;1,too-old;1,too-old;1,too-old;"
+}
+
+openspecver_unsupported() {
+  local v got=
+  for v in 2.0.0 10.1.1 garbage "1.14" "v1.14.1" "1.14.1-beta.1" ""; do
+    ov_run "$v"
+    got+="$RC,$(jq -r .status <<<"$OUT");"
+  done
+  check "$got" "1,unsupported;1,unsupported;1,unsupported;1,unsupported;1,unsupported;1,unsupported;1,unsupported;"
+  ov_run 2.0.0
+  check "$(jq -c '[.version,.tested]' <<<"$OUT")" '["2.0.0","1.14.1"]'
+  ov_run garbage
+  check "$(jq -c '.version' <<<"$OUT")" 'null'
+}
+
+openspecver_missing() {
+  ov_run
+  check "$RC,$OUT" '1,{"version": null, "tested": "1.14.1", "status": "missing"}'
+}
+
+openspecver_usage() {
+  OUT=$("$BIN/ccm-openspec-version" extra 2>/dev/null) && RC=0 || RC=$?
+  check "$RC" "4"
+}
+
+# The version lives in the helper alone: no skill or script repeats it.
+openspecver_version_in_one_place() {
+  local hits
+  hits=$(git -C "$ROOT" grep -lE '1\.14\.1' -- skills agents hooks bin | grep -v '^bin/ccm-openspec-version$' || true)
+  check "$hits" ""
+}
+
 # ---- run -------------------------------------------------------------------
 
 MIRRORS=$(mktemp -d)
 trap 'rm -rf "$MIRRORS"' EXIT
 
-for fn in $(declare -F | awk '{print $3}' | grep -E '^(context|ci|merge_gate|guard|post|postreview|stop|threads|reply|validate|route|doctor|extreview|skills|spec_block|scope|finish|baseline)_'); do
+for fn in $(declare -F | awk '{print $3}' | grep -E '^(context|ci|merge_gate|guard|post|postreview|stop|threads|reply|validate|route|doctor|extreview|skills|spec_block|scope|finish|baseline|openspecver)_'); do
   t "$fn" "$fn"
 done
 

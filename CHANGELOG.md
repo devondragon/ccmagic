@@ -2,6 +2,12 @@
 
 All notable changes to ccmagic are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- The OpenSpec stack moves from CLI 1.13.2 to 1.14.1 (RV-87). Archive output was checked byte-identical against 1.13.2 on ADDED, MODIFIED, and REMOVED deltas, and strict validation is unchanged on existing trees. CI installs 1.14.1. `/ccmagic:spec-baseline` and the archive procedure of `/ccmagic:work-ticket` now accept 1.14.1 or any newer 1.x release through the new `bin/ccm-openspec-version`, which holds the tested version in one place. A newer release continues with a one-line warning that the format rules were checked against 1.14.1; an older one, 2.0 or later, unparseable output, or a missing CLI stops with the required minimum and `npm i -g @fission-ai/openspec@1.14.1`.
+
 ## [3.17.0] - 2026-10
 
 ### Added

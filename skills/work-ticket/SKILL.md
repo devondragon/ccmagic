@@ -2,7 +2,7 @@
 name: work-ticket
 description: End-to-end ticket workflow. Detects your tracker (Linear, GitHub Issues, or JIRA), looks up the ticket, assigns it to you, moves it to In Progress, triages the work type, creates a branch, executes the work (delegating to /ccmagic:debug for bugs), validates scope, then commits and opens a PR.
 user-invocable: true
-allowed-tools: Read(*), Write(*), Edit(*), Bash(git:*, gh:*, mkdir:*, timeout:*, gtimeout:*), Bash(${CLAUDE_PLUGIN_ROOT}/bin/ccm-context *), Bash(ccm-context *), Bash(${CLAUDE_PLUGIN_ROOT}/bin/ccm-openspec-scope *), Bash(ccm-openspec-scope *), Glob(*), Grep(*), Task(*), TodoWrite(*), AskUserQuestion(*), Skill(*)
+allowed-tools: Read(*), Write(*), Edit(*), Bash(git:*, gh:*, mkdir:*, timeout:*, gtimeout:*), Bash(${CLAUDE_PLUGIN_ROOT}/bin/ccm-context *), Bash(ccm-context *), Bash(${CLAUDE_PLUGIN_ROOT}/bin/ccm-openspec-scope *), Bash(ccm-openspec-scope *), Bash(${CLAUDE_PLUGIN_ROOT}/bin/ccm-openspec-version *), Bash(ccm-openspec-version *), Glob(*), Grep(*), Task(*), TodoWrite(*), AskUserQuestion(*), Skill(*)
 argument-hint: Ticket ID (e.g. ENG-123, PROJ-456, or a GitHub issue number like 42)
 model: inherit
 ---
@@ -197,7 +197,7 @@ For the archive (`section: archive`), run the *Archive procedure* below in place
 
 `{base-ref}` below is `origin/{base-branch}` after `git fetch origin {base-branch}` (its own Bash call), so the check sees the base tip the merge gate sees; with no `origin` remote it is `{base-branch}`. Run each command as its own Bash call, at the repository root.
 
-1. Run `openspec --version`. Unless it prints exactly `1.13.2`, stop: `reason: openspec --version printed {its output, or "command not found"}; the archive needs 1.13.2`.
+1. Run `"${CLAUDE_PLUGIN_ROOT}/bin/ccm-openspec-version"` (the bare name only when the path form is not found or is denied) and read its JSON. On `status` `ok`, continue. On `newer` (a later 1.x release), continue and print one warning line: `OpenSpec {version} is newer than {tested}; the format rules were checked against {tested}.` On `too-old`, `unsupported`, or `missing` (exit 1), stop: `reason: openspec {version, or "missing or unreadable"}; the archive needs {tested} or a newer 1.x release (npm i -g @fission-ai/openspec@{tested})`.
 2. Read `.openspec.yaml` and `tasks.md` in `openspec/changes/{change}/`.
 3. Every task in `tasks.md` must be checked: the `unchecked` list from Step 1 is empty. Otherwise stop, naming the unchecked task ids. (`openspec archive` archives over unchecked tasks with only a warning, so this step is what enforces it.)
 4. Run `openspec archive {change} --yes`, with no other flag (not `--skip-specs`, not `--no-validate`).

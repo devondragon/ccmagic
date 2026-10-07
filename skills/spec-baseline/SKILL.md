@@ -1,7 +1,7 @@
 ---
 name: spec-baseline
 user-invocable: true
-allowed-tools: Read(*), Glob(*), Grep(*), Agent(Explore), Task(Explore), AskUserQuestion(*), Skill(*), Write(openspec/**), Edit(openspec/**), Write(docs/openspec-baseline.md), Edit(docs/openspec-baseline.md), Bash(openspec:*), Bash(git status:*, git diff:*, git log:*, git show:*, git rev-parse:*, git ls-files:*, git merge-base:*, git symbolic-ref:*, git switch:*, git checkout -b:*, git add:*, git commit:*), Bash(${CLAUDE_PLUGIN_ROOT}/bin/ccm-baseline-check *), Bash(ccm-baseline-check *), Bash(${CLAUDE_PLUGIN_ROOT}/bin/ccm-context *), Bash(ccm-context *)
+allowed-tools: Read(*), Glob(*), Grep(*), Agent(Explore), Task(Explore), AskUserQuestion(*), Skill(*), Write(openspec/**), Edit(openspec/**), Write(docs/openspec-baseline.md), Edit(docs/openspec-baseline.md), Bash(openspec:*), Bash(${CLAUDE_PLUGIN_ROOT}/bin/ccm-openspec-version *), Bash(ccm-openspec-version *), Bash(git status:*, git diff:*, git log:*, git show:*, git rev-parse:*, git ls-files:*, git merge-base:*, git symbolic-ref:*, git switch:*, git checkout -b:*, git add:*, git commit:*), Bash(${CLAUDE_PLUGIN_ROOT}/bin/ccm-baseline-check *), Bash(ccm-baseline-check *), Bash(${CLAUDE_PLUGIN_ROOT}/bin/ccm-context *), Bash(ccm-context *)
 description: Write OpenSpec baseline specs describing an existing codebase's current behavior, with a committed evidence file of code citations and tests, two review stops, and deterministic checks. Use when a repository has no openspec/specs yet, before a change has to MODIFY a capability that has no spec, or with --check to find citations gone stale.
 argument-hint: "[--capability <name>] [--check]"
 ---
@@ -35,7 +35,7 @@ Never write a secret. Configuration files often hold credentials; refer to keys 
 Stop with a plain message, before any write, when any of these fails:
 
 1. The current directory is the top level of a git repository (`git rev-parse --show-toplevel` equals the working directory). The path-restricted grants are relative to it.
-2. `openspec --version` prints a 1.13.x version. Print the version. Refuse any other version: the format rules here were probed on 1.13.2.
+2. The installed OpenSpec CLI is a supported version. Run `"${CLAUDE_PLUGIN_ROOT}/bin/ccm-openspec-version"` (the bare name only when the path form is not found or is denied) and read its JSON. Print `version`. On `status` `ok`, continue. On `newer` (a later 1.x release), continue and print one warning line: `OpenSpec {version} is newer than {tested}; the format rules here were checked against {tested}.` On `too-old`, `unsupported`, or `missing` (exit 1), stop with a message that names the required minimum and the install command: `openspec {version, or "is missing or unreadable"}; this skill needs {tested} or a newer 1.x release (npm i -g @fission-ai/openspec@{tested})`.
 3. Full and one modes: `git status --porcelain` is empty. Record `BASELINE_SHA=$(git rev-parse HEAD)`; every citation will refer to this commit.
 
 **`--check` mode** stops here and runs:
@@ -125,7 +125,8 @@ On a repository Reeve governs, the PR lands at whatever tier its policy gives `o
 
 | Situation | Action |
 |---|---|
-| `openspec` missing or not 1.13.x | Stop at Step 1; name the version required (`npm i -g @fission-ai/openspec@1.13.2`) |
+| `ccm-openspec-version` reports `too-old`, `unsupported`, or `missing` | Stop at Step 1; name the minimum `tested` version and the install command `npm i -g @fission-ai/openspec@{tested}` |
+| `ccm-openspec-version` reports `newer` | Continue; print the one-line warning that the rules were checked against `tested` |
 | Dirty working tree | Stop at Step 1; ask the user to commit or stash first |
 | An extraction agent fails or returns no citations | Re-dispatch it once; then tell the user and skip that capability, recording it as mapped |
 | Validator or checker finding that cannot be fixed without changing code | Leave the capability out of the commit, report why at Stop 2 |

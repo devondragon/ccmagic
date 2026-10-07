@@ -1,0 +1,54 @@
+#!/usr/bin/env bash
+# ccm-openspec-version: check the installed OpenSpec CLI against the version
+# ccmagic's OpenSpec format rules were checked on (RV-87).
+#
+# Usage: ccm-openspec-version
+#
+# Runs `openspec --version` and prints one JSON object:
+#   {"version": "<x.y.z>" | null, "tested": "<TESTED>", "status": "<status>"}
+#   ok           the tested version exactly
+#   newer        a later 1.x release: usable, but the rules were not checked on it
+#   too-old      older than the tested version (0.x or an earlier 1.x)
+#   unsupported  2.0 or later, or output that is not a plain x.y.z version
+#   missing      no `openspec` command on PATH
+# Exit codes: 0 for ok and newer, 1 for any other status, 4 usage error.
+#
+# TESTED is the one place the version lives. Raising it is a deliberate act:
+# check the archive output and strict validation on the new release first.
+
+TESTED=1.14.1
+
+if [ $# -gt 0 ]; then
+  echo "usage: ccm-openspec-version" >&2
+  exit 4
+fi
+
+emit() { # emit VERSION-OR-EMPTY STATUS
+  local v=null
+  [ -z "$1" ] || v="\"$1\""
+  printf '{"version": %s, "tested": "%s", "status": "%s"}\n' "$v" "$TESTED" "$2"
+  case $2 in ok | newer) exit 0 ;; *) exit 1 ;; esac
+}
+
+command -v openspec >/dev/null 2>&1 || emit "" missing
+
+out=$(OPENSPEC_TELEMETRY=0 DO_NOT_TRACK=1 openspec --version 2>/dev/null) || out=
+out=${out//$'\r'/}
+# Plain "x.y.z" only, as one line (surrounding whitespace allowed).
+re='^[[:space:]]*([0-9]+)\.([0-9]+)\.([0-9]+)[[:space:]]*$'
+[[ $out =~ $re ]] || emit "" unsupported
+major=$((10#${BASH_REMATCH[1]})) minor=$((10#${BASH_REMATCH[2]})) patch=$((10#${BASH_REMATCH[3]}))
+version="${BASH_REMATCH[1]}.${BASH_REMATCH[2]}.${BASH_REMATCH[3]}"
+
+IFS=. read -r t_major t_minor t_patch <<<"$TESTED"
+[ "$major" -le "$t_major" ] || emit "$version" unsupported
+[ "$major" -eq "$t_major" ] || emit "$version" too-old
+if [ "$minor" -ne "$t_minor" ]; then
+  [ "$minor" -gt "$t_minor" ] && emit "$version" newer
+  emit "$version" too-old
+fi
+if [ "$patch" -ne "$t_patch" ]; then
+  [ "$patch" -gt "$t_patch" ] && emit "$version" newer
+  emit "$version" too-old
+fi
+emit "$version" ok
