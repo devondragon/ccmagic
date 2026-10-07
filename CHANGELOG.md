@@ -2,6 +2,12 @@
 
 All notable changes to ccmagic are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- `ccm-validate` reported `environment` and ran no check in a Gradle project that also has a `package.json` declaring dependencies with no lockfile, though every resolved check was `./gradlew test` or `./gradlew build`. A real auto-ticket run parked on it (2026-10-07). The cause was 3.16.2's install rule, which applied to every check: it planned the Node install, or failed with `environment`, whenever the root `package.json`'s dependencies were not installed, whatever the checks were. The install is now planned, and `environment` reported, only when a check that will run goes through Node: its command has `npm`, `npx`, `pnpm`, `yarn`, `bun`, `bunx`, or `node` as a command word (at the start, or after `&&`, `||`, `;`, `|`, or an env assignment), which covers every detected `package.json` script. Skipped, `none`, and `--only`-excluded checks do not count, `--list` shows no `install` object when no Node check is planned, and `--install` behaves as before.
+
 ## [3.17.2] - 2026-10
 
 ### Fixed

@@ -1522,6 +1522,48 @@ validate_install_timeout_is_environment() {
   [[ $(jqval .install.reason) == "npm ci timed out after 1s" ]]
 }
 
+# A Gradle project with a package.json for a few browser tests, no lockfile
+# and nothing installed: the checks are Gradle's, so nothing is installed.
+validate_gradle_checks_ignore_missing_node_deps() {
+  seed_pkg '{"test":"true","build":"true"}' '{"devDependencies":{"vitest":"^3.0.0"}}'
+  echo 'plugins { java }' >build.gradle
+  seed_wrapper gradlew
+  run "$BIN/ccm-validate" --list
+  check "$(jqval .status),$(jqval '.install // "none"'),$(commands)" "listed,none,-|-|-|./gradlew test|./gradlew build"
+  run "$BIN/ccm-validate"
+  check "$(jqval .status),$RC,$(jqval '.install // "none"')" "pass,0,none"
+  check "$(command cat "$T/jvm.log")" $'gradlew test\ngradlew build'
+  [ ! -e "$T/pm.log" ]
+  # --install still installs on request, as before (no lockfile: environment).
+  run "$BIN/ccm-validate" --install
+  check "$(jqval .status),$RC" "environment,5"
+}
+
+# The same project with a check that runs through Node needs the install.
+validate_node_check_next_to_gradle_still_needs_install() {
+  seed_pkg '{"lint":"true"}' '{"devDependencies":{"vitest":"^3.0.0"}}'
+  echo 'plugins { java }' >build.gradle
+  seed_wrapper gradlew
+  config 'validate_test: npm test'
+  run "$BIN/ccm-validate" --only test
+  check "$(jqval .status),$RC,$(jqval .install.status)" "environment,5,unavailable"
+  run "$BIN/ccm-validate" --only build
+  check "$(jqval .status),$RC,$(jqval '.install // "none"')" "pass,0,none"
+  # A package.json script check counts too, and so does a command word after &&.
+  run "$BIN/ccm-validate" --only lint
+  check "$(jqval .status),$RC" "environment,5"
+  config 'validate_test: CI=1 FOO=bar sh -c true && pnpm exec vitest'
+  run "$BIN/ccm-validate" --only test
+  check "$(jqval .status),$RC" "environment,5"
+  # A tool name that is not a command word does not count.
+  config 'validate_test: echo npm test; ./gradlew test'
+  run "$BIN/ccm-validate" --only test
+  check "$(jqval .status),$RC,$(jqval '.install // "none"')" "pass,0,none"
+  config 'validate_test: none'
+  run "$BIN/ccm-validate" --only test
+  check "$(jqval .status),$(jqval '.install // "none"')" "nothing-to-run,none"
+}
+
 # ---- ccm-review-route ------------------------------------------------------
 
 # seed_branch FILE LINES [FILE LINES...]: on a feature branch, commit each FILE

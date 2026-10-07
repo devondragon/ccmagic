@@ -29,13 +29,13 @@ It prints `{status, timeout_seconds, checks: [{name, command, source, status, re
 
 ### 1b. Install missing Node dependencies
 
-If the `--list` output has an `install` object, the repository's `package.json` declares dependencies and one of them is not installed in `node_modules`, so the checks would fail for a reason that is not the code. Install them first, as its own call with the maximum Bash tool timeout (600000 ms):
+If the `--list` output has an `install` object, the repository's `package.json` declares dependencies, one of them is not installed in `node_modules`, and a planned check runs through Node (`npm`, `npx`, `pnpm`, `yarn`, `bun`, `bunx`, or `node`, or a `package.json` script), so the checks would fail for a reason that is not the code. Install them first, as its own call with the maximum Bash tool timeout (600000 ms):
 
 ```bash
 "${CLAUDE_PLUGIN_ROOT}/bin/ccm-validate" --install
 ```
 
-It runs the install the lockfile calls for (`npm ci` for `package-lock.json` or `npm-shrinkwrap.json`; `pnpm`, `yarn`, or `bun` for their lockfiles, only when that tool is installed) under `validate_timeout_seconds` and prints `{status: installed | not-needed | environment, install}`. `installed` or `not-needed`: go on to step 2. `environment` (exit 5): the install failed, timed out, or could not be done (no lockfile, or the lockfile's tool is missing); `install.reason` says which, and `install.tail` shows the end of the install's output. Run no check: report the environment problem, since every check would fail for the same reason. This is Node only; other ecosystems are never installed. A step 2 call that finds the dependencies still missing installs them itself and reports `environment` the same way.
+It runs the install the lockfile calls for (`npm ci` for `package-lock.json` or `npm-shrinkwrap.json`; `pnpm`, `yarn`, or `bun` for their lockfiles, only when that tool is installed) under `validate_timeout_seconds` and prints `{status: installed | not-needed | environment, install}`. `installed` or `not-needed`: go on to step 2. `environment` (exit 5): the install failed, timed out, or could not be done (no lockfile, or the lockfile's tool is missing); `install.reason` says which, and `install.tail` shows the end of the install's output. Run no check: report the environment problem, since every check would fail for the same reason. This is Node only; other ecosystems are never installed, and a project whose checks are all Gradle, Maven, or other non-Node commands has no `install` object. A step 2 call that finds the dependencies still missing installs them itself and reports `environment` the same way.
 
 ### 2. Run each planned check, one call per check
 
