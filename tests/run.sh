@@ -3444,7 +3444,7 @@ baseline_em_or_en_dash() {
   bedit "$BASELINE_EV" $'s/^- Open question: whether/- Open question: \xe2\x80\x94 whether/'
   bedit openspec/specs/counting/spec.md $'s/^Defines how a counter starts,/Defines how a counter starts \xe2\x80\x93/'
   bcheck
-  check "$RC,$(brules),$(jqval '[.findings[] | "\(.file):\(.line)"] | join(" ")')" "1,dash,docs/openspec-baseline.md:26 openspec/specs/counting/spec.md:4"
+  check "$RC,$(brules),$(jqval '[.findings[] | "\(.file):\(.line)"] | join(" ")')" "1,dash,docs/openspec-baseline.md:30 openspec/specs/counting/spec.md:4"
 }
 
 baseline_spec_shape_limits() {
@@ -3457,6 +3457,60 @@ baseline_spec_shape_limits() {
   cp "$T/spec" openspec/specs/counting/spec.md
   bcheck
   check "$RC,$(brules)" "1,body-length,name-characters,no-evidence-line,scenario-count"
+}
+
+# shellcheck disable=SC2016 # literal backticks in the spec markdown
+baseline_characters_reeve_rewrites() {
+  bl_repo
+  bedit openspec/specs/counting/spec.md 's/or at 0 when none is given/or at 0 \& when none is given/; s/^- \*\*THEN\*\* its value is 0$/- **THEN** its value is `0`/; s/^- \*\*WHEN\*\* the count is 1$/- **WHEN** the count is <2 and @1/'
+  bcheck
+  check "$RC,$(brules),$(jqval '[.findings[].line] | join(" ")')" "1,body-characters,9 13 34"
+  check "$(jqval '.findings[1].message')" 'scenario "No start value" of "Counter start" holds a backtick, @, <, >, or &'
+}
+
+baseline_purpose_missing_or_short() {
+  bl_repo
+  bedit openspec/specs/counting/spec.md 's/^Defines how a counter starts,.*/Counts things. It is short./'
+  bcheck
+  check "$RC,$(brules),$(jqval '.findings[0].line')" "1,purpose-length,3"
+  bl_reset_all
+  bedit openspec/specs/counting/spec.md '/^## Purpose$/d; /^Defines how a counter starts,/d'
+  bcheck
+  check "$RC,$(brules)" "1,no-purpose"
+}
+
+baseline_config_without_context() {
+  bl_repo
+  printf 'schema: spec-driven\n\n# context: |\n#   Project background goes here.\n' >openspec/config.yaml
+  bcheck
+  check "$RC,$(brules),$(jqval '.findings[0].file')" "1,no-config-context,openspec/config.yaml"
+  rm openspec/config.yaml
+  bcheck
+  check "$RC,$(brules),$(jqval '.findings[0].message')" "1,no-config-context,openspec/config.yaml is missing"
+}
+
+baseline_stale_skips_changed_paths() {
+  bl_repo
+  git checkout -q -b feature
+  bedit src/counter.js 's|^// A counter that stops at a fixed cap.$|// A capped counter.|'
+  echo notes >notes.txt
+  gcommit 'chore: comment'
+  bcheck
+  check "$RC,$(brules)" "1,outside-allowlist"
+  bcheck --stale
+  check "$RC,$(jqval .clean),$(jqval '.findings | length'),$(jqval .stale_count)" "0,true,0,0"
+}
+
+# shellcheck disable=SC2016 # literal backticks in the evidence markdown
+baseline_stale_citation_on_flag_line() {
+  bl_repo
+  bedit "$BASELINE_EV" 's/^- Open question: whether/- Looks unintended: the increment at `Counter:12` is not atomic. Open question: whether/'
+  gcommit 'docs: flag'
+  bedit src/counter.js 's/counter.value += 1;/counter.value = counter.value + 1;/'
+  gcommit 'refactor: increment'
+  bcheck --stale
+  check "$(jqval '[.stale[].citations[] | "\(.kind)|\(.scenario)|\(.flag)|\(.citation)"] | join(" ")')" \
+    "scenario|Below the cap|null|Counter:8-14 flag|null|Looks unintended|Counter:12"
 }
 
 baseline_changed_file_outside_allowlist() {
