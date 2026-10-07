@@ -35,14 +35,24 @@
 #
 # Missing Node dependencies (Node only; no other ecosystem is installed):
 # when the root package.json declares dependencies (or workspaces), there is
-# no Yarn Plug'n'Play map (.pnp.cjs, .pnp.js), and a package it needs is not
-# installed (deps_missing below says which count), the first check that runs is preceded by the install its lockfile calls for:
+# no Yarn Plug'n'Play map (.pnp.cjs, .pnp.js), a package it needs is not
+# installed (deps_missing below says which count), and at least one check that
+# will run goes through Node, the first check that runs is preceded by the
+# install its lockfile calls for:
 # `pnpm install --frozen-lockfile` (pnpm-lock.yaml), `yarn install
 # --frozen-lockfile` (yarn.lock; `--immutable` with .yarnrc.yml), `bun install
 # --frozen-lockfile` (bun.lock, bun.lockb), or `npm ci` (package-lock.json,
 # npm-shrinkwrap.json), under the same time limit as a check, with its output
 # in install.log. With no lockfile, or without the lockfile's tool installed,
-# nothing is installed. An install that fails, times out, or cannot be done is
+# nothing is installed. A check goes through Node when its source is
+# package.json scripts (the detected `npm|pnpm|yarn run <script>` commands) or
+# its command, from config or detection, has npm, npx, pnpm, yarn, bun, bunx,
+# or node as a command word: at the start of the command or after `&&`, `||`,
+# `;`, `|`, or an env assignment such as `CI=1`. A project whose checks are
+# only `./gradlew test` and `./gradlew build` therefore installs nothing and
+# is never reported as `environment`, even with a package.json that declares
+# dependencies. Skipped, `none`, and not-selected (`--only`) checks do not
+# count, and `--install` installs whenever the dependencies are missing. An install that fails, times out, or cannot be done is
 # an environment problem, not a check failure: no check runs, and the status
 # is `environment`. The output's `install` object says what happened
 # ({tool, command, status: planned | installed | failed | unavailable,
@@ -73,7 +83,7 @@ while [ $# -gt 0 ]; do
     --only) only=${2:-}; [ -n "$only" ] || { echo "ccm-validate: --only needs a value" >&2; exit 4; }; shift ;;
     --list) list=true ;;
     --install) install_only=true ;;
-    -h|--help) sed -n '2,62p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,72p' "$0"; exit 0 ;;
     *) echo "ccm-validate: unknown argument $1" >&2; exit 4 ;;
   esac
   shift
@@ -283,9 +293,39 @@ plan_install() {
 
 install_json="" install_state=none   # none | planned | installed | failed
 need_install=false
+
+# resolve_check CHECK: set cmd and source for a check, as the run does.
+resolve_check() {
+  cmd=$(jq -r --arg k "validate_$1" '.[$k] // ""' <<<"$config")
+  source=config
+  if [ -z "$cmd" ]; then
+    cmd=$(detect "$1")
+    source=detected
+  fi
+}
+
+# uses_node CMD: the command runs through Node, with a Node tool as a command
+# word: at the start, or after &&, ||, ;, |, and any env assignments.
+uses_node() {
+  printf '%s\n' "$1" | grep -Eq '(^|[;&|])[[:space:]]*([A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*[[:space:]]+)*(npm|npx|pnpm|yarn|bun|bunx|node)([[:space:]]|$)'
+}
+
+# Plan the install only when a check that will run goes through Node (--install
+# asks for it outright). A check whose source is package.json scripts runs
+# `npm|pnpm|yarn run ...`, so the command scan covers it.
 if deps_missing; then
-  need_install=true
-  plan_install
+  want=$install_only
+  if [ "$want" = false ]; then
+    for check in $checks; do
+      resolve_check "$check"
+      case $cmd in ''|none) continue ;; esac
+      if uses_node "$cmd"; then want=true; break; fi
+    done
+  fi
+  if [ "$want" = true ]; then
+    need_install=true
+    plan_install
+  fi
 fi
 
 # install_info STATUS [KEY VALUE...]: the install object, as JSON.
@@ -350,12 +390,7 @@ results=()
 ran=0 failed=0
 
 for check in $checks; do
-  cmd=$(jq -r --arg k "validate_$check" '.[$k] // ""' <<<"$config")
-  source=config
-  if [ -z "$cmd" ]; then
-    cmd=$(detect "$check")
-    source=detected
-  fi
+  resolve_check "$check"
 
   if [ "$cmd" = none ]; then
     results+=("$(jq -n --arg n "$check" \
