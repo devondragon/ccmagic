@@ -22,7 +22,7 @@ A capability is a boundary of observable behavior with its own entry point (a ro
 
 ## Per requirement
 
-4. Named by concern, unique in the spec, plain words; no value, no outcome, no backtick, URL, `@`, `<`, `>`, `&`, or trailing punctuation. "Session timer", not "Session lives 10 minutes"; "Unused retry settings", not "retry.enabled is ignored".
+4. Named by concern, unique in the spec, plain words; no value, no outcome, no backtick, URL, `@`, `<`, `>`, `&`, or trailing punctuation. The body and the scenario lines hold no backtick, `@`, `<`, `>`, or `&` either (write "at", "less than", "and"; quote a literal with double quotes); the checker reports them. "Session timer", not "Session lives 10 minutes"; "Unused retry settings", not "retry.enabled is ignored".
 5. Body of one to three sentences, under 500 characters, with SHALL or MUST (strict validation requires it in the body). Name each governing configuration key with its shipped default in parentheses (the value in the base configuration file, or the code default when the file does not set it), and mark a constant "(a fixed value)".
 6. States current behavior, bugs included. Never "should", "bug", "fix", "intended", "incorrectly", or "currently" (the whole file is current).
 7. No code, file, class, method, line number, date, or citation in the body. Prose between the header and the first scenario is copied blindly by every later MODIFIED delta.
@@ -60,4 +60,6 @@ Every refusal, rejection, timeout, and fallback is a scenario of the requirement
 
 12. Every requirement and scenario has its evidence line with at least one resolvable citation and a test reference or `UNTESTED` (format: `evidence-format.md`).
 13. Every `Looks unintended`, `Open question`, `Docs disagree`, `Config`, and `Security` item from the extraction is in the evidence or consciously dropped.
-14. `openspec validate --all --strict --no-interactive` passes, `ccm-baseline-check` reports no finding, and nothing outside `openspec/` and `docs/openspec-baseline.md` changed. A finding is fixed, never silenced: no placeholder text, no Purpose padded with filler, no scenario dropped to satisfy uniqueness instead of being renamed by condition.
+14. No extraction claim that something is unreachable, unused, dead, or has no effect was taken on trust: you grepped for its callers or readers yourself and read each hit before leaving it out of the spec or stating "has no effect".
+15. Every behavior the extraction left out as another capability's is in that capability's spec or, when that capability is not specified yet, listed under its name in the evidence file's `### Not specified`. A behavior is left out as another capability's only when that capability is in the map.
+16. `openspec validate --all --strict --no-interactive` passes, `ccm-baseline-check` reports no finding, and nothing outside `openspec/` and `docs/openspec-baseline.md` changed. A finding is fixed, never silenced: no placeholder text, no Purpose padded with filler, no scenario dropped to satisfy uniqueness instead of being renamed by condition.

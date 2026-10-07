@@ -12,6 +12,10 @@ Repository: tally (a ccmagic test fixture). Baseline commit: 0000000000000000000
 
 - The module exports: wiring, not behavior.
 
+### Secrets in configuration
+
+None found.
+
 ## 2. counting
 
 Path key: `Counter` is `src/counter.js`.

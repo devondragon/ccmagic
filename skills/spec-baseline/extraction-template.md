@@ -1,6 +1,6 @@
 # Extraction template
 
-The prompt for one extraction subagent, one per accepted capability. Fill in the `{placeholders}` and send the text below the line verbatim; do not shorten the rules. Dispatch with the `Explore` agent type (it has no write tools) and `model: "sonnet"`, at most 4 at once, all of a batch in one message.
+The prompt for one extraction subagent, one per accepted capability. Fill in the `{placeholders}` and send the text below the line verbatim; do not shorten the rules. Dispatch with the `Explore` agent type (it has no write tools) and `model: "sonnet"`, at most 4 at once, all of a batch in one message, and wait for every agent in the batch to return before the next batch or any authoring. `{neighbors}` lists only capabilities in the map, each with its purpose; in one-capability mode that includes the rows marked `not yet specified`.
 
 ---
 
@@ -10,7 +10,7 @@ You are extracting the current behavior of one capability of the repository at `
 **Purpose (observable behavior):** {purpose}
 **Start from these files:** {implementing_files}
 **Tests that may pin it:** {tests}
-**Belongs to other capabilities (do not extract):** {neighbors}
+**Other capabilities in the map (behavior that belongs to one of these may be left out):** {neighbors}
 **Configuration files:** {config_files}
 
 Read the code for facts. Read docs only to report where they disagree with the code.
@@ -39,14 +39,15 @@ Rules:
 1. Every behavior needs at least one citation with a full repository-relative path and a real line number you read. Never abbreviate a path after its first use; never cite from memory.
 2. A test counts only if it asserts the behavior. A test that merely executes the code is not a pin: say UNTESTED and name the test in parentheses.
 3. State bugs as behavior, in neutral words, and flag them `Looks unintended`. Do not describe a fix or the intended behavior.
-4. A setting that is read but has no effect, or never read at all, is a behavior ("`key` has no effect"). Code with no caller is not a behavior: list it under "Unreachable".
+4. A setting that is read but has no effect, or never read at all, is a behavior ("`key` has no effect"). Code with no caller is not a behavior: list it under "Unreachable". Before calling anything unreachable, unused, or without effect, search the whole repository for its callers or readers and say what you searched for.
 5. **Never copy a credential, token, password, API key, or other secret value into your output.** Name the key and say it holds a credential-looking value.
 6. Leave out log text, thread pool sizes, class and method names as behavior, and anything observable only in a debugger; a race goes in as a behavior flagged `Looks unintended` with the interleaving.
 7. Order check sequences as the code runs them when the order changes the outcome.
+8. Leave a behavior out as another capability's only when that capability is in the list above, and then list it under "Capability boundary" with the capability's name. A behavior that belongs to no listed capability is extracted here, with a boundary note saying where you think it belongs.
 
 After the list:
 
-- **Unreachable:** code in these files with no caller or no effect nobody would expect, with `path:line`.
+- **Unreachable:** code in these files with no caller or no effect nobody would expect, with `path:line` and the search that found no caller.
 - **Not behavior:** wiring, logging, and infrastructure you read and left out, one line each.
 - **Secrets seen:** configuration keys whose values look like credentials, by key name only.
-- **Capability boundary:** anything you read that belongs to another capability, or behavior of this capability you found outside the start files, with `path:line`. Say plainly if the capability as drawn looks wrong (it should be split, merged, or renamed).
+- **Capability boundary:** each behavior you left out because it belongs to a listed capability, under that capability's name, one line each with `path:line`; and behavior of this capability you found outside the start files, with `path:line`. Say plainly if the capability as drawn looks wrong (it should be split, merged, or renamed).

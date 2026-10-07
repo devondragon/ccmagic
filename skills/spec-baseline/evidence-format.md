@@ -17,14 +17,17 @@ How to read this file. Each `### Requirement:` heading below matches a heading i
 |---|---|---|---|---|
 | <name> | <one line, observable behavior> | `<path>`, ... | `<test file or class>`, ... or none | specified, N requirements |
 | <name> | ... | ... | ... | mapped, about N requirements |
+| <neighbor> | ... | ... | ... | not yet specified |
 
 ### Not specified
 
 - <item>: <one-line reason (cross-cutting wiring, unreachable code, log-only behavior, deployment files)>
+- <neighbor> (not yet specified), left out of <capability>:
+  - <behavior>, `path:N`
 
 ### Secrets in configuration
 
-<Which configuration keys hold credentials, by key name only, or "None seen.">
+<Which configuration keys hold credentials, by key name only, or "None found.">
 
 ## 2. <capability>
 
@@ -44,6 +47,12 @@ Path key: `Key` is `path/to/File.ext`, `Other` is `path/to/dir`.
 - <behavior of this capability that is not in the spec, and why, or where it is specified instead>
 ```
 
+## Map and subsections
+
+- **Status.** Each map row is `specified, N requirements` (its spec is written), `mapped, about N requirements` (accepted at Stop 1, not specified yet), or `not yet specified` (a neighbor named in a `--capability` run so that behavior left out of the specified capability has somewhere to go).
+- **Every mode writes both subsections.** `### Not specified` and `### Secrets in configuration` are part of the header in a full run and in a `--capability` run alike, and each holds `None found.` when it has nothing.
+- **Behavior left to another capability.** A behavior is left out of a capability as another's only when that capability has a map row. When that capability has no spec yet, the behavior is listed under its name in `### Not specified`, one nested line per behavior with a citation, so it reaches a spec when that capability is specified.
+
 ## Rules the checker enforces
 
 - **Header.** Before the first `## ` heading there is a line holding `Baseline commit: <40-hex SHA>`: the commit, clean, at which the citations were written (the skill records `git rev-parse HEAD` in Step 1, when the tree is clean).
@@ -58,10 +67,13 @@ Path key: `Key` is `path/to/File.ext`, `Other` is `path/to/dir`.
   - `` `Symbol.member` ``: some file whose name without its extension is `Symbol` (outside `openspec/`) contains `member` as a whole word (JUnit, xUnit, a Python test class).
   Other backticked text in the field (a cookie name, a header) is ignored.
 - **Uniqueness.** Requirement names are unique within a spec, scenario names unique within a requirement, and the evidence repeats no heading or scenario line.
-- **Spec shape.** Requirement and scenario names hold no backtick, `@`, `<`, `>`, `&`, URL, or trailing punctuation; a requirement body is under 500 bytes; a requirement has fewer than 5 scenarios.
+- **Spec shape.** Requirement and scenario names hold no backtick, `@`, `<`, `>`, `&`, URL, or trailing punctuation; requirement bodies and scenario lines hold no backtick, `@`, `<`, `>`, or `&` (Reeve rewrites them in ticket bodies); a requirement body is under 500 bytes; a requirement has fewer than 5 scenarios; `## Purpose` is present and at least 50 characters.
+- **Project context.** `openspec/config.yaml` exists and has a top-level `context:` block.
 - **Dashes.** No em or en dash in a spec, `openspec/config.yaml`, or this file.
-- **Changed paths.** Nothing outside `openspec/` and `docs/openspec-baseline.md` differs from the base (the merge base of HEAD with the default branch, or `--base REF`), and no untracked file outside them exists.
+- **Changed paths.** Nothing outside `openspec/` and `docs/openspec-baseline.md` differs from the base (the merge base of HEAD with the default branch, or `--base REF`), and no untracked file outside them exists. Not checked under `--stale`.
+
+Every rule is a finding and makes the exit 1; the checker has no warning level.
 
 ## What `--check` adds
 
-With `--stale`, `bin/ccm-baseline-check` diffs each cited file from its section's baseline commit to HEAD. A citation is stale when a later commit replaced or removed one of its lines, inserted lines inside its range, deleted the file, or the file was not at the baseline commit at all. The output groups stale citations by capability and requirement and names the commits that touched each file. A stale citation does not mean the spec is wrong, only that someone should look.
+With `--stale`, `bin/ccm-baseline-check` diffs each cited file from its section's baseline commit to HEAD. A citation is stale when a later commit replaced or removed one of its lines, inserted lines inside its range, deleted the file, or the file was not at the baseline commit at all. The output groups stale citations by capability and requirement and names the commits that touched each file. Each stale citation carries `kind` (`scenario`, `flag`, or `prose`), `scenario` (the scenario name, or null), and `flag` (the label of a flag line such as `Looks unintended` or `Config`, or null). The changed-paths rule is skipped, since code commits after the baseline are expected. A stale citation does not mean the spec is wrong, only that someone should look.

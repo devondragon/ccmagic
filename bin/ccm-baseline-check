@@ -15,6 +15,12 @@
 #       <, >, &, a URL, or trailing punctuation
 #   body-length         a requirement body (the text between its heading and
 #       its first scenario) of 500 bytes or more
+#   body-characters     a backtick, @, <, >, or & in a requirement body or a
+#       scenario line (Reeve rewrites them in ticket bodies)
+#   no-purpose, purpose-length  a spec with no "## Purpose" section, or one
+#       whose text is under 50 characters
+#   no-config-context   openspec/config.yaml missing, or with no top-level
+#       "context:" block
 #   scenario-count      a requirement with 5 or more scenarios
 #   no-evidence-section, no-evidence-heading, no-evidence-line  a spec, a
 #       requirement, or a scenario with no matching evidence section, heading,
@@ -34,7 +40,11 @@
 #   dash                an em or en dash in a spec, openspec/config.yaml, or
 #       the evidence file
 #   outside-allowlist   a changed path outside openspec/ and
-#       docs/openspec-baseline.md
+#       docs/openspec-baseline.md (not checked under --stale)
+#
+# Every rule is a finding and makes the exit 1; there is no warning level.
+# Each rule states something the skill must fix before it commits, and a
+# repository can meet each one without changing code.
 #
 # Evidence file format (the same text is in
 # skills/spec-baseline/evidence-format.md; keep the two in step):
@@ -75,7 +85,8 @@
 # capability section, whether a commit after its baseline commit touched the
 # cited lines (git diff <baseline> HEAD), grouped by requirement, with every
 # commit since the baseline that touched the file (file_commits, newest
-# first). A stale citation also makes the exit 1.
+# first). A stale citation also makes the exit 1. The changed-paths check is
+# skipped: code commits after the baseline are what staleness measures.
 #
 # Exit codes: 0 clean, 1 findings (or stale citations), 3 cannot read (not a
 # git repository, no evidence file, no spec, an unknown --base, or with
@@ -83,7 +94,9 @@
 # Output: {clean, specs, requirements, scenarios, citations,
 #          base: {ref, commit}, findings: [{rule, file, line, message}]}
 #   with --stale also stale_count and stale: [{capability, requirement,
-#   citations: [{scenario, evidence_line, citation, path, from, to, baseline,
+#   citations: [{kind (scenario, flag, prose), scenario (name or null), flag
+#   (a flag line's label, such as "Looks unintended", or null),
+#   evidence_line, citation, path, from, to, baseline,
 #   reason (changed, removed, missing-at-baseline), file_commits}]}];
 #   on exit 3, {clean: false, unreadable: "<why>"}.
 
@@ -94,7 +107,7 @@ usage() { echo "ccm-baseline-check: $1" >&2; exit 4; }
 base_arg="" stale=false
 while [ $# -gt 0 ]; do
   case $1 in
-    -h|--help) sed -n '2,88p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,/^set -euo/p' "$0" | sed '$d'; exit 0 ;;
     --stale) stale=true ;;
     --base) [ $# -ge 2 ] || usage "--base needs a ref"; base_arg=$2; shift ;;
     --base=*) base_arg=${1#--base=} ;;
@@ -140,6 +153,13 @@ for f in "${specs[@]}" openspec/config.yaml "$EV"; do
     while read -r n; do finding dash "$f" "$n" "em or en dash"; done
 done
 
+# ---- project context ---------------------------------------------------------
+if [ ! -f openspec/config.yaml ]; then
+  finding no-config-context openspec/config.yaml 0 "openspec/config.yaml is missing"
+elif ! grep -q '^context:' openspec/config.yaml; then
+  finding no-config-context openspec/config.yaml 1 'openspec/config.yaml has no top-level "context:" block'
+fi
+
 # ---- specs, evidence, citations, tests -----------------------------------------
 git ls-files -z --cached --others --exclude-standard | tr '\0' '\n' >"$tmp/files"
 
@@ -177,6 +197,18 @@ function checkname(name, file, line, what) {
   if (name ~ /[`@<>&]/ || name ~ /:\/\// || name ~ /[.,;:!?]$/)
     emit("name-characters", file, line, what " name \"" name "\" holds a backtick, @, <, >, &, a URL, or trailing punctuation")
 }
+function endpurpose() {
+  if (inpurpose && length(ptext) < 50)
+    emit("purpose-length", sfile, PL, "the Purpose is " length(ptext) " characters (the minimum is 50)")
+  inpurpose = 0; ptext = ""
+}
+function endspec() {
+  endbody(); endpurpose()
+  if (sfile != "" && !(sfile in DONE)) {
+    DONE[sfile] = 1
+    if (!(sfile in PURP)) emit("no-purpose", sfile, 1, "the spec has no \"## Purpose\" section")
+  }
+}
 function endbody() {
   if (inbody && rkey != "" && length(body) >= 500)
     emit("body-length", sfile, RL[rkey], "requirement \"" RN[rkey] "\" has a body of " length(body) " bytes (the limit is under 500)")
@@ -207,17 +239,20 @@ BEGIN {
 }
 # ---- a spec -------------------------------------------------------------------
 FILENAME != EV && FNR == 1 {
-  endbody()
+  endspec()
   sfile = FILENAME; cap = FILENAME; sub(/\/spec\.md$/, "", cap); sub(/.*\//, "", cap)
   SPEC[cap] = sfile; req = ""; rkey = ""
 }
 FILENAME != EV {
+  if ($0 ~ /^#/) endpurpose()
+  if ($0 ~ /^## Purpose[ \t\r]*$/) { PURP[sfile] = 1; PL = FNR; inpurpose = 1; ptext = ""; req = ""; rkey = ""; next }
+  if (inpurpose) { if (trim($0) != "") ptext = (ptext == "" ? "" : ptext " ") trim($0); next }
   if ($0 ~ /^### Requirement:/) {
     endbody()
     name = $0; sub(/^### Requirement:/, "", name); name = trim(name)
     rkey = cap SUBSEP name; req = name
     if (rkey in RL) { emit("duplicate-requirement", sfile, FNR, "requirement \"" name "\" appears twice in " cap); rkey = ""; req = ""; next }
-    RL[rkey] = FNR; RN[rkey] = name; RCAP[rkey] = cap; SC[rkey] = 0; nreq++
+    RL[rkey] = FNR; RN[rkey] = name; RCAP[rkey] = cap; SC[rkey] = 0; nreq++; scn = ""
     checkname(name, sfile, FNR, "requirement")
     inbody = 1; body = ""
     next
@@ -228,16 +263,18 @@ FILENAME != EV {
     name = $0; sub(/^#### Scenario:/, "", name); name = trim(name)
     k = rkey SUBSEP name
     if (k in SL) { emit("duplicate-scenario", sfile, FNR, "scenario \"" name "\" appears twice in requirement \"" req "\""); next }
-    SL[k] = FNR; SN[k] = name; SREQ[k] = rkey; SC[rkey]++; nscen++
+    SL[k] = FNR; SN[k] = name; SREQ[k] = rkey; SC[rkey]++; nscen++; scn = name
     checkname(name, sfile, FNR, "scenario")
     next
   }
   if ($0 ~ /^##? /) { endbody(); req = ""; rkey = ""; next }
+  if (rkey != "" && $0 ~ /[`@<>&]/)
+    emit("body-characters", sfile, FNR, (scn == "" ? "the body of requirement \"" req "\"" : "scenario \"" scn "\" of \"" req "\"") " holds a backtick, @, <, >, or &")
   if (inbody && trim($0) != "") body = (body == "" ? "" : body " ") trim($0)
   next
 }
 # ---- the evidence file --------------------------------------------------------
-FNR == 1 { endbody() }
+FNR == 1 { endspec() }
 /^## / {
   ecap = ""; ereq = ""; split("", PK)
   h = $0; sub(/^## [0-9]+\. /, "", h); h = trim(h)
@@ -272,11 +309,13 @@ ecap != "" && /^Path key/ {
 }
 {
   # Citations, anywhere in the file.
-  line = $0; lastpath = ""; scen = ""; cites = 0
+  line = $0; lastpath = ""; scen = ""; cites = 0; kind = "prose"; flag = ""
   if (ecap != "" && ereq != "" && line ~ /^- Scenario: /) {
     rest = substr(line, 13); i = index(rest, ". ")
     if (i > 0) { scen = substr(rest, 1, i - 1); tail = substr(rest, i + 2) } else { scen = rest; sub(/\.$/, "", scen); tail = "" }
-    scen = trim(scen)
+    scen = trim(scen); kind = "scenario"
+  } else if (match(line, /^- [A-Z][A-Za-z ]*: /)) {
+    kind = "flag"; flag = substr(line, 3, RLENGTH - 4)
   }
   n = split(line, P, "`"); outside = P[1]
   for (j = 2; j <= n; j += 2) {
@@ -299,7 +338,7 @@ ecap != "" && /^Path key/ {
       lastpath = path
     }
     cites++; ncites++
-    if (ecap != "") print "C\t" ecap "\t" ereq "\t" scen "\t" FNR "\t" sp "\t" path "\t" a "\t" bb
+    if (ecap != "") print "C\t" ecap "\t" ereq "\t" scen "\t" FNR "\t" sp "\t" path "\t" a "\t" bb "\t" kind "\t" flag
     if (!(path in known) || linecount(path) < 0) { emit("citation-file-missing", EV, FNR, "cited file not found: " path); continue }
     lc = linecount(path)
     if (a + 0 < 1 || bb + 0 > lc || bb + 0 < a + 0) { emit("citation-out-of-range", EV, FNR, path ":" r " is outside the file (it has " lc " lines)"); continue }
@@ -325,7 +364,7 @@ ecap != "" && /^Path key/ {
   if (refs == 0 && tf !~ /UNTESTED/) emit("no-test", EV, FNR, "scenario \"" scen "\" names no test and is not marked UNTESTED")
 }
 END {
-  endbody()
+  endspec()
   for (k in SC) if (SC[k] >= 5) emit("scenario-count", SPEC[RCAP[k]], RL[k], "requirement \"" RN[k] "\" has " SC[k] " scenarios (the limit is under 5)")
   for (c in SPEC) if (!(c in ES)) emit("no-evidence-section", SPEC[c], 1, "the evidence file has no \"## N. " c "\" section")
   for (k in RL) {
@@ -369,16 +408,19 @@ else
     base_ref=HEAD
   fi
 fi
-{
-  if [ -n "$base" ]; then git diff -z --name-only --no-renames "$base" --; fi
-  git ls-files -z --others --exclude-standard
-} | tr '\0' '\n' | LC_ALL=C sort -u | while IFS= read -r p; do
-  [ -n "$p" ] || continue
-  case $p in
-    openspec/*|"$EV") ;;
-    *) finding outside-allowlist "$p" 0 "changed outside openspec/ and $EV" ;;
-  esac
-done
+# Skipped under --stale: code commits after the baseline are expected there.
+if ! $stale; then
+  {
+    if [ -n "$base" ]; then git diff -z --name-only --no-renames "$base" --; fi
+    git ls-files -z --others --exclude-standard
+  } | tr '\0' '\n' | LC_ALL=C sort -u | while IFS= read -r p; do
+    [ -n "$p" ] || continue
+    case $p in
+      openspec/*|"$EV") ;;
+      *) finding outside-allowlist "$p" 0 "changed outside openspec/ and $EV" ;;
+    esac
+  done
+fi
 
 # ---- stale citations ---------------------------------------------------------
 : >"$tmp/stale"
@@ -422,7 +464,7 @@ if $stale; then
         s = hs[k, i] + 0; c = hc[k, i] + 0
         if ((c > 0 && s <= b && s + c - 1 >= a) || (c == 0 && s >= a && s < b)) { why = "changed"; break }
       }
-      if (why != "") printf "S\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", $3, $4, $5, $6, $7, path, a, b, sha, why, K[k]
+      if (why != "") printf "S\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", $3, $4, $5, $6, $7, path, a, b, sha, why, K[k], $11, $12
     }
   ' "$tmp/facts" "$tmp/cites" >"$tmp/stale"
 fi
@@ -440,7 +482,9 @@ jq -R -s --arg base "$base" --arg base_ref "$base_ref" '
 if $stale; then
   jq -R -s '
     split("\n") | map(select(length > 0) | split("\t") | select(.[0] == "S")
-      | {capability: .[1], requirement: .[2], scenario: .[3], evidence_line: (.[4] | tonumber),
+      | {capability: .[1], requirement: .[2], kind: .[12],
+         scenario: (if .[3] == "" then null else .[3] end),
+         flag: (if (.[13] // "") == "" then null else .[13] end), evidence_line: (.[4] | tonumber),
          citation: .[5], path: .[6], from: (.[7] | tonumber), to: (.[8] | tonumber),
          baseline: .[9], reason: .[10], file_commits: (.[11] // "" | split(",") | map(select(length > 0)))})
     | group_by([.capability, .requirement])
