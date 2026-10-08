@@ -1597,6 +1597,24 @@ validate_timeout_seconds: 900'
   check "$(jq -c 'del(.checks[].log, .checks[].duration_s)' <<<"$OUT")" "$(jq -c 'del(.checks[].log, .checks[].duration_s)' <<<"$first")"
 }
 
+# A minimal Linux image (the Cyrus container) has no ps: the worker and --wait
+# fall back to /proc. A ps stub that fails stands in for a missing ps. Linux only.
+validate_start_without_ps() {
+  if [ ! -r /proc/self/stat ]; then echo "    skipped: no /proc on this host"; return 0; fi
+  config 'validate_test: sleep 2
+validate_timeout_seconds: 900'
+  mkdir -p "$T/nops"
+  printf '#!/bin/sh\nexit 127\n' >"$T/nops/ps"
+  chmod +x "$T/nops/ps"
+  PATH="$T/nops:$PATH" run "$BIN/ccm-validate" --start
+  check "$(jqval .status),$RC" "started,0"
+  [ "$(jqval .pid)" != null ]
+  PATH="$T/nops:$PATH" run "$BIN/ccm-validate" --wait 1
+  check "$(jqval .status),$RC" "running,6"
+  PATH="$T/nops:$PATH" run "$BIN/ccm-validate" --wait 20
+  check "$(jqval .status),$RC,$(check_status test)" "pass,0,passed"
+}
+
 validate_wait_returns_running_then_finishes() {
   config 'validate_test: sleep 3
 validate_timeout_seconds: 900'
