@@ -1564,6 +1564,141 @@ validate_node_check_next_to_gradle_still_needs_install() {
   check "$(jqval .status),$(jqval '.install // "none"')" "nothing-to-run,none"
 }
 
+# ---- ccm-validate --start and --wait (long checks) --------------------------
+
+# The state file of the detached run, in the test repo's git dir.
+vstate() { jq -r "$1" .git/ccmagic/validate/run.json; }
+
+has_timeout_bin() { command -v timeout >/dev/null || command -v gtimeout >/dev/null; }
+
+validate_start_then_wait_passes() {
+  config 'validate_lint: "true"
+validate_test: echo suite ran
+validate_timeout_seconds: 900'
+  run "$BIN/ccm-validate" --start
+  check "$(jqval .status),$RC,$(jq -c .checks <<<"$OUT"),$(jqval .timeout_seconds)" 'started,0,["lint","test"],900'
+  check "$(jqval .limit_s)" "$((2 * 900 + 120))"
+  run "$BIN/ccm-validate" --wait 20
+  check "$(jqval .status),$RC,$(check_status lint),$(check_status test),$(check_status build)" \
+    "pass,0,passed,passed,skipped"
+  grep -q "suite ran" "$(jq -r '.checks[] | select(.name == "test") | .log' <<<"$OUT")"
+  # The final JSON is the plain run's, and a later --wait prints it again.
+  local first=$OUT
+  run "$BIN/ccm-validate" --wait 0
+  check "$RC,$OUT" "0,$first"
+  run "$BIN/ccm-validate"
+  check "$(jq -c 'del(.checks[].log, .checks[].duration_s)' <<<"$OUT")" "$(jq -c 'del(.checks[].log, .checks[].duration_s)' <<<"$first")"
+}
+
+validate_wait_returns_running_then_finishes() {
+  config 'validate_test: sleep 3
+validate_timeout_seconds: 900'
+  run "$BIN/ccm-validate" --start
+  check "$RC" "0"
+  run "$BIN/ccm-validate" --wait 1
+  check "$(jqval .status),$RC,$(jqval .running),$(jq -c .done <<<"$OUT"),$(jq -c .pending <<<"$OUT")" 'running,6,test,[],[]'
+  [ "$(jqval .elapsed_s)" -ge 1 ]
+  run "$BIN/ccm-validate" --wait 20
+  check "$(jqval .status),$RC,$(check_status test)" "pass,0,passed"
+}
+
+validate_start_failing_check_fails() {
+  config 'validate_lint: echo lint broke; exit 3
+validate_test: "true"
+validate_timeout_seconds: 900'
+  run "$BIN/ccm-validate" --start
+  run "$BIN/ccm-validate" --wait 20
+  check "$(jqval .status),$RC,$(check_status lint),$(check_status test)" "fail,1,failed,passed"
+  check "$(jq -r '.checks[] | select(.name == "lint") | .exit_code' <<<"$OUT")" "3"
+  [[ $(jq -r '.checks[] | select(.name == "lint") | .tail' <<<"$OUT") == *"lint broke"* ]]
+}
+
+validate_start_check_past_its_timeout_fails() {
+  has_timeout_bin || { echo "  (skipped: no timeout binary)"; return 0; }
+  config 'validate_test: sleep 5
+validate_timeout_seconds: 1'
+  run "$BIN/ccm-validate" --start
+  run "$BIN/ccm-validate" --wait 20
+  check "$(jqval .status),$RC,$(check_status test)" "fail,1,failed"
+  [[ $(jqval '.checks[] | select(.name == "test") | .reason') == "timed out"* ]]
+}
+
+# A run killed without writing a result is failed, and the check it left
+# running (in the run's process group) is stopped too.
+validate_dead_run_is_reported_failed() {
+  config 'validate_lint: "true"
+validate_test: sleep 2 && touch survived
+validate_build: "true"
+validate_timeout_seconds: 900'
+  run "$BIN/ccm-validate" --start
+  check "$RC" "0"
+  local pid
+  pid=$(vstate .pid)
+  for _ in 1 2 3 4 5; do [ "$(vstate .running)" = test ] && break; sleep 1; done
+  kill -KILL "$pid"
+  run "$BIN/ccm-validate" --wait 10
+  check "$(jqval .status),$RC,$(check_status lint),$(check_status test),$(check_status build)" \
+    "fail,1,passed,failed,skipped"
+  [[ $(jqval .reason) == *"(pid $pid) ended without a result"* ]]
+  [[ $(jqval '.checks[] | select(.name == "build") | .reason') == "not run: "* ]]
+  sleep 3
+  [ ! -e survived ]
+  # The recorded result stands.
+  run "$BIN/ccm-validate" --wait 0
+  check "$(jqval .status),$RC" "fail,1"
+}
+
+validate_second_start_while_live_is_refused() {
+  config 'validate_test: sleep 3
+validate_timeout_seconds: 900'
+  run "$BIN/ccm-validate" --start
+  local id
+  id=$(jqval .run)
+  run "$BIN/ccm-validate" --start
+  check "$(jqval .status),$RC,$(jqval .run)" "running,6,$id"
+  [[ $(jqval .note) == *"already in progress"* ]]
+  run "$BIN/ccm-validate" --wait 20
+  check "$(jqval .status),$RC" "pass,0"
+  # Once it has finished, a new run starts.
+  run "$BIN/ccm-validate" --start
+  check "$(jqval .status),$RC" "started,0"
+  [ "$(jqval .run)" != "$id" ]
+  run "$BIN/ccm-validate" --wait 20
+  check "$RC" "0"
+}
+
+# A run past its overall limit is stopped and failed: here a check that
+# ignores the timeout's TERM, with no margin on the limit.
+validate_run_past_overall_limit_is_stopped() {
+  config 'validate_test: trap "" TERM; sleep 3; touch late
+validate_timeout_seconds: 1'
+  CCM_VALIDATE_LIMIT_MARGIN_SECONDS=0 run "$BIN/ccm-validate" --start
+  check "$(jqval .limit_s)" "1"
+  run "$BIN/ccm-validate" --wait 10
+  check "$(jqval .status),$RC,$(check_status test)" "fail,1,failed"
+  [[ $(jqval .reason) == *"overall limit of 1s"* ]]
+  sleep 3
+  [ ! -e late ]
+}
+
+validate_start_and_wait_edges() {
+  # Nothing to run: no process, the plain result.
+  run "$BIN/ccm-validate" --start
+  check "$(jqval .status),$RC" "nothing-to-run,2"
+  [ ! -e .git/ccmagic/validate/run.json ]
+  # No run to wait for, and option misuse, are usage errors.
+  run "$BIN/ccm-validate" --wait
+  check "$RC" "4"
+  run "$BIN/ccm-validate" --start --list
+  check "$RC" "4"
+  run "$BIN/ccm-validate" --wait abc
+  check "$RC" "4"
+  config 'validate_test: "true"
+validate_timeout_seconds: 7201'
+  run "$BIN/ccm-validate" --only test
+  check "$RC" "4"
+}
+
 # ---- ccm-review-route ------------------------------------------------------
 
 # seed_branch FILE LINES [FILE LINES...]: on a feature branch, commit each FILE
