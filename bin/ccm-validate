@@ -3,10 +3,14 @@
 #
 # Usage: ccm-validate [--only CHECK[,CHECK...]] [--list]
 #        ccm-validate --install
+#        ccm-validate --start [--only CHECK[,CHECK...]]
+#        ccm-validate --wait [SECONDS]
 #
 #   --only     run only these checks (format, lint, types, test, build)
 #   --list     print the resolved commands without running them
 #   --install  only install missing Node dependencies (below), run no check
+#   --start    run the checks in a detached process and return at once
+#   --wait     wait up to SECONDS (default 480, at most 570) for that run
 #
 # Each check has at most one command, and its exit code is the verdict. The
 # command comes from config key validate_<check> (a value of `none` disables
@@ -28,7 +32,7 @@
 # verification the build defines (tests included), not only packaging.
 #
 # Each command runs from the repo root under `timeout` (or `gtimeout`) with
-# validate_timeout_seconds (default 540); a check that hits it fails as
+# validate_timeout_seconds (default 540, at most 7200); a check that hits it fails as
 # "timed out". With neither binary installed, checks run unbounded and the
 # output says so in `note`. Full output goes to a log file under the git dir;
 # a failed check also carries its last 40 lines as `tail`.
@@ -69,27 +73,74 @@
 #   environment     5  missing dependencies could not be installed; no check ran
 #   installed       0  (--install) the dependencies were installed
 #   not-needed      0  (--install) nothing to install
+#   started         0  (--start) the run was launched
+#   running         6  (--start, --wait) a run is still in progress
 #   (not a git repository 3, usage error 4)
+#
+# Long checks (--start and --wait): a caller whose tool call has a time limit
+# (Claude Code's Bash tool stops a call at 10 minutes) cannot run a check that
+# takes longer in one call. `--start` resolves the checks as a plain run does,
+# then runs the whole plain run (the install included) in a detached process
+# in its own session, stdin from /dev/null and output in run.out in the log
+# directory, so it outlives the call that started it. Each check keeps its own
+# limit of validate_timeout_seconds (at most 7200). It prints {status:
+# "started", run, pid, timeout_seconds, limit_s, checks: [names]}. When no
+# check would run, nothing is launched and it prints the plain run's
+# nothing-to-run result (exit 2). While a run is live, `--start` launches
+# nothing and prints that run's running object (exit 6).
+#
+# The run's state is run.json in the log directory: {run, pid, pgid,
+# started_at, timeout_seconds, limit_s, planned: [{name, command, source}],
+# results: [check objects as each finishes], running: name | "install" |
+# null, check_pgid (the process group `timeout` made for the running check),
+# final: null | the plain run's JSON, exit_code, finished_at}.
+#
+# `--wait [SECONDS]` polls run.json once a second. When the run has finished
+# it prints `final` exactly as the plain run printed it and exits with its
+# code (0, 1, 2, or 5); this can be repeated. Still running after SECONDS: it
+# prints {status: "running", run, elapsed_s, limit_s, done: [names], running,
+# pending: [names]} and exits 6. A run whose process is gone without a result,
+# or still running past limit_s (the planned checks' limits, one more for a
+# planned install, plus 120 seconds), is stopped (its process group and the
+# check's are sent TERM, then KILL) and recorded as failed: the check it was running fails and
+# the rest are skipped, with a top-level `reason`, exit 1. No run.json is a
+# usage error (4).
 
 set -euo pipefail
 # shellcheck source=bin/ccm-lib.sh
 . "$(dirname "${BASH_SOURCE[0]}")/ccm-lib.sh"
+# This script by absolute path, for --start to launch it after the cd below.
+self="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")"
 
 ALL_CHECKS="format lint types test build"
 
-only="" list=false install_only=false
+only="" list=false install_only=false mode=plain wait_s=480 run_id=""
 while [ $# -gt 0 ]; do
   case $1 in
     --only) only=${2:-}; [ -n "$only" ] || { echo "ccm-validate: --only needs a value" >&2; exit 4; }; shift ;;
     --list) list=true ;;
     --install) install_only=true ;;
-    -h|--help) sed -n '2,72p' "$0"; exit 0 ;;
+    --start) mode=start ;;
+    --wait)
+      mode="wait"
+      case ${2:-} in ''|-*) ;; *) wait_s=$2; shift ;; esac ;;
+    --worker) mode=worker; run_id=${2:-}; [ -n "$run_id" ] || exit 4; shift ;;
+    -h|--help) sed -n '2,106p' "$0"; exit 0 ;;
     *) echo "ccm-validate: unknown argument $1" >&2; exit 4 ;;
   esac
   shift
 done
 if [ "$install_only" = true ] && { [ -n "$only" ] || [ "$list" = true ]; }; then
   echo "ccm-validate: --install takes no other option" >&2; exit 4
+fi
+if [ "$mode" != plain ] && { [ "$install_only" = true ] || [ "$list" = true ]; }; then
+  echo "ccm-validate: --start and --wait take no --list or --install" >&2; exit 4
+fi
+if [ "$mode" = wait ]; then
+  [ -z "$only" ] || { echo "ccm-validate: --wait takes no --only" >&2; exit 4; }
+  case $wait_s in ''|*[!0-9]*) echo "ccm-validate: --wait needs a whole number of seconds, got '$wait_s'" >&2; exit 4 ;; esac
+  # Stay under the 10-minute limit of the tool call that runs --wait.
+  [ "$wait_s" -le 570 ] || wait_s=570
 fi
 
 checks=$ALL_CHECKS
@@ -114,6 +165,104 @@ timeout_s=$(jq -r '.validate_timeout_seconds' <<<"$config")
 case $timeout_s in
   ''|*[!0-9]*) echo "ccm-validate: validate_timeout_seconds must be a whole number, got '$timeout_s'" >&2; exit 4 ;;
 esac
+if [ "$timeout_s" -gt 7200 ]; then
+  echo "ccm-validate: validate_timeout_seconds may be at most 7200, got $timeout_s" >&2; exit 4
+fi
+
+# ---- detached runs (--start, --wait) ----------------------------------------
+
+state_file="$(ccm_state_dir)/validate/run.json"
+
+# st_update JQ_ARGS...: apply a jq filter to the state file, atomically.
+st_update() {
+  local tmp="$state_file.tmp.$$"
+  jq "$@" "$state_file" >"$tmp" && mv -f "$tmp" "$state_file"
+}
+
+# run_alive PID: the process is running and is a ccm-validate (a dead
+# worker's pid can be reused by another program).
+run_alive() {
+  case $1 in ''|null) return 1 ;; esac
+  kill -0 "$1" 2>/dev/null || return 1
+  ps -o command= -p "$1" 2>/dev/null | grep -q ccm-validate
+}
+
+# state_live: the state file names a run with no result whose process lives.
+# A worker that ended between the two reads has written its result, so the
+# second read settles it.
+state_live() {
+  [ -f "$state_file" ] || return 1
+  [ "$(jq -r '.final == null' "$state_file")" = true ] || return 1
+  run_alive "$(jq -r .pid "$state_file")" && return 0
+  sleep 1
+  [ "$(jq -r '.final == null' "$state_file")" = true ] || return 1
+  run_alive "$(jq -r .pid "$state_file")"
+}
+
+running_json() {
+  jq -c --argjson now "$(date +%s)" '{status: "running", run, elapsed_s: ($now - .started_at),
+    limit_s, done: ([.results[].name] as $r | [.planned[].name | select(. as $n | $r | index($n))]), running,
+    pending: ([.planned[].name] - [.results[].name] - [.running])}' "$state_file"
+}
+
+# abandon REASON: stop what is left of the run and record it as failed. The
+# check it was running fails with REASON; the planned checks after it are
+# skipped.
+abandon() {
+  local reason=$1 pid pgid cpg
+  pid=$(jq -r .pid "$state_file")
+  pgid=$(jq -r '.pgid // empty' "$state_file")
+  cpg=$(jq -r '.check_pgid // empty' "$state_file")
+  # The worker leads its own session, so its process group holds every check
+  # it started; signal the group only when the worker led it.
+  # The check under timeout has a group of its own (check_pgid).
+  local groups=()
+  [ -z "$pgid" ] || [ "$pgid" != "$pid" ] || groups+=("-$pgid")
+  [ -z "$cpg" ] || groups+=("-$cpg")
+  run_alive "$pid" && [ ${#groups[@]} -eq 0 ] && groups+=("$pid")
+  if [ ${#groups[@]} -gt 0 ]; then
+    kill -TERM -- "${groups[@]}" 2>/dev/null || true
+    sleep 1
+    kill -KILL -- "${groups[@]}" 2>/dev/null || true
+  fi
+  # shellcheck disable=SC2016 # jq variables, expanded by jq
+  st_update --arg r "$reason" --argjson now "$(date +%s)" --arg dir "$(dirname "$state_file")" '
+    . as $s
+    | ["format","lint","types","test","build"] as $order
+    | [$s.results[].name] as $done
+    | (($s.results + [$s.planned[] | select(.name as $n | $done | index($n) | not)
+        | if .name == $s.running
+          then . + {status: "failed", exit_code: null, log: ($dir + "/" + .name + ".log"), reason: $r}
+          else . + {status: "skipped", reason: ("not run: " + $r)} end])
+       | sort_by(.name as $n | $order | index($n))) as $checks
+    | .final = {status: "fail", timeout_seconds: $s.timeout_seconds, reason: $r, checks: $checks}
+    | .exit_code = 1 | .running = null | .finished_at = $now'
+}
+
+if [ "$mode" = wait ]; then
+  [ -f "$state_file" ] || { echo "ccm-validate: no validate run to wait for (start one with --start)" >&2; exit 4; }
+  deadline=$(($(date +%s) + wait_s))
+  while :; do
+    if [ "$(jq -r '.final == null' "$state_file")" = false ]; then
+      jq '.final' "$state_file"
+      exit "$(jq -r .exit_code "$state_file")"
+    fi
+    if ! state_live; then
+      [ "$(jq -r '.final == null' "$state_file")" = true ] &&
+        abandon "the validate run (pid $(jq -r .pid "$state_file")) ended without a result; see $(dirname "$state_file")/run.out"
+      continue
+    fi
+    if [ $(($(date +%s) - $(jq -r .started_at "$state_file"))) -gt "$(jq -r .limit_s "$state_file")" ]; then
+      abandon "the validate run did not finish within its overall limit of $(jq -r .limit_s "$state_file")s"
+      continue
+    fi
+    if [ "$(date +%s)" -ge "$deadline" ]; then
+      running_json
+      exit 6
+    fi
+    sleep 1
+  done
+fi
 
 # ---- detection -------------------------------------------------------------
 
@@ -228,7 +377,15 @@ ensure_logdir() { [ -n "$logdir" ] || { logdir="$(ccm_state_dir)/validate"; mkdi
 run_bounded() {
   local rc
   set +e
-  if [ -n "$timeout_bin" ]; then
+  if [ -n "$timeout_bin" ] && [ "$mode" = worker ]; then
+    # timeout puts the command in a process group of its own; record it, so a
+    # run that is stopped (abandon) stops the check too.
+    "$timeout_bin" --kill-after=10 "$timeout_s" bash -c "$1" >"$2" 2>&1 </dev/null &
+    local child=$!
+    # shellcheck disable=SC2016 # jq variables, expanded by jq
+    st_update --argjson c "$child" '.check_pgid = $c'
+    wait "$child"
+  elif [ -n "$timeout_bin" ]; then
     "$timeout_bin" --kill-after=10 "$timeout_s" bash -c "$1" >"$2" 2>&1 </dev/null
   else
     bash -c "$1" >"$2" 2>&1 </dev/null
@@ -328,6 +485,88 @@ if deps_missing; then
   fi
 fi
 
+# --start: launch the plain run detached, with the checks it resolves here.
+if [ "$mode" = start ]; then
+  planned='[]'
+  for check in $checks; do
+    resolve_check "$check"
+    case $cmd in ''|none) continue ;; esac
+    # shellcheck disable=SC2016 # jq variables, expanded by jq
+    planned=$(jq -c --arg n "$check" --arg c "$cmd" --arg s "$source" '. + [{name: $n, command: $c, source: $s}]' <<<"$planned")
+  done
+  # Nothing would run: the plain run below prints nothing-to-run at once.
+  [ "$(jq length <<<"$planned")" -gt 0 ] || mode=plain
+fi
+if [ "$mode" = start ]; then
+  ensure_logdir
+  lock="$state_file.lock"
+  tries=0
+  until mkdir "$lock" 2>/dev/null; do
+    tries=$((tries + 1))
+    [ "$tries" -lt 10 ] || { echo "ccm-validate: another --start holds $lock" >&2; exit 4; }
+    sleep 1
+  done
+  trap 'rmdir "$lock" 2>/dev/null || true' EXIT
+  if state_live; then
+    running_json | jq -c '. + {note: "a validate run is already in progress; no new run was started"}'
+    exit 6
+  fi
+  run_id="$(date -u +%Y%m%dT%H%M%SZ)-$$"
+  install_n=0
+  [ "$need_install" = true ] && install_n=1
+  limit=$(( ($(jq length <<<"$planned") + install_n) * timeout_s + ${CCM_VALIDATE_LIMIT_MARGIN_SECONDS:-120} ))
+  # shellcheck disable=SC2016 # jq variables, expanded by jq
+  jq -n --arg id "$run_id" --argjson now "$(date +%s)" --argjson t "$timeout_s" --argjson l "$limit" \
+    --argjson p "$planned" \
+    '{run: $id, pid: null, pgid: null, started_at: $now, timeout_seconds: $t, limit_s: $l,
+      planned: $p, results: [], running: null, check_pgid: null, final: null, exit_code: null, finished_at: null}' \
+    >"$state_file.tmp.$$"
+  mv -f "$state_file.tmp.$$" "$state_file"
+  worker=("$self" --worker "$run_id")
+  [ -z "$only" ] || worker+=(--only "$only")
+  # A session of its own, so the end of the calling tool's process group does
+  # not take the run with it: setsid where it exists (Linux), else Perl's.
+  detach=()
+  if command -v setsid >/dev/null 2>&1; then
+    detach=(setsid)
+  elif command -v perl >/dev/null 2>&1; then
+    # shellcheck disable=SC2016 # Perl code
+    detach=(perl -MPOSIX -e 'POSIX::setsid(); exec @ARGV or die "exec: $!\n"' --)
+  fi
+  nohup ${detach[@]+"${detach[@]}"} "${worker[@]}" </dev/null >"$logdir/run.out" 2>&1 &
+  # The worker records its own pid; wait for it so a --wait never sees a run
+  # with no process.
+  for _ in 1 2 3 4 5 6 7 8 9 10; do
+    [ "$(jq -r .pid "$state_file")" = null ] || break
+    sleep 1
+  done
+  if [ "$(jq -r .pid "$state_file")" = null ]; then
+    abandon "the validate run did not start; see $logdir/run.out"
+    jq '.final' "$state_file"
+    exit 1
+  fi
+  jq -c '{status: "started", run, pid, timeout_seconds, limit_s, checks: [.planned[].name]}' "$state_file"
+  exit 0
+fi
+
+# --worker RUN: the detached run --start launched. It records its progress in
+# the state file and its result there instead of on stdout.
+if [ "$mode" = worker ]; then
+  [ -f "$state_file" ] && [ "$(jq -r .run "$state_file")" = "$run_id" ] || exit 4
+  pgid=$(ps -o pgid= -p $$ 2>/dev/null | tr -d ' ')
+  # shellcheck disable=SC2016 # jq variables, expanded by jq
+  st_update --argjson p $$ --arg g "$pgid" '.pid = $p | .pgid = ($g | tonumber? // null)'
+fi
+
+# st_progress RUNNING: in a worker, record the results so far and what runs now.
+st_progress() {
+  [ "$mode" = worker ] || return 0
+  local r='[]'
+  [ ${#results[@]} -eq 0 ] || r=$(printf '%s\n' "${results[@]}" | jq -cs .)
+  # shellcheck disable=SC2016 # jq variables, expanded by jq
+  st_update --argjson r "$r" --arg now "$1" '.results = $r | .running = (if $now == "" then null else $now end)'
+}
+
 # install_info STATUS [KEY VALUE...]: the install object, as JSON.
 install_info() {
   local st=$1; shift
@@ -390,6 +629,7 @@ results=()
 ran=0 failed=0
 
 for check in $checks; do
+  st_progress ""
   resolve_check "$check"
 
   if [ "$cmd" = none ]; then
@@ -411,6 +651,7 @@ for check in $checks; do
   fi
 
   if [ "$need_install" = true ] && [ "$install_state" = none ]; then
+    st_progress install
     do_install
   fi
   if [ "$install_state" = failed ]; then
@@ -421,6 +662,7 @@ for check in $checks; do
 
   ensure_logdir
   log="$logdir/$check.log"
+  st_progress "$check"
   start=$(date +%s)
   run_bounded "$cmd" "$log" && rc=0 || rc=$?
   duration=$(($(date +%s) - start))
@@ -468,8 +710,16 @@ if [ -z "$timeout_bin" ] && [ "$ran" -gt 0 ]; then
   note=$(no_timeout_note)
 fi
 
-printf '%s\n' "${results[@]}" | jq -s --arg status "$status" --arg note "$note" --argjson t "$timeout_s" \
+final=$(printf '%s\n' "${results[@]}" | jq -s --arg status "$status" --arg note "$note" --argjson t "$timeout_s" \
   --arg install "$install_json" \
   '{status: $status, timeout_seconds: $t} + (if $install == "" then {} else {install: ($install | fromjson)} end)
-   + {checks: .} + (if $note == "" then {} else {note: $note} end)'
+   + {checks: .} + (if $note == "" then {} else {note: $note} end)')
+if [ "$mode" = worker ]; then
+  st_progress ""
+  # shellcheck disable=SC2016 # jq variables, expanded by jq
+  st_update --argjson f "$final" --argjson rc "$rc" --argjson now "$(date +%s)" \
+    '.final = $f | .exit_code = $rc | .running = null | .finished_at = $now'
+  exit 0
+fi
+printf '%s\n' "$final"
 exit "$rc"

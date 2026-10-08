@@ -2,6 +2,12 @@
 
 All notable changes to ccmagic are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- `ccm-validate --start` and `ccm-validate --wait [SECONDS]` run checks that take longer than one Bash tool call. A Spring Boot repository whose `./gradlew test` runs Testcontainers integration tests for about 19 minutes timed out (exit 124) on every autonomous run, and raising `validate_timeout_seconds` did not help, since the Bash call that ran the check stopped at 10 minutes. `--start` resolves the checks as a plain run does and runs the whole plain run, the Node install included, in a detached process in its own session (`setsid`, else Perl's `POSIX::setsid`), so it outlives the call, and records its progress and result in `run.json` under the git dir. It prints `{status: "started", run, pid, timeout_seconds, limit_s, checks}`, and while a run is live it starts nothing and reports that run (exit 6). `--wait` (default 480 seconds, at most 570) prints the plain run's JSON and exit code once the run finishes, or `{status: "running", elapsed_s, limit_s, done, running, pending}` with the new exit code 6. A run whose process is gone without a result, or still running past `limit_s` (the planned checks' limits, one more for an install, plus 120 seconds), is stopped, its check's process group included, and reported as `fail` with a top-level `reason`. `validate_timeout_seconds` may now be at most 7200. `/ccmagic:validate` (and so the autonomous validate step) uses `--start` and repeated `--wait` calls when `validate_timeout_seconds` is above 540, and `/ccmagic:test` does the same for the test check; at 540 or less, the default, it runs one check per call as before, and a plain `ccm-validate` call is unchanged.
+
 ## [3.17.4] - 2026-10
 
 ### Fixed

@@ -29,6 +29,8 @@ It prints `{status, timeout_seconds, checks: [{name, command, source, status, re
 
 ### 1b. Install missing Node dependencies
 
+Skip this step when `--list`'s `timeout_seconds` is above 540: the detached run of step 2L installs the dependencies itself before its first check, under the same limit, and reports `environment` the same way.
+
 If the `--list` output has an `install` object, the repository's `package.json` declares dependencies, one of them is not installed in `node_modules`, and a planned check runs through Node (`npm`, `npx`, `pnpm`, `yarn`, `bun`, `bunx`, or `node`, or a `package.json` script), so the checks would fail for a reason that is not the code. Install them first, as its own call with the maximum Bash tool timeout (600000 ms):
 
 ```bash
@@ -38,6 +40,8 @@ If the `--list` output has an `install` object, the repository's `package.json` 
 It runs the install the lockfile calls for (`npm ci` for `package-lock.json` or `npm-shrinkwrap.json`; `pnpm`, `yarn`, or `bun` for their lockfiles, only when that tool is installed) under `validate_timeout_seconds` and prints `{status: installed | not-needed | environment, install}`. `installed` or `not-needed`: go on to step 2. `environment` (exit 5): the install failed, timed out, or could not be done (no lockfile, or the lockfile's tool is missing); `install.reason` says which, and `install.tail` shows the end of the install's output. Run no check: report the environment problem, since every check would fail for the same reason. This is Node only; other ecosystems are never installed, and a project whose checks are all Gradle, Maven, or other non-Node commands has no `install` object. A step 2 call that finds the dependencies still missing installs them itself and reports `environment` the same way.
 
 ### 2. Run each planned check, one call per check
+
+Use this step when `--list`'s `timeout_seconds` is 540 or less (the default). Above 540, a check can outlast the Bash tool's 10-minute limit; use step 2L instead.
 
 For each check with `status: planned`, in the listed order:
 
@@ -49,6 +53,26 @@ Give each call the maximum Bash tool timeout (600000 ms). One call per check kee
 
 Each call prints `{status: pass | fail | environment, install?, checks: [{name, command, source, status, exit_code, duration_s, log, reason?, tail?}]}` and exits 0 on pass, 1 on fail, and 5 on `environment` (missing dependencies it could not install, so no check ran; stop and report it as step 1b says). A failed check carries the last 40 lines of its output as `tail`; the full output is in the `log` file. Keep going after a failure so the report covers every check, unless the user asked to stop at the first failure.
 
+### 2L. Long checks: one detached run (`timeout_seconds` above 540)
+
+Start every planned check in one run that outlives the Bash call, as its own call:
+
+```bash
+"${CLAUDE_PLUGIN_ROOT}/bin/ccm-validate" --start
+```
+
+It prints `{status: "started", run, pid, timeout_seconds, limit_s, checks}` (exit 0) and returns at once; the run goes on in the background, each check under its own `validate_timeout_seconds` limit. Then wait for it, each call on its own with the maximum Bash tool timeout (600000 ms):
+
+```bash
+"${CLAUDE_PLUGIN_ROOT}/bin/ccm-validate" --wait
+```
+
+Each call waits up to 480 seconds. Exit 6 with `{status: "running", elapsed_s, limit_s, done, running, pending}` means the run is still going: say which check is running, then call `--wait` again. Repeat until a call exits with another code; that call prints the plain run's JSON for every planned check (step 2's format, with `status` `pass`, `fail`, or `environment` and exit 0, 1, or 5), which is the result. A later `--wait` prints the same result again.
+
+The loop has a limit: `limit_s` is the sum of the planned checks' limits (one more for an install) plus 120 seconds, and a `--wait` past it stops the run and returns `fail` with a top-level `reason`, the running check `failed` and the rest `skipped`. A run whose process died without a result is reported the same way. Stop calling `--wait` only on a result; if a `running` answer ever shows `elapsed_s` above `limit_s`, stop and count the running and pending checks as failed with reason "timed out". If one `--wait` Bash call itself times out and prints nothing, call `--wait` again.
+
+Other `--start` answers: `nothing-to-run` (exit 2) is step 1's case. `running` (exit 6) with a `note` means an earlier call in this checkout left a run going, which may have checked older code: `--wait` until it ends, discard that result, and `--start` again. Exit 1 with a `fail` result means the run could not start; report it as failed.
+
 ### 3. Optional checks (interactive only)
 
 These are outside the script and never change the verdict. Offer them in interactive mode when relevant; skip them in autonomous mode:
@@ -59,7 +83,7 @@ These are outside the script and never change the verdict. Offer them in interac
 
 ## Validation Report Format
 
-Fill the report from the JSON of the step 2 calls: one section per check in the listed order, with the command, `duration_s`, and for a failed check the relevant lines of `tail` (read `log` for more when the tail doesn't show the cause). Skipped checks get one line with their `reason`. Optional checks from step 3 go in their own sections, marked as not affecting the result.
+Fill the report from the JSON of the step 2 calls (or the step 2L result): one section per check in the listed order, with the command, `duration_s`, and for a failed check the relevant lines of `tail` (read `log` for more when the tail doesn't show the cause). Skipped checks get one line with their `reason`. Optional checks from step 3 go in their own sections, marked as not affecting the result.
 
 ```markdown
 # Validation Report
@@ -135,9 +159,11 @@ Commands and the time limit come from flat keys in the `ccmagic.local.md` frontm
 ---
 validate_lint: npm run lint:strict   # overrides detection
 validate_types: none                 # disables the check
-validate_timeout_seconds: 900        # per check; default 540
+validate_timeout_seconds: 1800       # per check; default 540, at most 7200
 ---
 ```
+
+A `validate_timeout_seconds` above 540 runs the checks as step 2L describes, since one Bash call cannot wait longer than 10 minutes.
 
 Keys: `validate_format`, `validate_lint`, `validate_types`, `validate_test`, `validate_build`, `validate_timeout_seconds`. See `docs/ccmagic.local.md.example`.
 
@@ -170,14 +196,14 @@ Autonomous mode is ON when the first present signal (in priority order) resolves
 
 Absent all three, run the interactive path exactly as documented above.
 
-`/ccmagic:validate` has no tracker access; it never moves a ticket. It runs steps 1 and 2 (not the optional checks), reports the result, and emits the handshake. The parent skill or orchestrator owns any route-and-stop. Auto-fix is **off** in autonomous mode: report failures, don't rewrite code.
+`/ccmagic:validate` has no tracker access; it never moves a ticket. It runs steps 1 and 2, or 2L (not the optional checks), reports the result, and emits the handshake. The parent skill or orchestrator owns any route-and-stop. Auto-fix is **off** in autonomous mode: report failures, don't rewrite code.
 
 The handshake follows the script's JSON, with no judgment of your own:
 
-- Every step 2 call returned `status: pass`: emit `done` with reason `validation passed`.
+- Every step 2 call returned `status: pass` (or the step 2L result did): emit `done` with reason `validation passed`. A step 2L `running` answer (exit 6) is not a result: keep calling `--wait`.
 - `--list` returned `nothing-to-run`: emit `done` with reason `no checks configured`.
-- `--install` or a step 2 call returned `status: environment`: emit `needs-human` with a reason starting `environment:` and quoting `install.reason` (for example `environment: npm ci exited 1`), and no `failures:` section. An environment problem is not a check failure: the orchestrator parks it without a fix pass. Only the script's `environment` status is one; a check the script reports `failed` stays `failed:` however environmental its output looks.
-- Any step 2 call returned `status: fail`: emit `needs-human` with a reason listing the failed check names from the JSON (for example `failed: lint, test`; add "(timed out)" after a check whose `reason` says so). Just before the handshake, emit a `failures:` section (contract §3) with one entry per failed check: its `command`, `exit_code`, `log` path, and the lines of its `tail` that show the cause, copied from the JSON. The orchestrator decides whether to fix-and-retry or park, and hands that section to the fix pass.
+- `--install`, a step 2 call, or the step 2L result returned `status: environment`: emit `needs-human` with a reason starting `environment:` and quoting `install.reason` (for example `environment: npm ci exited 1`), and no `failures:` section. An environment problem is not a check failure: the orchestrator parks it without a fix pass. Only the script's `environment` status is one; a check the script reports `failed` stays `failed:` however environmental its output looks.
+- Any step 2 call returned `status: fail`, or the step 2L result did: emit `needs-human` with a reason listing the failed check names from the JSON (for example `failed: lint, test`; add "(timed out)" after a check whose `reason` says so). Just before the handshake, emit a `failures:` section (contract §3) with one entry per failed check: its `command`, `exit_code`, `log` path, and the lines of its `tail` that show the cause, copied from the JSON (a check a stopped step 2L run left failed has no exit code or `tail`; give its `reason`, and the end of its `log` when there is one). The orchestrator decides whether to fix-and-retry or park, and hands that section to the fix pass.
 
 ### Handshake (emit last, in autonomous mode)
 
