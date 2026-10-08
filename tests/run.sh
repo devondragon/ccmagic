@@ -3303,6 +3303,16 @@ skills_non_spec_tickets_unchanged_since_baseline() {
   check "${missing# }" ""
 }
 
+# RV-89: Step 6 dedupes follow-ups against earlier filings before it files.
+skills_auto_ticket_follow_up_dedupe() {
+  local f="$ROOT/skills/auto-ticket/SKILL.md" missing=
+  grep -qF 'Follow-up key: <key>' "$f" || missing+=" key-line"
+  grep -qF 'search the team' "$f" && grep -qF 'Before filing any item' "$f" || missing+=" search-before-filing"
+  grep -qF '"already filed"' "$f" || missing+=" already-filed"
+  grep -qF 'as a sub-issue of another issue: no' "$f" || missing+=" no-parent"
+  check "${missing# }" ""
+}
+
 # The hooks change only to accept the work step's tasks_done: line (these two
 # added lines in hooks/lib-handshake.sh) and, for every ticket, by the RV-86
 # finish guard: its own hook file and one PreToolUse entry in hooks.json.
