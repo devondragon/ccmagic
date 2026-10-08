@@ -145,7 +145,24 @@
  
  ---
  
-@@ -312,7 +314,9 @@ There is no stalled outcome. Never hang waiting for input.
+@@ -210,10 +212,13 @@ Run the finish-ticket step via `run_step` — `/ccmagic:finish-ticket` with the
+ 
+ Whatever the outcome, record it on the PR and the ticket so the unattended run leaves an audit trail.
+ 
+-**Follow-ups first.** Go through the run's follow-up list (every non-empty `follow_ups:` item from every step, including a `clean` review's optional items). For each item decide one of:
++**Follow-ups first.** Go through the run's follow-up list (every non-empty `follow_ups:` item from every step, including a `clean` review's optional items). Before filing any item, collect what was already filed for the same work, then search for the item. Collect the Follow-ups sections and run records (`follow_ups` entries with a `ticket` id) of earlier run summaries on this PR and on this ticket; a retry after a park or a second run on the same ticket can raise the same finding again. Then search the team's open tickets for the item's follow-up key (below): Linear `list_issues` with `query`, `gh issue list --search`, or a JIRA text search in JQL. For each item decide one of:
++
++- **file it**: on mcp, create a ticket in the same tracker and team (Linear `save_issue` in the ticket's `project` and related to `{TICKET-ID}`, `gh issue create`, or the Atlassian MCP) with a title and a description that names the PR and the step that raised it and ends with exactly one line `Follow-up key: <key>`, then list its ID. The key names the file and symbol (for example `AbuseManager.ipMatchesCIDR`) or the config key or route the item is about, one key per item. The same finding must produce the same key, so use the most specific stable identifier, never prose. Never file a follow-up as a sub-issue of another issue: no `parentId`, since a parent the run does not own (a spec change's parent, for one) can reach Done with an open child; or
++- **already filed**: an earlier filed id from the collection above, or an open ticket whose description holds the same `Follow-up key:` line or that plainly describes the same defect. Do not file. Comment on the existing ticket, "Also raised by run {run_id} on PR #{n} ({step}).", and list the item in the summary and the run record as already a ticket with that id, reason "already filed"; or
++- **don't file it**, with a one-line reason: already a ticket ID the step named (list it as is), a duplicate of another item in this list, fixed later in this run (name the commit or pass), or too minor to track (say why).
+ 
+-- **file it**: on mcp, create a ticket in the same tracker and team (Linear `save_issue` related to `{TICKET-ID}`, `gh issue create`, or the Atlassian MCP) with a title and a description that names the PR and the step that raised it, then list its ID; or
+-- **don't file it**, with a one-line reason: already a ticket ID (list it as is), a duplicate of another item, fixed later in this run (name the commit or pass), or too minor to track (say why).
++If the search or the comment fails, that is not a park: file the item as in the first option and say in the summary that the duplicate search failed.
+ 
+ Under prompt-relay there is no create API, so list every item under "to file" for a human. Every item appears in the summary's Follow-ups section; "none" is correct only when the list is empty. A parked run does the same before route-and-stop posts its note.
+ 
+@@ -312,7 +317,9 @@ There is no stalled outcome. Never hang waiting for input.
  | `work-ticket` → `needs-human` | route-and-stop (stage `work-ticket`). |
  | `review-ticket` → `needs-human`, or `fixable-findings` unresolved after the bounded loop | route-and-stop (stage `review-ticket`). |
  | A fix pass on the work step (Step 3 or 4b) returns `needs-human`, does not report an item it was sent, commits or switches branch, or changes no files | route-and-stop (stage `review-ticket` or `validate`); nothing from that pass is pushed, and the parked comment lists the uncommitted files it left. |
@@ -156,6 +173,15 @@
  | `pr-feedback` → `needs-human` (genuine reviewer tie) | route-and-stop (stage `pr-feedback`). |
  | Local `/ccmagic:validate` can't be made green within the bounded attempts | route-and-stop (reason: validation failures). |
  | CI never settles within `ci_timeout_minutes` (watch loop cap) | route-and-stop (reason: CI timeout). |
+@@ -320,7 +327,7 @@ There is no stalled outcome. Never hang waiting for input.
+ | Step 4 pushed after the last clean review (4a or 4b) | Re-review the pushed head (4f). A stale review never reaches finish: a clean re-review of another head, an unreadable PR head, or findings with no review fix or feedback passes left → route-and-stop (stage `review-ticket`), before any fix is pushed. |
+ | `finish-ticket` merge gate not satisfied | It returns `needs-human` and does not merge → route-and-stop (stage `finish-ticket`). |
+ | `requested_state: {merge_handoff_state}` and no state of that exact name exists | route-and-stop (stage `finish-ticket`); nothing was merged on the hand-off path. |
+-| Any other tracker write fails (In Progress, In Review, Done, PR link, follow-up ticket) | Not a park. Say what failed in the summary and continue; an unfiled follow-up is listed with the error as its reason. |
++| Any other tracker write fails (In Progress, In Review, Done, PR link, follow-up ticket) | Not a park. Say what failed in the summary and continue; an unfiled follow-up is listed with the error as its reason. A failed duplicate search or "also raised by" comment is the same: file the follow-up anyway and note the failed search. |
+ | A step reports it has no `ticket_content` | Treat as a setup error of this skill: the grounding block must always carry it (Step 0 item 5). Fix the block and re-run the step once; if it still fails, route-and-stop. |
+ | `route-and-stop` can't move state (no matching state) | **mcp:** apply `needs_human_label`, leave state unchanged, still post the comment (contract §4). **prompt-relay:** contract §4's prompt-relay branch applies — no state/label writes; PR comment + relayed parked note. |
+ 
 ### skills/auto-ticket/autonomous-contract.md
 @@ -83,6 +83,17 @@ On a fix pass `work-ticket` skips its Steps 2 to 4 and follows its *Fix pass* se
  
@@ -197,7 +223,7 @@
  | `comment(ticket, body)` | Skip. Put anything the ticket should carry (for example finish-ticket's closing or hand-off comment) in the step's final report. | Posts its run summary to the ticket in Step 6 (mcp). |
  | `link_pr(url)` | Skip; the PR URL is in the handshake's `reason` (work-ticket). | Links the PR to the ticket after the work step (mcp). |
 -| `file_followup(desc)` | Record a short description in `follow_ups:`; reply to a deferred PR thread with `ccm-pr-reply ... --ticket requested`. | Files it or lists it with a reason (its *Follow-ups* rule). |
-+| `file_followup(desc)` | Record a short description in `follow_ups:`; reply to a deferred PR thread through `ccm-pr-reply` with `--ticket requested`. | Files it or lists it with a reason (its *Follow-ups* rule). |
++| `file_followup(desc)` | Record a short description in `follow_ups:`; reply to a deferred PR thread through `ccm-pr-reply` with `--ticket requested`. | Searches for an earlier ticket on the same finding first, then files it with a `Follow-up key:` line, comments on the existing one, or lists it with a reason (its *Follow-ups* rule). |
  
  Needs-human parking is already the orchestrator's (§4). Comments on the PR (`gh pr comment`, `ccm-post-review`, `ccm-pr-reply`) are not tracker writes and stay in the steps. A sub-skill invoked without a grounding block (interactive or standalone autonomous) keeps its full tracker behavior; this section changes nothing there.
  

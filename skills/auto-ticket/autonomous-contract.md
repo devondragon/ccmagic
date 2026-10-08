@@ -333,7 +333,7 @@ In an **orchestrated** run (the grounding block carries `orchestrator: auto-tick
 | `set_state(In Review \| Done \| merge_handoff_state)` | Report it in the handshake's `requested_state:`. | Applies it after the step returns (mcp), or relays it as `Requested state:` (prompt-relay). |
 | `comment(ticket, body)` | Skip. Put anything the ticket should carry (for example finish-ticket's closing or hand-off comment) in the step's final report. | Posts its run summary to the ticket in Step 6 (mcp). |
 | `link_pr(url)` | Skip; the PR URL is in the handshake's `reason` (work-ticket). | Links the PR to the ticket after the work step (mcp). |
-| `file_followup(desc)` | Record a short description in `follow_ups:`; reply to a deferred PR thread through `ccm-pr-reply` with `--ticket requested`. | Files it or lists it with a reason (its *Follow-ups* rule). |
+| `file_followup(desc)` | Record a short description in `follow_ups:`; reply to a deferred PR thread through `ccm-pr-reply` with `--ticket requested`. | Searches for an earlier ticket on the same finding first, then files it with a `Follow-up key:` line, comments on the existing one, or lists it with a reason (its *Follow-ups* rule). |
 
 Needs-human parking is already the orchestrator's (§4). Comments on the PR (`gh pr comment`, `ccm-post-review`, `ccm-pr-reply`) are not tracker writes and stay in the steps. A sub-skill invoked without a grounding block (interactive or standalone autonomous) keeps its full tracker behavior; this section changes nothing there.
 

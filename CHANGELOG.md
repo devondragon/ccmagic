@@ -2,6 +2,12 @@
 
 All notable changes to ccmagic are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- `/ccmagic:auto-ticket` Step 6 no longer files the same follow-up again on a retry or on a sibling ticket (RV-89). On a real repo one finding became three tickets (the first run, the run after a park, and the archive ticket of the same OpenSpec change), and one of them was filed as a sub-issue of the change's parent, which then went to Done with an open child. Before filing, the orchestrator now collects follow-ups already filed on this PR and ticket (and, on a spec ticket, on the change's other tickets) and searches open tickets for the item's key. Every filed follow-up ends with one `Follow-up key: <key>` line naming the file and symbol, config key, or route. A match gets a comment ("Also raised by run ...") instead of a new ticket and is listed as "already filed". Follow-ups are filed in the ticket's project with no parent issue. A failed search is not a park: the follow-up is filed and the summary says so.
+
 ## [3.17.3] - 2026-10
 
 ### Fixed
