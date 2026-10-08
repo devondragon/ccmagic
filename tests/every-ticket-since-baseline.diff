@@ -73,16 +73,18 @@
  **Keep every call in the foreground.** You are a subagent, and a subagent returns to the orchestrator the moment it ends its turn. Pass `run_in_background: false` on every `Task` (Agent) call and every Bash call you make, including the ones a preloaded procedure tells you to launch in parallel: put a parallel batch in one message, and each result comes back in that message. A background task reports only through a completion notification, which arrives after you have already returned, so its work is lost and your handshake is missing.
  
 ### agents/auto-validate.md
-@@ -11,7 +11,7 @@ You are running the **validate** step of an autonomous ticket run driven by `/cc
+@@ -11,7 +11,9 @@ You are running the **validate** step of an autonomous ticket run driven by `/cc
  
  Follow the **preloaded `validate` procedure** to run the project's checks. Use the grounding block in your task prompt for context.
  
 -Report the outcome as a handshake, following `ccm-validate`'s JSON: `done` when every check that ran passed or there was nothing to run; `needs-human` when any check failed, naming the failed checks (the orchestrator decides whether to fix-and-retry or park). Follow the preloaded procedure directly; do not re-invoke `/ccmagic:validate` as a skill.
 +Report the outcome as a handshake, following `ccm-validate`'s JSON: `done` when every check that ran passed or there was nothing to run; `needs-human` when any check failed, with a reason starting `failed:` and naming the failed checks (the orchestrator decides whether to fix-and-retry or park); `needs-human` with a reason starting `environment:` when `ccm-validate` reported `status: environment` (missing Node dependencies it could not install), quoting its `install.reason`. An `environment:` result is not a check failure, so it gets no `failures:` section, and the orchestrator parks it without a fix pass. Never turn a failed check into `environment:` because its output looks environmental: only the script's `environment` status is one. Follow the preloaded procedure directly; do not re-invoke `/ccmagic:validate` as a skill.
++
++When the project's checks are long (`validate_timeout_seconds` above 540), the procedure starts one detached run with `--start` (its step 2L) and then calls `--wait` once per Bash call: exit 6 (`status: running`) is not a result and not a failure, so call `--wait` again until it prints the final JSON, and judge only that.
  
  When a check failed, put a `failures:` section just before the handshake, as in contract §3: one entry per failed check with its command, exit code, log path, and the lines of its `tail` that show the cause. The orchestrator hands that section to the fix pass, so copy the lines from the JSON rather than summarizing them.
  
-@@ -19,7 +19,7 @@ End your output with this handshake, verbatim:
+@@ -19,7 +21,7 @@ End your output with this handshake, verbatim:
  
  ```
  status: done | needs-human
@@ -91,7 +93,7 @@
  follow_ups: []
  ```
  
-@@ -28,7 +28,7 @@ follow_ups: []
+@@ -28,7 +30,7 @@ follow_ups: []
  **No tracker access.** Read the ticket from the grounding block's `ticket_content:`. Do not fetch or update the ticket, and do not spawn a helper agent to do it; the orchestrator owns every tracker read and write (contract §8). Report a needed state change in `requested_state:` and anything to file in `follow_ups:`.
  
  
@@ -343,12 +345,24 @@
  
  ---
  
+### skills/test/SKILL.md
+@@ -103,7 +103,7 @@ Run test suites in parallel when they are independent:
+ "${CLAUDE_PLUGIN_ROOT}/bin/ccm-validate" --only test
+ ```
+ 
+-Give the call the maximum Bash tool timeout (600000 ms). The JSON's check `status` is the verdict: `passed` (exit 0) or `failed` (exit 1). Exit 2 with top-level `status: nothing-to-run` means the test check was `skipped`; handle it as in Step 1 by its `reason` ("not configured": ask for the command; "disabled in config": say so and stop), and do not report it as a pass. A failed check carries `exit_code`, `duration_s`, the last 40 lines as `tail`, and the full output in the `log` file; read `log` for Step 4. A check that hit `validate_timeout_seconds` (default 540) fails with reason "timed out"; report it as a hang or a slow suite and suggest raising the key or adding a framework timeout flag.
++Give the call the maximum Bash tool timeout (600000 ms). When the step 1 `--list` output's `timeout_seconds` is above 540, the suite can outlast one Bash call: run `"${CLAUDE_PLUGIN_ROOT}/bin/ccm-validate" --start --only test` instead, then `"${CLAUDE_PLUGIN_ROOT}/bin/ccm-validate" --wait` as its own call (maximum timeout) until it exits with a code other than 6, as `/ccmagic:validate` step 2L describes; that last call prints the same JSON as the plain call. The JSON's check `status` is the verdict: `passed` (exit 0) or `failed` (exit 1). Exit 2 with top-level `status: nothing-to-run` means the test check was `skipped`; handle it as in Step 1 by its `reason` ("not configured": ask for the command; "disabled in config": say so and stop), and do not report it as a pass. A failed check carries `exit_code`, `duration_s`, the last 40 lines as `tail`, and the full output in the `log` file; read `log` for Step 4. A check that hit `validate_timeout_seconds` (default 540) fails with reason "timed out"; report it as a hang or a slow suite and suggest raising the key or adding a framework timeout flag.
+ 
+ **Pattern, `--affected`, or `--coverage` runs:** use the framework-specific commands from `${CLAUDE_SKILL_DIR}/framework-commands.md`, one command per run, and read its exit code directly. Never chain commands with `||`. For each run, capture the exit code, full stdout/stderr, and timing.
+ 
 ### skills/validate/SKILL.md
-@@ -27,6 +27,16 @@ The script is also on the Bash `PATH` as `ccm-validate` while the plugin is enab
+@@ -27,8 +27,22 @@ The script is also on the Bash `PATH` as `ccm-validate` while the plugin is enab
  
  It prints `{status, timeout_seconds, checks: [{name, command, source, status, reason?}]}` without running anything. `status: planned` checks will run; `skipped` checks carry a `reason` ("not configured" or "disabled in config"). Show the plan to the user as a short table. If the top-level `status` is `nothing-to-run` (exit 2), skip to the report: there is nothing to run, and the user can add `validate_*` keys to `.claude/ccmagic.local.md`.
  
 +### 1b. Install missing Node dependencies
++
++Skip this step when `--list`'s `timeout_seconds` is above 540: the detached run of step 2L installs the dependencies itself before its first check, under the same limit, and reports `environment` the same way.
 +
 +If the `--list` output has an `install` object, the repository's `package.json` declares dependencies, one of them is not installed in `node_modules`, and a planned check runs through Node (`npm`, `npx`, `pnpm`, `yarn`, `bun`, `bunx`, or `node`, or a `package.json` script), so the checks would fail for a reason that is not the code. Install them first, as its own call with the maximum Bash tool timeout (600000 ms):
 +
@@ -360,17 +374,50 @@
 +
  ### 2. Run each planned check, one call per check
  
++Use this step when `--list`'s `timeout_seconds` is 540 or less (the default). Above 540, a check can outlast the Bash tool's 10-minute limit; use step 2L instead.
++
  For each check with `status: planned`, in the listed order:
-@@ -37,7 +47,7 @@ For each check with `status: planned`, in the listed order:
+ 
+ ```bash
+@@ -37,7 +51,27 @@ For each check with `status: planned`, in the listed order:
  
  Give each call the maximum Bash tool timeout (600000 ms). One call per check keeps each under the tool's 10-minute limit; the script enforces its own `validate_timeout_seconds` limit (default 540, which leaves room to report before the tool's limit) and reports a check that hits it as `failed` with reason "timed out". If the output has a `note`, no `timeout` binary was found and the checks ran unbounded; repeat the note in the report. If the Bash call itself times out and prints no JSON, count that check as failed with reason "timed out".
  
 -Each call prints `{status: pass | fail, checks: [{name, command, source, status, exit_code, duration_s, log, reason?, tail?}]}` and exits 0 on pass, 1 on fail. A failed check carries the last 40 lines of its output as `tail`; the full output is in the `log` file. Keep going after a failure so the report covers every check, unless the user asked to stop at the first failure.
 +Each call prints `{status: pass | fail | environment, install?, checks: [{name, command, source, status, exit_code, duration_s, log, reason?, tail?}]}` and exits 0 on pass, 1 on fail, and 5 on `environment` (missing dependencies it could not install, so no check ran; stop and report it as step 1b says). A failed check carries the last 40 lines of its output as `tail`; the full output is in the `log` file. Keep going after a failure so the report covers every check, unless the user asked to stop at the first failure.
++
++### 2L. Long checks: one detached run (`timeout_seconds` above 540)
++
++Start every planned check in one run that outlives the Bash call, as its own call:
++
++```bash
++"${CLAUDE_PLUGIN_ROOT}/bin/ccm-validate" --start
++```
++
++It prints `{status: "started", run, pid, timeout_seconds, limit_s, checks}` (exit 0) and returns at once; the run goes on in the background, each check under its own `validate_timeout_seconds` limit. Then wait for it, each call on its own with the maximum Bash tool timeout (600000 ms):
++
++```bash
++"${CLAUDE_PLUGIN_ROOT}/bin/ccm-validate" --wait
++```
++
++Each call waits up to 480 seconds. Exit 6 with `{status: "running", elapsed_s, limit_s, done, running, pending}` means the run is still going: say which check is running, then call `--wait` again. Repeat until a call exits with another code; that call prints the plain run's JSON for every planned check (step 2's format, with `status` `pass`, `fail`, or `environment` and exit 0, 1, or 5), which is the result. A later `--wait` prints the same result again.
++
++The loop has a limit: `limit_s` is the sum of the planned checks' limits (one more for an install) plus 120 seconds, and a `--wait` past it stops the run and returns `fail` with a top-level `reason`, the running check `failed` and the rest `skipped`. A run whose process died without a result is reported the same way. Stop calling `--wait` only on a result; if a `running` answer ever shows `elapsed_s` above `limit_s`, stop and count the running and pending checks as failed with reason "timed out". If one `--wait` Bash call itself times out and prints nothing, call `--wait` again.
++
++Other `--start` answers: `nothing-to-run` (exit 2) is step 1's case. `running` (exit 6) with a `note` means an earlier call in this checkout left a run going, which may have checked older code: `--wait` until it ends, discard that result, and `--start` again. Exit 1 with a `fail` result means the run could not start; report it as failed.
  
  ### 3. Optional checks (interactive only)
  
-@@ -95,7 +105,7 @@ Timestamp: [ISO 8601 timestamp]
+@@ -49,7 +83,7 @@ These are outside the script and never change the verdict. Offer them in interac
+ 
+ ## Validation Report Format
+ 
+-Fill the report from the JSON of the step 2 calls: one section per check in the listed order, with the command, `duration_s`, and for a failed check the relevant lines of `tail` (read `log` for more when the tail doesn't show the cause). Skipped checks get one line with their `reason`. Optional checks from step 3 go in their own sections, marked as not affecting the result.
++Fill the report from the JSON of the step 2 calls (or the step 2L result): one section per check in the listed order, with the command, `duration_s`, and for a failed check the relevant lines of `tail` (read `log` for more when the tail doesn't show the cause). Skipped checks get one line with their `reason`. Optional checks from step 3 go in their own sections, marked as not affecting the result.
+ 
+ ```markdown
+ # Validation Report
+@@ -95,7 +129,7 @@ Timestamp: [ISO 8601 timestamp]
  ## Smart Features
  
  ### 1. Auto-fix Mode (interactive only)
@@ -379,12 +426,35 @@
  ```bash
  # Auto-fix linting
  eslint --fix
-@@ -166,13 +176,14 @@ The handshake follows the script's JSON, with no judgment of your own:
+@@ -125,10 +159,12 @@ Commands and the time limit come from flat keys in the `ccmagic.local.md` frontm
+ ---
+ validate_lint: npm run lint:strict   # overrides detection
+ validate_types: none                 # disables the check
+-validate_timeout_seconds: 900        # per check; default 540
++validate_timeout_seconds: 1800       # per check; default 540, at most 7200
+ ---
+ ```
  
- - Every step 2 call returned `status: pass`: emit `done` with reason `validation passed`.
++A `validate_timeout_seconds` above 540 runs the checks as step 2L describes, since one Bash call cannot wait longer than 10 minutes.
++
+ Keys: `validate_format`, `validate_lint`, `validate_types`, `validate_test`, `validate_build`, `validate_timeout_seconds`. See `docs/ccmagic.local.md.example`.
+ 
+ ## Integration with Other Commands
+@@ -160,19 +196,20 @@ Autonomous mode is ON when the first present signal (in priority order) resolves
+ 
+ Absent all three, run the interactive path exactly as documented above.
+ 
+-`/ccmagic:validate` has no tracker access; it never moves a ticket. It runs steps 1 and 2 (not the optional checks), reports the result, and emits the handshake. The parent skill or orchestrator owns any route-and-stop. Auto-fix is **off** in autonomous mode: report failures, don't rewrite code.
++`/ccmagic:validate` has no tracker access; it never moves a ticket. It runs steps 1 and 2, or 2L (not the optional checks), reports the result, and emits the handshake. The parent skill or orchestrator owns any route-and-stop. Auto-fix is **off** in autonomous mode: report failures, don't rewrite code.
+ 
+ The handshake follows the script's JSON, with no judgment of your own:
+ 
+-- Every step 2 call returned `status: pass`: emit `done` with reason `validation passed`.
++- Every step 2 call returned `status: pass` (or the step 2L result did): emit `done` with reason `validation passed`. A step 2L `running` answer (exit 6) is not a result: keep calling `--wait`.
  - `--list` returned `nothing-to-run`: emit `done` with reason `no checks configured`.
-+- `--install` or a step 2 call returned `status: environment`: emit `needs-human` with a reason starting `environment:` and quoting `install.reason` (for example `environment: npm ci exited 1`), and no `failures:` section. An environment problem is not a check failure: the orchestrator parks it without a fix pass. Only the script's `environment` status is one; a check the script reports `failed` stays `failed:` however environmental its output looks.
- - Any step 2 call returned `status: fail`: emit `needs-human` with a reason listing the failed check names from the JSON (for example `failed: lint, test`; add "(timed out)" after a check whose `reason` says so). Just before the handshake, emit a `failures:` section (contract §3) with one entry per failed check: its `command`, `exit_code`, `log` path, and the lines of its `tail` that show the cause, copied from the JSON. The orchestrator decides whether to fix-and-retry or park, and hands that section to the fix pass.
+-- Any step 2 call returned `status: fail`: emit `needs-human` with a reason listing the failed check names from the JSON (for example `failed: lint, test`; add "(timed out)" after a check whose `reason` says so). Just before the handshake, emit a `failures:` section (contract §3) with one entry per failed check: its `command`, `exit_code`, `log` path, and the lines of its `tail` that show the cause, copied from the JSON. The orchestrator decides whether to fix-and-retry or park, and hands that section to the fix pass.
++- `--install`, a step 2 call, or the step 2L result returned `status: environment`: emit `needs-human` with a reason starting `environment:` and quoting `install.reason` (for example `environment: npm ci exited 1`), and no `failures:` section. An environment problem is not a check failure: the orchestrator parks it without a fix pass. Only the script's `environment` status is one; a check the script reports `failed` stays `failed:` however environmental its output looks.
++- Any step 2 call returned `status: fail`, or the step 2L result did: emit `needs-human` with a reason listing the failed check names from the JSON (for example `failed: lint, test`; add "(timed out)" after a check whose `reason` says so). Just before the handshake, emit a `failures:` section (contract §3) with one entry per failed check: its `command`, `exit_code`, `log` path, and the lines of its `tail` that show the cause, copied from the JSON (a check a stopped step 2L run left failed has no exit code or `tail`; give its `reason`, and the end of its `log` when there is one). The orchestrator decides whether to fix-and-retry or park, and hands that section to the fix pass.
  
  ### Handshake (emit last, in autonomous mode)
  
