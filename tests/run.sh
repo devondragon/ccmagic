@@ -1634,7 +1634,7 @@ validate_timeout_seconds: 1'
 # running (in the run's process group) is stopped too.
 validate_dead_run_is_reported_failed() {
   config 'validate_lint: "true"
-validate_test: sleep 2 && touch survived
+validate_test: sleep 4 && touch survived
 validate_build: "true"
 validate_timeout_seconds: 900'
   run "$BIN/ccm-validate" --start
@@ -1648,8 +1648,9 @@ validate_timeout_seconds: 900'
     "fail,1,passed,failed,skipped"
   [[ $(jqval .reason) == *"(pid $pid) ended without a result"* ]]
   [[ $(jqval '.checks[] | select(.name == "build") | .reason') == "not run: "* ]]
-  sleep 3
-  check "$([ -e survived ] && echo survived || echo stopped)" "stopped"
+  # The check would have ended by now.
+  sleep 4
+  check "$([ -e survived ] && echo survived || echo stopped)" "stopped" || vdiag
   # The recorded result stands.
   run "$BIN/ccm-validate" --wait 0
   check "$(jqval .status),$RC" "fail,1"
@@ -1677,14 +1678,15 @@ validate_timeout_seconds: 900'
 # A run past its overall limit is stopped and failed: here a check that
 # ignores the timeout's TERM, with no margin on the limit.
 validate_run_past_overall_limit_is_stopped() {
-  config 'validate_test: trap "" TERM; sleep 3; touch late
+  config 'validate_test: trap "" TERM; sleep 5; touch late
 validate_timeout_seconds: 1'
   CCM_VALIDATE_LIMIT_MARGIN_SECONDS=0 run "$BIN/ccm-validate" --start
   check "$(jqval .limit_s)" "1"
   run "$BIN/ccm-validate" --wait 10
   check "$(jqval .status),$RC,$(check_status test)" "fail,1,failed" || vdiag
   check "$(jqval .reason)" "the validate run did not finish within its overall limit of 1s" || vdiag
-  sleep 3
+  # The check would have ended by now; the run was stopped (KILL at about 3s).
+  sleep 4
   check "$([ -e late ] && echo late || echo stopped)" "stopped" || vdiag
 }
 
