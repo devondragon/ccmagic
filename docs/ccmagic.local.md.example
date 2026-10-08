@@ -92,8 +92,9 @@ max_feedback_passes: 3
 # validate_timeout_seconds bounds each check (a check that hits it fails) and
 # the install of missing Node dependencies that precedes the first check. It
 # may be at most 7200. Above 540, /ccmagic:validate runs the checks in one
-# detached run (ccm-validate --start, then --wait until it finishes), since a
-# single Bash tool call stops at 10 minutes; set it above 540 when a check,
+# long run (ccm-validate --start --attached, then --attach RUN as a background
+# Bash call, then --wait until it finishes), since a single Bash tool call
+# stops at 10 minutes; set it above 540 when a check,
 # such as a test suite with integration tests, takes longer than 9 minutes.
 # validate_format: npm run format:check
 # validate_lint: npm run lint
