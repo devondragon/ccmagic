@@ -1648,30 +1648,248 @@ validate_timeout_seconds: 1'
   [[ $(jqval '.checks[] | select(.name == "test") | .reason') == "timed out"* ]]
 }
 
-# A run killed without writing a result is failed, and the check it left
-# running (in the run's process group) is stopped too.
+# A run killed without writing a result is detected by its heartbeat's age,
+# not its pid, and failed; the worker's heartbeat loop stops the check it left
+# running (in the worker's namespace).
 validate_dead_run_is_reported_failed() {
   config 'validate_lint: "true"
 validate_test: sleep 4 && touch survived
 validate_build: "true"
 validate_timeout_seconds: 900'
-  run "$BIN/ccm-validate" --start
+  CCM_VALIDATE_HEARTBEAT_STALE_SECONDS=3 run "$BIN/ccm-validate" --start
   check "$RC" "0"
   local pid
   pid=$(vstate .pid)
   for _ in 1 2 3 4 5; do [ "$(vstate .running)" = test ] && break; sleep 1; done
   kill -KILL "$pid"
-  run "$BIN/ccm-validate" --wait 10
+  CCM_VALIDATE_HEARTBEAT_STALE_SECONDS=3 run "$BIN/ccm-validate" --wait 15
   check "$(jqval .status),$RC,$(check_status lint),$(check_status test),$(check_status build)" \
-    "fail,1,passed,failed,skipped"
-  [[ $(jqval .reason) == *"(pid $pid) ended without a result"* ]]
+    "fail,1,passed,failed,skipped" || vdiag
+  [[ $(jqval .reason) == *"heartbeat is more than 3s old, so it ended without a result"* ]]
   [[ $(jqval '.checks[] | select(.name == "build") | .reason') == "not run: "* ]]
+  check "$(vstate .abandoned)" "true"
   # The check would have ended by now.
   sleep 4
   check "$([ -e survived ] && echo survived || echo stopped)" "stopped" || vdiag
   # The recorded result stands.
   run "$BIN/ccm-validate" --wait 0
   check "$(jqval .status),$RC" "fail,1"
+}
+
+# --start --attached prepares the run and launches nothing; --attach RUN runs
+# the worker in the foreground of its own invocation (here a background job of
+# the test, as a harness background task would), and --wait reads its result
+# from the state file.
+validate_start_attached_then_wait_passes() {
+  config 'validate_lint: "true"
+validate_test: sleep 2; echo suite ran
+validate_timeout_seconds: 900'
+  run "$BIN/ccm-validate" --start --attached
+  check "$(jqval .status),$RC,$(jq -c .checks <<<"$OUT"),$(jqval .limit_s)" "prepared,0,[\"lint\",\"test\"],$((2 * 900 + 120))"
+  local id
+  id=$(jqval .run)
+  check "$(vstate .run),$(vstate .attached),$(vstate .heartbeat_at),$(vstate .final),$(vstate .only)" "$id,true,null,null,null"
+  "$BIN/ccm-validate" --attach "$id" >"$T/attached.out" 2>"$T/attached.err" &
+  local bg=$!
+  run "$BIN/ccm-validate" --wait 20
+  check "$(jqval .status),$RC,$(check_status lint),$(check_status test)" "pass,0,passed,passed" || vdiag
+  local rc=0
+  wait "$bg" || rc=$?
+  check "$rc,$(jq -r .status "$T/attached.out"),$(vstate .attached)" "0,pass,true"
+  check "$(jq -c 'del(.checks[].duration_s)' "$T/attached.out")" "$(jq -c 'del(.checks[].duration_s)' <<<"$OUT")"
+  # The exit code is the final result's, and --only comes from run.json.
+  config 'validate_lint: exit 3
+validate_test: "true"
+validate_timeout_seconds: 900'
+  run "$BIN/ccm-validate" --start --attached --only test
+  check "$(jqval .status),$(jq -c .checks <<<"$OUT"),$(vstate .only)" 'prepared,["test"],test'
+  rc=0
+  "$BIN/ccm-validate" --attach "$(jqval .run)" >"$T/attached.out" 2>&1 || rc=$?
+  check "$rc,$(jq -r .status "$T/attached.out"),$(jq -c '[.checks[] | select(.status != "skipped") | .name]' "$T/attached.out")" '0,pass,["test"]'
+  config 'validate_test: exit 3
+validate_timeout_seconds: 900'
+  run "$BIN/ccm-validate" --start --attached
+  rc=0
+  "$BIN/ccm-validate" --attach "$(jqval .run)" >"$T/attached.out" 2>&1 || rc=$?
+  check "$rc,$(jq -r .status "$T/attached.out")" "1,fail"
+  # Usage: --attached goes with --start, and --attach takes no other option.
+  run "$BIN/ccm-validate" --attached
+  check "$RC" "4"
+  run "$BIN/ccm-validate" --attach
+  check "$RC" "4"
+  run "$BIN/ccm-validate" --attach "$id" --only test
+  check "$RC" "4"
+  run "$BIN/ccm-validate" --start --attach "$id"
+  check "$RC" "4"
+}
+
+# The regression: a finished run with a pass is in run.json (a fix-and-retry
+# pass, or a reused worktree). After the prepare, --wait never prints that
+# result: before the worker starts it reports the new run as running, and
+# after --attach it prints the new run's result.
+validate_attached_wait_never_reads_previous_result() {
+  config 'validate_test: "true"
+validate_timeout_seconds: 900'
+  run "$BIN/ccm-validate" --start
+  run "$BIN/ccm-validate" --wait 20
+  check "$(jqval .status),$RC" "pass,0"
+  local old
+  old=$(vstate .run)
+  sleep 1
+  config 'validate_test: echo new run; exit 3
+validate_timeout_seconds: 900'
+  run "$BIN/ccm-validate" --start --attached
+  check "$(jqval .status),$RC" "prepared,0"
+  local id
+  id=$(jqval .run)
+  [ "$id" != "$old" ]
+  run "$BIN/ccm-validate" --wait 1
+  check "$(jqval .status),$RC,$(jqval .run),$(jqval .heartbeat_age_s)" "running,6,$id,null" || vdiag
+  local rc=0
+  "$BIN/ccm-validate" --attach "$id" >"$T/attached.out" 2>&1 || rc=$?
+  check "$rc,$(jq -r .status "$T/attached.out")" "1,fail"
+  run "$BIN/ccm-validate" --wait 0
+  check "$(jqval .status),$RC,$(check_status test)" "fail,1,failed"
+}
+
+# A prepared run whose --attach never starts writes no heartbeat, and --wait
+# abandons it after the grace (capped by the test override).
+validate_prepared_run_never_attached_is_abandoned() {
+  config 'validate_test: "true"
+validate_timeout_seconds: 900'
+  run "$BIN/ccm-validate" --start --attached
+  local id
+  id=$(jqval .run)
+  CCM_VALIDATE_HEARTBEAT_STALE_SECONDS=2 run "$BIN/ccm-validate" --wait 15
+  check "$(jqval .status),$RC,$(vstate .abandoned)" "fail,1,true" || vdiag
+  [[ $(jqval .reason) == *"wrote no heartbeat within 2s of its start"* ]]
+  # A late --attach of the abandoned run starts nothing.
+  run "$BIN/ccm-validate" --attach "$id"
+  check "$RC,$(vstate .pid)" "4,null"
+  [[ $(cat "$T/stderr") == *"already has a result"* ]]
+}
+
+# --attach refuses a run id run.json does not name, a run another --attach or
+# a worker already started, and a run --start launched detached; each starts
+# no worker.
+validate_attach_refuses_wrong_or_started_run() {
+  config 'validate_test: sleep 3; echo ran >>ran
+validate_timeout_seconds: 900'
+  run "$BIN/ccm-validate" --start --attached
+  local id
+  id=$(jqval .run)
+  run "$BIN/ccm-validate" --attach "not-$id"
+  check "$RC,$(vstate .heartbeat_at),$(vstate .attach_claimed_at)" "4,null,null"
+  [[ $(cat "$T/stderr") == *"not not-$id"* ]]
+  "$BIN/ccm-validate" --attach "$id" >"$T/attached.out" 2>&1 &
+  local bg=$!
+  for _ in 1 2 3 4 5; do [ "$(vstate .running)" = test ] && break; sleep 1; done
+  run "$BIN/ccm-validate" --attach "$id"
+  check "$RC" "4" || vdiag
+  [[ $(cat "$T/stderr") == *"already been started"* ]]
+  wait "$bg"
+  run "$BIN/ccm-validate" --wait 0
+  check "$(jqval .status),$RC,$(wc -l <ran | tr -d ' ')" "pass,0,1"
+  # Two --attach calls racing: one runs the worker, the other exits 4.
+  run "$BIN/ccm-validate" --start --attached
+  id=$(jqval .run)
+  local a b ra=0 rb=0
+  "$BIN/ccm-validate" --attach "$id" >/dev/null 2>&1 &
+  a=$!
+  "$BIN/ccm-validate" --attach "$id" >/dev/null 2>&1 &
+  b=$!
+  wait "$a" || ra=$?
+  wait "$b" || rb=$?
+  check "$(printf '%s\n' "$ra" "$rb" | sort | tr '\n' ,)" "0,4,"
+  check "$(wc -l <ran | tr -d ' ')" "2"
+  # A detached run is not attachable.
+  run "$BIN/ccm-validate" --start
+  id=$(jqval .run)
+  run "$BIN/ccm-validate" --attach "$id"
+  check "$RC" "4"
+  run "$BIN/ccm-validate" --wait 20
+  check "$(jqval .status),$RC" "pass,0"
+}
+
+# The heartbeat is written as the run starts and advances while a check runs.
+validate_heartbeat_advances_during_check() {
+  config 'validate_test: sleep 6
+validate_timeout_seconds: 900'
+  CCM_VALIDATE_HEARTBEAT_STALE_SECONDS=3 run "$BIN/ccm-validate" --start --attached
+  CCM_VALIDATE_HEARTBEAT_STALE_SECONDS=3 "$BIN/ccm-validate" --attach "$(jqval .run)" >/dev/null 2>&1 &
+  local bg=$! first second
+  for _ in 1 2 3 4 5; do [ "$(vstate .running 2>/dev/null)" = test ] && break; sleep 1; done
+  first=$(vstate .heartbeat_at)
+  [ "$first" != null ] || vdiag
+  sleep 3
+  second=$(vstate .heartbeat_at)
+  check "$(vstate .running)" "test" || vdiag
+  [ "$second" -gt "$first" ] || { echo "    heartbeat did not advance: $first then $second"; vdiag; }
+  run "$BIN/ccm-validate" --wait 20
+  check "$(jqval .status),$RC" "pass,0"
+  wait "$bg"
+}
+
+# --wait never signals the pid or process groups the state file records: in a
+# sandbox they can name another process. A live process stands in for one.
+validate_wait_never_signals_recorded_pids() {
+  config 'validate_test: "true"'
+  setsid_sleep() { perl -MPOSIX -e 'POSIX::setsid(); exec @ARGV' sleep 30; }
+  setsid_sleep &
+  local victim=$! now
+  sleep 0.5
+  now=$(date +%s)
+  mkdir -p .git/ccmagic/validate
+  jq -n --argjson v "$victim" --argjson now "$now" '{run: "r1", pid: $v, pgid: $v, started_at: ($now - 200),
+    heartbeat_at: ($now - 120), timeout_seconds: 900, limit_s: 1020, attached: false,
+    planned: [{name: "test", command: "true", source: "config"}], results: [], running: "test",
+    check_pgid: $v, final: null, exit_code: null, finished_at: null}' >.git/ccmagic/validate/run.json
+  run "$BIN/ccm-validate" --wait 5
+  check "$(jqval .status),$RC,$(check_status test),$(vstate .abandoned)" "fail,1,failed,true"
+  [[ $(jqval .reason) == *"heartbeat is more than 90s old"* ]]
+  local alive=no
+  kill -0 "$victim" 2>/dev/null && alive=yes
+  kill -KILL "$victim" 2>/dev/null || true
+  { wait "$victim"; } 2>/dev/null || true
+  check "$alive" "yes"
+  # The overall limit abandons without a signal too.
+  setsid_sleep &
+  victim=$!
+  sleep 0.5
+  now=$(date +%s)
+  jq --argjson v "$victim" --argjson now "$now" '.pid = $v | .pgid = $v | .check_pgid = $v | .final = null
+    | .abandoned = null | .heartbeat_at = $now | .started_at = ($now - 50) | .limit_s = 10' \
+    .git/ccmagic/validate/run.json >"$T/run.json" && mv -f "$T/run.json" .git/ccmagic/validate/run.json
+  run "$BIN/ccm-validate" --wait 5
+  check "$(jqval .reason),$RC" "the validate run did not finish within its overall limit of 10s,1"
+  alive=no
+  kill -0 "$victim" 2>/dev/null && alive=yes
+  kill -KILL "$victim" 2>/dev/null || true
+  { wait "$victim"; } 2>/dev/null || true
+  check "$alive" "yes"
+}
+
+# A worker whose run was abandoned (as a --wait in another tool call would)
+# stops its check and exits without writing over the recorded result.
+validate_worker_keeps_abandoned_result() {
+  config 'validate_lint: sleep 4; touch ran
+validate_test: "true"
+validate_timeout_seconds: 900'
+  run "$BIN/ccm-validate" --start --attached
+  "$BIN/ccm-validate" --attach "$(jqval .run)" >"$T/attached.out" 2>&1 &
+  local bg=$!
+  for _ in 1 2 3 4 5; do [ "$(vstate .running 2>/dev/null)" = lint ] && break; sleep 1; done
+  check "$(vstate .running)" "lint" || vdiag
+  jq '.final = {status: "fail", timeout_seconds: 900, reason: "abandoned elsewhere", checks: []}
+    | .exit_code = 1 | .running = null | .abandoned = true' .git/ccmagic/validate/run.json >"$T/run.json"
+  mv -f "$T/run.json" .git/ccmagic/validate/run.json
+  local rc=0
+  wait "$bg" || rc=$?
+  check "$rc,$(jq -r .reason "$T/attached.out")" "1,abandoned elsewhere"
+  sleep 5
+  check "$([ -e ran ] && echo ran || echo stopped)" "stopped" || vdiag
+  run "$BIN/ccm-validate" --wait 0
+  check "$(jqval .reason),$(jq -c .checks <<<"$OUT"),$RC" "abandoned elsewhere,[],1" || vdiag
 }
 
 validate_second_start_while_live_is_refused() {

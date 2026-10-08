@@ -29,7 +29,7 @@ It prints `{status, timeout_seconds, checks: [{name, command, source, status, re
 
 ### 1b. Install missing Node dependencies
 
-Skip this step when `--list`'s `timeout_seconds` is above 540: the detached run of step 2L installs the dependencies itself before its first check, under the same limit, and reports `environment` the same way.
+Skip this step when `--list`'s `timeout_seconds` is above 540: the background run of step 2L installs the dependencies itself before its first check, under the same limit, and reports `environment` the same way.
 
 If the `--list` output has an `install` object, the repository's `package.json` declares dependencies, one of them is not installed in `node_modules`, and a planned check runs through Node (`npm`, `npx`, `pnpm`, `yarn`, `bun`, `bunx`, or `node`, or a `package.json` script), so the checks would fail for a reason that is not the code. Install them first, as its own call with the maximum Bash tool timeout (600000 ms):
 
@@ -53,25 +53,41 @@ Give each call the maximum Bash tool timeout (600000 ms). One call per check kee
 
 Each call prints `{status: pass | fail | environment, install?, checks: [{name, command, source, status, exit_code, duration_s, log, reason?, tail?}]}` and exits 0 on pass, 1 on fail, and 5 on `environment` (missing dependencies it could not install, so no check ran; stop and report it as step 1b says). A failed check carries the last 40 lines of its output as `tail`; the full output is in the `log` file. Keep going after a failure so the report covers every check, unless the user asked to stop at the first failure.
 
-### 2L. Long checks: one detached run (`timeout_seconds` above 540)
+### 2L. Long checks: one background run (`timeout_seconds` above 540)
 
-Start every planned check in one run that outlives the Bash call, as its own call:
+Start every planned check in one run that outlives the Bash call, in two calls. First prepare the run with an ordinary Bash call (not in the background):
+
+```bash
+"${CLAUDE_PLUGIN_ROOT}/bin/ccm-validate" --start --attached
+```
+
+It launches nothing and prints `{status: "prepared", run, timeout_seconds, limit_s, checks}` (exit 0); read `run` from it. Exit 6 or exit 2 is one of the other `--start` answers below; handle it as that paragraph says and do not attach. Then make this one Bash call with `run_in_background: true`, so the harness owns the run as a background task, with that `run` in place of `<run>`:
+
+```bash
+"${CLAUDE_PLUGIN_ROOT}/bin/ccm-validate" --attach <run>
+```
+
+If the path form is not found or is denied, make the same calls with the bare name `ccm-validate` in place of the path. `--attach` runs the checks in the foreground of that call, which the harness keeps running in the background: a sandboxed Bash tool (Cyrus) ends every process a call started when the call returns, so a run detached from an ordinary call dies with it, while a background task survives. The prepare is its own call because a background call returns before its command has done anything: after the prepare, the state file names the new run, so a `--wait` cannot print an earlier run's result. Make the `--attach` call right after the prepare: a prepared run that writes no heartbeat within 60 seconds is reported failed. The background call prints nothing until the run ends, so do not read its output to follow the run; the state file is the interface. Do not wait for its completion notification either: go straight on to `--wait`. An `--attach` that exits 4 at once started nothing (the run is not the prepared one, or another call already started it); `--wait` still reports the run.
+
+If the harness has no background option (the call is denied, or `run_in_background` is not a parameter of its Bash tool), start the run detached instead, as an ordinary call:
 
 ```bash
 "${CLAUDE_PLUGIN_ROOT}/bin/ccm-validate" --start
 ```
 
-It prints `{status: "started", run, pid, timeout_seconds, limit_s, checks}` (exit 0) and returns at once; the run goes on in the background, each check under its own `validate_timeout_seconds` limit. Then wait for it, each call on its own with the maximum Bash tool timeout (600000 ms):
+It prints `{status: "started", run, pid, timeout_seconds, limit_s, checks}` (exit 0) and returns at once. Say in the report that the run was detached, because a detached run does not survive in a sandbox that ends a call's processes; there the first `--wait` reports it failed with a `reason` about its heartbeat.
+
+Either way, wait for the run with ordinary Bash calls (not in the background), each on its own with the maximum Bash tool timeout (600000 ms):
 
 ```bash
 "${CLAUDE_PLUGIN_ROOT}/bin/ccm-validate" --wait
 ```
 
-Each call waits up to 480 seconds. Exit 6 with `{status: "running", elapsed_s, limit_s, done, running, pending}` means the run is still going: say which check is running, then call `--wait` again. Repeat until a call exits with another code; that call prints the plain run's JSON for every planned check (step 2's format, with `status` `pass`, `fail`, or `environment` and exit 0, 1, or 5), which is the result. A later `--wait` prints the same result again.
+Each call waits up to 480 seconds. Exit 6 with `{status: "running", elapsed_s, heartbeat_age_s, limit_s, done, running, pending}` means the run is still going: say which check is running, then call `--wait` again. Repeat until a call exits with another code; that call prints the plain run's JSON for every planned check (step 2's format, with `status` `pass`, `fail`, or `environment` and exit 0, 1, or 5), which is the result. A later `--wait` prints the same result again. Do not end your turn while the background run is going: keep calling `--wait` until it prints a result, since a turn that ends early returns without one.
 
-The loop has a limit: `limit_s` is the sum of the planned checks' limits (one more for an install) plus 120 seconds, and a `--wait` past it stops the run and returns `fail` with a top-level `reason`, the running check `failed` and the rest `skipped`. A run whose process died without a result is reported the same way. Stop calling `--wait` only on a result; if a `running` answer ever shows `elapsed_s` above `limit_s`, stop and count the running and pending checks as failed with reason "timed out". If one `--wait` Bash call itself times out and prints nothing, call `--wait` again.
+The loop has a limit: `limit_s` is the sum of the planned checks' limits (one more for an install) plus 120 seconds, and a `--wait` past it records the run as failed and returns `fail` with a top-level `reason`, the running check `failed` and the rest `skipped`. A run that stopped writing its heartbeat (none for more than 90 seconds, or none 60 seconds after its start or prepare) died without a result and is reported the same way. Stop calling `--wait` only on a result; if a `running` answer ever shows `elapsed_s` above `limit_s`, stop and count the running and pending checks as failed with reason "timed out". If one `--wait` Bash call itself times out and prints nothing, call `--wait` again.
 
-Other `--start` answers: `nothing-to-run` (exit 2) is step 1's case. `running` (exit 6) with a `note` means an earlier call in this checkout left a run going, which may have checked older code: `--wait` until it ends, discard that result, and `--start` again. Exit 1 with a `fail` result means the run could not start; report it as failed.
+Other `--start` answers, with or without `--attached`: `nothing-to-run` (exit 2) is step 1's case. `running` (exit 6) with a `note` means an earlier call in this checkout left a run going, which may have checked older code: `--wait` until it ends, discard that result, and start again. Exit 1 with a `fail` result means the run could not start; report it as failed. The background call's own completion notification, when it arrives, carries the same final JSON as `--wait`; `--wait` is the one to judge.
 
 ### 3. Optional checks (interactive only)
 

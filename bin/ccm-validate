@@ -3,13 +3,16 @@
 #
 # Usage: ccm-validate [--only CHECK[,CHECK...]] [--list]
 #        ccm-validate --install
-#        ccm-validate --start [--only CHECK[,CHECK...]]
+#        ccm-validate --start [--attached] [--only CHECK[,CHECK...]]
+#        ccm-validate --attach RUN
 #        ccm-validate --wait [SECONDS]
 #
 #   --only     run only these checks (format, lint, types, test, build)
 #   --list     print the resolved commands without running them
 #   --install  only install missing Node dependencies (below), run no check
 #   --start    run the checks in a detached process and return at once
+#   --attached (with --start) only prepare the run, for --attach to start
+#   --attach   run a prepared run's worker in the foreground
 #   --wait     wait up to SECONDS (default 480, at most 570) for that run
 #
 # Each check has at most one command, and its exit code is the verdict. The
@@ -74,37 +77,82 @@
 #   installed       0  (--install) the dependencies were installed
 #   not-needed      0  (--install) nothing to install
 #   started         0  (--start) the run was launched
+#   prepared        0  (--start --attached) the run is ready for --attach
 #   running         6  (--start, --wait) a run is still in progress
-#   (not a git repository 3, usage error 4)
+#   (not a git repository 3, usage error 4, and --attach of a run that is
+#   not prepared or already started 4)
 #
 # Long checks (--start and --wait): a caller whose tool call has a time limit
 # (Claude Code's Bash tool stops a call at 10 minutes) cannot run a check that
 # takes longer in one call. `--start` resolves the checks as a plain run does,
-# then runs the whole plain run (the install included) in a detached process
-# in its own session, stdin from /dev/null and output in run.out in the log
-# directory, so it outlives the call that started it. Each check keeps its own
-# limit of validate_timeout_seconds (at most 7200). It prints {status:
-# "started", run, pid, timeout_seconds, limit_s, checks: [names]}. When no
-# check would run, nothing is launched and it prints the plain run's
-# nothing-to-run result (exit 2). While a run is live, `--start` launches
-# nothing and prints that run's running object (exit 6).
+# then runs the whole plain run (the install included) in a worker process.
+# Each check keeps its own limit of validate_timeout_seconds (at most 7200).
+#
+# `--start` alone launches the worker detached, in its own session (setsid,
+# else Perl's POSIX::setsid), stdin from /dev/null and output in run.out in the
+# log directory, and prints {status: "started", run, pid, timeout_seconds,
+# limit_s, checks: [names]} at once. That survives the end of the calling
+# tool's process group, but not a sandbox that ends every process a call
+# started when the call returns (Claude Code's sandboxed Bash tool under Cyrus
+# does, 2026-10-08). For that sandbox the run is split in two calls.
+# `--start --attached`, an ordinary call, does the same setup up to and
+# including writing the new run.json (attached: true, heartbeat_at: null, and
+# the --only value as `only`), launches nothing, and prints {status:
+# "prepared", run, timeout_seconds, limit_s, checks: [names]}. Then
+# `--attach RUN`, started as a harness-managed background task (the Bash
+# tool's run_in_background), runs the worker in the foreground of that
+# invocation (no nohup, setsid, or background job), so whatever launched it
+# owns its lifetime; poll with --wait. --attach prints nothing until the run
+# has finished, then the final result, and exits with the final result's code;
+# run.json is the interface while it runs. It refuses (exit 4) unless run.json
+# names RUN as an attached run with no result that no worker or other
+# --attach has started; the claim is made under the state file's lock, so of
+# two --attach calls racing, one runs the worker. The prepare is a call of its
+# own because a background call returns before its command has done anything:
+# a --wait right after a background `--start` that still wrote run.json could
+# read the previous run's result (a reused checkout keeps it). After the
+# prepare, run.json names the new run with no result, so --wait cannot.
+# A prepared run that is never attached writes no heartbeat and is dead past
+# the grace below. When no check would run, `--start` in either form launches
+# nothing and prints the plain run's nothing-to-run result (exit 2). While a
+# run is live, `--start` launches nothing and prints that run's running object
+# (exit 6).
 #
 # The run's state is run.json in the log directory: {run, pid, pgid,
-# started_at, timeout_seconds, limit_s, planned: [{name, command, source}],
-# results: [check objects as each finishes], running: name | "install" |
-# null, check_pgid (the process group `timeout` made for the running check),
-# final: null | the plain run's JSON, exit_code, finished_at}.
+# started_at, heartbeat_at, timeout_seconds, limit_s, attached, only,
+# attach_claimed_at, planned:
+# [{name, command, source}], results: [check objects as each finishes],
+# running: name | "install" | null, check_pgid (the process group `timeout`
+# made for the running check), final: null | the plain run's JSON, exit_code,
+# finished_at, abandoned?}. pid, pgid, and check_pgid are the worker's own and
+# only mean something in the worker's PID namespace: a sandbox can give each
+# tool call its own, so no other invocation reads them as liveness or sends
+# them a signal.
+#
+# Heartbeat: while the worker runs, a background loop in it writes
+# heartbeat_at (epoch seconds) to run.json every 10 seconds, and the worker
+# writes it on each check transition; the loop ends with the worker. The run
+# is dead when heartbeat_at is more than 90 seconds old, or missing 60
+# seconds after started_at (for an attached run, the prepare: the grace covers
+# the model's turn between the prepare and the --attach call).
+# CCM_VALIDATE_HEARTBEAT_STALE_SECONDS replaces the 90 (and caps the 60 and
+# the interval, which becomes a third of it), for
+# tests only. Every write to run.json takes a lock directory (run.json.wlock),
+# and a worker writes only while run.json still names its run with no result.
 #
 # `--wait [SECONDS]` polls run.json once a second. When the run has finished
 # it prints `final` exactly as the plain run printed it and exits with its
 # code (0, 1, 2, or 5); this can be repeated. Still running after SECONDS: it
-# prints {status: "running", run, elapsed_s, limit_s, done: [names], running,
-# pending: [names]} and exits 6. A run whose process is gone without a result,
-# or still running past limit_s (the planned checks' limits, one more for a
-# planned install, plus 120 seconds), is stopped (its process group and the
-# check's are sent TERM, then KILL) and recorded as failed: the check it was running fails and
-# the rest are skipped, with a top-level `reason`, exit 1. No run.json is a
-# usage error (4).
+# prints {status: "running", run, elapsed_s, heartbeat_age_s, limit_s, done:
+# [names], running, pending: [names]} and exits 6. A run whose heartbeat is
+# dead (above), or still running past limit_s (the planned checks' limits, one
+# more for a planned install, plus 120 seconds), is recorded as failed: the
+# check it was running fails and the rest are skipped, with a top-level
+# `reason`, `abandoned: true` in run.json, exit 1. `--wait` sends no signal to
+# any process: a live worker that finds its run abandoned stops its own check
+# (TERM, then KILL) and exits without writing a result, and a worker that dies
+# takes its heartbeat loop with it, which stops the check it left running. No
+# run.json is a usage error (4).
 
 set -euo pipefail
 # shellcheck source=bin/ccm-lib.sh
@@ -114,27 +162,38 @@ self="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]
 
 ALL_CHECKS="format lint types test build"
 
-only="" list=false install_only=false mode=plain wait_s=480 run_id=""
+only="" list=false install_only=false mode=plain wait_s=480 run_id="" attached=false nmodes=0
 while [ $# -gt 0 ]; do
   case $1 in
     --only) only=${2:-}; [ -n "$only" ] || { echo "ccm-validate: --only needs a value" >&2; exit 4; }; shift ;;
     --list) list=true ;;
     --install) install_only=true ;;
-    --start) mode=start ;;
+    --start) mode=start; nmodes=$((nmodes + 1)) ;;
+    --attached) attached=true ;;
     --wait)
-      mode="wait"
+      mode="wait"; nmodes=$((nmodes + 1))
       case ${2:-} in ''|-*) ;; *) wait_s=$2; shift ;; esac ;;
-    --worker) mode=worker; run_id=${2:-}; [ -n "$run_id" ] || exit 4; shift ;;
-    -h|--help) sed -n '2,106p' "$0"; exit 0 ;;
+    --attach)
+      mode=attach; nmodes=$((nmodes + 1)); run_id=${2:-}
+      case $run_id in ''|-*) echo "ccm-validate: --attach needs the run id --start --attached printed" >&2; exit 4 ;; esac
+      shift ;;
+    --worker) mode=worker; nmodes=$((nmodes + 1)); run_id=${2:-}; [ -n "$run_id" ] || exit 4; shift ;;
+    -h|--help) sed -n '2,/^$/p' "$0"; exit 0 ;;
     *) echo "ccm-validate: unknown argument $1" >&2; exit 4 ;;
   esac
   shift
 done
+if [ "$mode" = attach ] && { [ "$nmodes" -gt 1 ] || [ -n "$only" ] || [ "$list" = true ] || [ "$install_only" = true ] || [ "$attached" = true ]; }; then
+  echo "ccm-validate: --attach takes no other option" >&2; exit 4
+fi
 if [ "$install_only" = true ] && { [ -n "$only" ] || [ "$list" = true ]; }; then
   echo "ccm-validate: --install takes no other option" >&2; exit 4
 fi
 if [ "$mode" != plain ] && { [ "$install_only" = true ] || [ "$list" = true ]; }; then
   echo "ccm-validate: --start and --wait take no --list or --install" >&2; exit 4
+fi
+if [ "$attached" = true ] && [ "$mode" != start ]; then
+  echo "ccm-validate: --attached goes with --start" >&2; exit 4
 fi
 if [ "$mode" = wait ]; then
   [ -z "$only" ] || { echo "ccm-validate: --wait takes no --only" >&2; exit 4; }
@@ -173,25 +232,57 @@ fi
 
 state_file="$(ccm_state_dir)/validate/run.json"
 
+# Heartbeat: the age past which a run is dead, the grace for a run that has
+# not written one yet, and how often the worker's loop writes it.
+hb_stale=${CCM_VALIDATE_HEARTBEAT_STALE_SECONDS:-90}
+case $hb_stale in ''|*[!0-9]*|0) echo "ccm-validate: CCM_VALIDATE_HEARTBEAT_STALE_SECONDS must be a positive whole number" >&2; exit 4 ;; esac
+hb_grace=60
+[ "$hb_grace" -le "$hb_stale" ] || hb_grace=$hb_stale
+hb_interval=10
+[ $((hb_stale / 3)) -ge "$hb_interval" ] || hb_interval=$((hb_stale / 3))
+[ "$hb_interval" -ge 1 ] || hb_interval=1
+
+# st_lock / st_unlock: every writer of the state file holds this lock, so the
+# worker, its heartbeat loop, and a --wait never lose each other's writes. A
+# writer killed while holding it leaves it behind; after 5 seconds the next
+# writer takes it over.
+st_lock() {
+  local tries=0
+  until mkdir "$state_file.wlock" 2>/dev/null; do
+    tries=$((tries + 1))
+    if [ "$tries" -ge 50 ]; then rmdir "$state_file.wlock" 2>/dev/null || true; tries=0; fi
+    sleep 0.1
+  done
+}
+st_unlock() { rmdir "$state_file.wlock" 2>/dev/null || true; }
+
 # st_update JQ_ARGS...: apply a jq filter to the state file, atomically.
 st_update() {
-  local tmp="$state_file.tmp.$$"
-  jq "$@" "$state_file" >"$tmp" && mv -f "$tmp" "$state_file"
+  local tmp="$state_file.tmp.$$" rc=0
+  st_lock
+  { jq "$@" "$state_file" >"$tmp" && mv -f "$tmp" "$state_file"; } || rc=$?
+  st_unlock
+  return "$rc"
 }
 
-# proc_cmd PID: the process's command line, from ps where it works, else from
-# /proc (a minimal Linux image, such as the Cyrus container, has no ps). Empty
-# when neither can tell.
-proc_cmd() {
-  local c=""
-  if command -v ps >/dev/null 2>&1; then c=$(ps -o command= -p "$1" 2>/dev/null || true); fi
-  if [ -z "$c" ] && [ -r "/proc/$1/cmdline" ]; then c=$(tr '\0' ' ' <"/proc/$1/cmdline" 2>/dev/null || true); fi
-  printf '%s' "$c"
+# st_worker FILTER [JQ_ARGS...]: in a worker, apply FILTER only while the
+# state file names this run and has no result, so a worker never writes over
+# a result --wait recorded (abandoned) or over a newer run.
+st_worker() {
+  local f=$1; shift
+  # shellcheck disable=SC2016 # jq variables, expanded by jq
+  st_update --arg __run "$run_id" "$@" "if .run == \$__run and .final == null then ($f) else . end"
+}
+
+# worker_stopped: the state file no longer wants this worker's run: it names
+# another run, has a result (a --wait abandoned the run), or is gone.
+worker_stopped() {
+  [ "$(jq -r --arg id "$run_id" '(.run != $id) or (.final != null)' "$state_file" 2>/dev/null || echo true)" != false ]
 }
 
 # proc_pgid PID: the process's process group, from ps where it works, else from
 # /proc/PID/stat (the third field after the command name). Empty when neither
-# can tell.
+# can tell. Recorded for diagnosis only.
 proc_pgid() {
   local g=""
   if command -v ps >/dev/null 2>&1; then g=$(ps -o pgid= -p "$1" 2>/dev/null | tr -d ' ' || true); fi
@@ -199,54 +290,39 @@ proc_pgid() {
   printf '%s' "$g"
 }
 
-# run_alive PID: the process is running and is a ccm-validate (a dead
-# worker's pid can be reused by another program).
-run_alive() {
-  case $1 in ''|null) return 1 ;; esac
-  kill -0 "$1" 2>/dev/null || return 1
-  proc_cmd "$1" | grep -q ccm-validate
+# run_dead: the state file names a run with no result whose heartbeat is
+# older than hb_stale, or missing past hb_grace from its start. Never a pid:
+# a pid recorded by another tool call may name another process, or none, here.
+run_dead() {
+  # shellcheck disable=SC2016 # jq variables, expanded by jq
+  [ "$(jq -r --argjson now "$(date +%s)" --argjson stale "$hb_stale" --argjson grace "$hb_grace" '
+    .final == null and (if .heartbeat_at == null then ($now - .started_at) > $grace
+                        else ($now - .heartbeat_at) > $stale end)' "$state_file")" = true ]
 }
 
-# state_live: the state file names a run with no result whose process lives.
-# A worker that ended between the two reads has written its result, so the
-# second read settles it.
+# state_live: the state file names a run with no result whose heartbeat is
+# fresh.
 state_live() {
   [ -f "$state_file" ] || return 1
   [ "$(jq -r '.final == null' "$state_file")" = true ] || return 1
-  run_alive "$(jq -r .pid "$state_file")" && return 0
-  sleep 1
-  [ "$(jq -r '.final == null' "$state_file")" = true ] || return 1
-  run_alive "$(jq -r .pid "$state_file")"
+  ! run_dead
 }
 
 running_json() {
   jq -c --argjson now "$(date +%s)" '{status: "running", run, elapsed_s: ($now - .started_at),
+    heartbeat_age_s: (if .heartbeat_at == null then null else $now - .heartbeat_at end),
     limit_s, done: ([.results[].name] as $r | [.planned[].name | select(. as $n | $r | index($n))]), running,
     pending: ([.planned[].name] - [.results[].name] - [.running])}' "$state_file"
 }
 
-# abandon REASON: stop what is left of the run and record it as failed. The
-# check it was running fails with REASON; the planned checks after it are
-# skipped.
+# abandon REASON: record what is left of the run as failed and mark it
+# abandoned, unless it already has a result. The check it was running fails
+# with REASON; the planned checks after it are skipped. It sends no signal: a
+# live worker sees the result and stops its own check.
 abandon() {
-  local reason=$1 pid pgid cpg
-  pid=$(jq -r .pid "$state_file")
-  pgid=$(jq -r '.pgid // empty' "$state_file")
-  cpg=$(jq -r '.check_pgid // empty' "$state_file")
-  # The worker leads its own session, so its process group holds every check
-  # it started; signal the group only when the worker led it.
-  # The check under timeout has a group of its own (check_pgid).
-  local groups=()
-  [ -z "$pgid" ] || [ "$pgid" != "$pid" ] || groups+=("-$pgid")
-  [ -z "$cpg" ] || groups+=("-$cpg")
-  run_alive "$pid" && [ ${#groups[@]} -eq 0 ] && groups+=("$pid")
-  if [ ${#groups[@]} -gt 0 ]; then
-    kill -TERM -- "${groups[@]}" 2>/dev/null || true
-    sleep 1
-    kill -KILL -- "${groups[@]}" 2>/dev/null || true
-  fi
   # shellcheck disable=SC2016 # jq variables, expanded by jq
-  st_update --arg r "$reason" --argjson now "$(date +%s)" --arg dir "$(dirname "$state_file")" '
+  st_update --arg r "$1" --argjson now "$(date +%s)" --arg dir "$(dirname "$state_file")" '
+    if .final != null then . else
     . as $s
     | ["format","lint","types","test","build"] as $order
     | [$s.results[].name] as $done
@@ -256,7 +332,7 @@ abandon() {
           else . + {status: "skipped", reason: ("not run: " + $r)} end])
        | sort_by(.name as $n | $order | index($n))) as $checks
     | .final = {status: "fail", timeout_seconds: $s.timeout_seconds, reason: $r, checks: $checks}
-    | .exit_code = 1 | .running = null | .finished_at = $now'
+    | .exit_code = 1 | .running = null | .finished_at = $now | .abandoned = true end'
 }
 
 if [ "$mode" = wait ]; then
@@ -267,9 +343,12 @@ if [ "$mode" = wait ]; then
       jq '.final' "$state_file"
       exit "$(jq -r .exit_code "$state_file")"
     fi
-    if ! state_live; then
-      [ "$(jq -r '.final == null' "$state_file")" = true ] &&
-        abandon "the validate run (pid $(jq -r .pid "$state_file")) ended without a result; see $(dirname "$state_file")/run.out"
+    if run_dead; then
+      if [ "$(jq -r '.heartbeat_at == null' "$state_file")" = true ]; then
+        abandon "the validate run wrote no heartbeat within ${hb_grace}s of its start, so it ended without a result; see $(dirname "$state_file")/run.out"
+      else
+        abandon "the validate run's heartbeat is more than ${hb_stale}s old, so it ended without a result; see $(dirname "$state_file")/run.out"
+      fi
       continue
     fi
     if [ $(($(date +%s) - $(jq -r .started_at "$state_file"))) -gt "$(jq -r .limit_s "$state_file")" ]; then
@@ -282,6 +361,49 @@ if [ "$mode" = wait ]; then
     fi
     sleep 1
   done
+fi
+
+# --attach RUN: run the worker of a run `--start --attached` prepared, in the
+# foreground of this invocation. The claim (attach_claimed_at) is checked and
+# set under the state file's lock, so a second --attach, or one racing this
+# one, starts no second worker.
+if [ "$mode" = attach ]; then
+  logdir=$(dirname "$state_file")
+  [ -f "$state_file" ] || { echo "ccm-validate: no prepared validate run to attach (prepare one with --start --attached)" >&2; exit 4; }
+  st_lock
+  # shellcheck disable=SC2016 # jq variables, expanded by jq
+  why=$(jq -r --arg id "$run_id" '
+    if .run != $id then "run.json names run \(.run), not \($id)"
+    elif .final != null then "run \($id) already has a result"
+    elif .attached != true then "run \($id) was not prepared with --start --attached"
+    elif .heartbeat_at != null or .attach_claimed_at != null then "run \($id) has already been started"
+    else "" end' "$state_file" 2>/dev/null || echo "run.json cannot be read")
+  if [ -z "$why" ]; then
+    # shellcheck disable=SC2016 # jq variables, expanded by jq
+    { jq --argjson now "$(date +%s)" '.attach_claimed_at = $now' "$state_file" >"$state_file.tmp.$$" &&
+      mv -f "$state_file.tmp.$$" "$state_file"; } || why="run.json could not be written"
+  fi
+  st_unlock
+  if [ -n "$why" ]; then
+    echo "ccm-validate: cannot attach: $why; no worker was started" >&2
+    exit 4
+  fi
+  worker=("$self" --worker "$run_id")
+  only=$(jq -r '.only // ""' "$state_file")
+  [ -z "$only" ] || worker+=(--only "$only")
+  "${worker[@]}" </dev/null >"$logdir/run.out" 2>&1 || true
+  # A worker that ended without a result (it crashed or was killed) is
+  # recorded as failed here, in its own namespace; abandon does nothing to a
+  # run that has one, or to a newer run.
+  if [ "$(jq -r --arg id "$run_id" '.run == $id and .final == null' "$state_file")" = true ]; then
+    abandon "the validate worker exited without a result; see $logdir/run.out"
+  fi
+  if [ "$(jq -r --arg id "$run_id" '.run == $id' "$state_file")" = true ]; then
+    jq '.final' "$state_file"
+    exit "$(jq -r .exit_code "$state_file")"
+  fi
+  echo "ccm-validate: run $run_id was replaced by a newer run before it finished" >&2
+  exit 1
 fi
 
 # ---- detection -------------------------------------------------------------
@@ -392,18 +514,41 @@ fi
 logdir=""
 ensure_logdir() { [ -n "$logdir" ] || { logdir="$(ccm_state_dir)/validate"; mkdir -p "$logdir"; }; }
 
+# stop_check PID: stop a check this worker started: its process group (the
+# one `timeout` made) where it leads one, else the process, TERM then KILL.
+stop_check() {
+  kill -TERM -- "-$1" 2>/dev/null || kill -TERM "$1" 2>/dev/null || true
+  sleep 1
+  kill -KILL -- "-$1" 2>/dev/null || kill -KILL "$1" 2>/dev/null || true
+}
+
 # run_bounded CMD LOG: run CMD from the repo root under the time limit, output
-# to LOG, and return its exit code.
+# to LOG, and return its exit code. In a worker it runs in the background and
+# the worker polls it: a run abandoned by --wait stops the check and the
+# worker, which writes nothing more.
 run_bounded() {
   local rc
   set +e
-  if [ -n "$timeout_bin" ] && [ "$mode" = worker ]; then
-    # timeout puts the command in a process group of its own; record it, so a
-    # run that is stopped (abandon) stops the check too.
-    "$timeout_bin" --kill-after=10 "$timeout_s" bash -c "$1" >"$2" 2>&1 </dev/null &
+  if [ "$mode" = worker ]; then
+    worker_stopped && exit 0
+    if [ -n "$timeout_bin" ]; then
+      # timeout puts the command in a process group of its own; record it, so
+      # this worker and its heartbeat loop can stop the check.
+      "$timeout_bin" --kill-after=10 "$timeout_s" bash -c "$1" >"$2" 2>&1 </dev/null &
+    else
+      bash -c "$1" >"$2" 2>&1 </dev/null &
+    fi
     local child=$!
     # shellcheck disable=SC2016 # jq variables, expanded by jq
-    st_update --argjson c "$child" '.check_pgid = $c'
+    st_worker '.check_pgid = $c | .heartbeat_at = $now' --argjson c "$child" --argjson now "$(date +%s)"
+    while kill -0 "$child" 2>/dev/null; do
+      if worker_stopped; then
+        stop_check "$child"
+        wait "$child" 2>/dev/null
+        exit 0
+      fi
+      sleep 0.5
+    done
     wait "$child"
   elif [ -n "$timeout_bin" ]; then
     "$timeout_bin" --kill-after=10 "$timeout_s" bash -c "$1" >"$2" 2>&1 </dev/null
@@ -505,7 +650,8 @@ if deps_missing; then
   fi
 fi
 
-# --start: launch the plain run detached, with the checks it resolves here.
+# --start: launch the plain run detached (or, --attached, prepare it for
+# --attach), with the checks it resolves here.
 if [ "$mode" = start ]; then
   planned='[]'
   for check in $checks; do
@@ -537,11 +683,21 @@ if [ "$mode" = start ]; then
   limit=$(( ($(jq length <<<"$planned") + install_n) * timeout_s + ${CCM_VALIDATE_LIMIT_MARGIN_SECONDS:-120} ))
   # shellcheck disable=SC2016 # jq variables, expanded by jq
   jq -n --arg id "$run_id" --argjson now "$(date +%s)" --argjson t "$timeout_s" --argjson l "$limit" \
-    --argjson p "$planned" \
-    '{run: $id, pid: null, pgid: null, started_at: $now, timeout_seconds: $t, limit_s: $l,
-      planned: $p, results: [], running: null, check_pgid: null, final: null, exit_code: null, finished_at: null}' \
+    --argjson p "$planned" --argjson att "$attached" --arg only "$only" \
+    '{run: $id, pid: null, pgid: null, started_at: $now, heartbeat_at: null, timeout_seconds: $t, limit_s: $l,
+      attached: $att, only: (if $only == "" then null else $only end), attach_claimed_at: null,
+      planned: $p, results: [], running: null, check_pgid: null, final: null, exit_code: null,
+      finished_at: null}' \
     >"$state_file.tmp.$$"
   mv -f "$state_file.tmp.$$" "$state_file"
+  if [ "$attached" = true ]; then
+    # Prepared only: --attach RUN, a harness background task, runs the worker.
+    # run.json already names this run with no result, so a --wait made before
+    # the worker starts reports it running (and dead past the grace), never
+    # the previous run's result.
+    jq -c '{status: "prepared", run, timeout_seconds, limit_s, checks: [.planned[].name]}' "$state_file"
+    exit 0
+  fi
   worker=("$self" --worker "$run_id")
   [ -z "$only" ] || worker+=(--only "$only")
   # A session of its own, so the end of the calling tool's process group does
@@ -554,13 +710,13 @@ if [ "$mode" = start ]; then
     detach=(perl -MPOSIX -e 'POSIX::setsid(); exec @ARGV or die "exec: $!\n"' --)
   fi
   nohup ${detach[@]+"${detach[@]}"} "${worker[@]}" </dev/null >"$logdir/run.out" 2>&1 &
-  # The worker records its own pid; wait for it so a --wait never sees a run
-  # with no process.
+  # The worker writes its first heartbeat as it starts; wait for it so a
+  # --wait never sees a run that has not begun.
   for _ in 1 2 3 4 5 6 7 8 9 10; do
-    [ "$(jq -r .pid "$state_file")" = null ] || break
+    [ "$(jq -r .heartbeat_at "$state_file")" = null ] || break
     sleep 1
   done
-  if [ "$(jq -r .pid "$state_file")" = null ]; then
+  if [ "$(jq -r .heartbeat_at "$state_file")" = null ]; then
     abandon "the validate run did not start; see $logdir/run.out"
     jq '.final' "$state_file"
     exit 1
@@ -569,22 +725,52 @@ if [ "$mode" = start ]; then
   exit 0
 fi
 
-# --worker RUN: the detached run --start launched. It records its progress in
-# the state file and its result there instead of on stdout.
+# --worker RUN: the run --start launched detached, or --attach runs in the
+# foreground. It records its progress, heartbeat, and result in the state
+# file instead of on stdout.
 if [ "$mode" = worker ]; then
   [ -f "$state_file" ] && [ "$(jq -r .run "$state_file")" = "$run_id" ] || exit 4
   pgid=$(proc_pgid $$)
   # shellcheck disable=SC2016 # jq variables, expanded by jq
-  st_update --argjson p $$ --arg g "$pgid" '.pid = $p | .pgid = ($g | tonumber? // null)'
+  st_worker '.pid = $p | .pgid = ($g | tonumber? // null) | .heartbeat_at = $now' \
+    --argjson p $$ --arg g "$pgid" --argjson now "$(date +%s)"
+  # The heartbeat loop: a heartbeat every hb_interval seconds while this
+  # worker lives. When the worker is gone (killed), the loop stops the check
+  # it left running, which it can: it is in the worker's PID namespace.
+  worker_pid=$$
+  (
+    set +e
+    trap 'exit 0' TERM
+    last=0
+    while :; do
+      if ! kill -0 "$worker_pid" 2>/dev/null; then
+        cpg=$(jq -r --arg id "$run_id" 'select(.run == $id and .final == null) | .check_pgid // empty' "$state_file" 2>/dev/null)
+        [ -z "$cpg" ] || stop_check "$cpg"
+        exit 0
+      fi
+      worker_stopped && exit 0
+      now=$(date +%s)
+      if [ $((now - last)) -ge "$hb_interval" ]; then
+        # shellcheck disable=SC2016 # jq variables, expanded by jq
+        st_worker '.heartbeat_at = $now' --argjson now "$now"
+        last=$now
+      fi
+      sleep 1
+    done
+  ) </dev/null &
+  hb_pid=$!
+  trap 'kill -TERM "$hb_pid" 2>/dev/null || true' EXIT
 fi
 
 # st_progress RUNNING: in a worker, record the results so far and what runs now.
 st_progress() {
   [ "$mode" = worker ] || return 0
+  worker_stopped && exit 0
   local r='[]'
   [ ${#results[@]} -eq 0 ] || r=$(printf '%s\n' "${results[@]}" | jq -cs .)
   # shellcheck disable=SC2016 # jq variables, expanded by jq
-  st_update --argjson r "$r" --arg now "$1" '.results = $r | .running = (if $now == "" then null else $now end)'
+  st_worker '.results = $r | .running = (if $run == "" then null else $run end) | .heartbeat_at = $now' \
+    --argjson r "$r" --arg run "$1" --argjson now "$(date +%s)"
 }
 
 # install_info STATUS [KEY VALUE...]: the install object, as JSON.
@@ -736,9 +922,11 @@ final=$(printf '%s\n' "${results[@]}" | jq -s --arg status "$status" --arg note 
    + {checks: .} + (if $note == "" then {} else {note: $note} end)')
 if [ "$mode" = worker ]; then
   st_progress ""
+  # st_worker writes the result only while the run has none: a run --wait
+  # abandoned keeps the result it recorded.
   # shellcheck disable=SC2016 # jq variables, expanded by jq
-  st_update --argjson f "$final" --argjson rc "$rc" --argjson now "$(date +%s)" \
-    '.final = $f | .exit_code = $rc | .running = null | .finished_at = $now'
+  st_worker '.final = $f | .exit_code = $rc | .running = null | .finished_at = $now' \
+    --argjson f "$final" --argjson rc "$rc" --argjson now "$(date +%s)"
   exit 0
 fi
 printf '%s\n' "$final"
