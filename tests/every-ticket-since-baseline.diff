@@ -80,7 +80,7 @@
 -Report the outcome as a handshake, following `ccm-validate`'s JSON: `done` when every check that ran passed or there was nothing to run; `needs-human` when any check failed, naming the failed checks (the orchestrator decides whether to fix-and-retry or park). Follow the preloaded procedure directly; do not re-invoke `/ccmagic:validate` as a skill.
 +Report the outcome as a handshake, following `ccm-validate`'s JSON: `done` when every check that ran passed or there was nothing to run; `needs-human` when any check failed, with a reason starting `failed:` and naming the failed checks (the orchestrator decides whether to fix-and-retry or park); `needs-human` with a reason starting `environment:` when `ccm-validate` reported `status: environment` (missing Node dependencies it could not install), quoting its `install.reason`. An `environment:` result is not a check failure, so it gets no `failures:` section, and the orchestrator parks it without a fix pass. Never turn a failed check into `environment:` because its output looks environmental: only the script's `environment` status is one. Follow the preloaded procedure directly; do not re-invoke `/ccmagic:validate` as a skill.
 +
-+When the project's checks are long (`validate_timeout_seconds` above 540), the procedure starts one detached run with `--start` (its step 2L) and then calls `--wait` once per Bash call: exit 6 (`status: running`) is not a result and not a failure, so call `--wait` again until it prints the final JSON, and judge only that.
++When the project's checks are long (`validate_timeout_seconds` above 540), the procedure starts one run with `--start --attached` as a Bash call with `run_in_background: true` (its step 2L; `--start` as an ordinary call only when the harness has no background option) and then calls `--wait` once per ordinary Bash call: exit 6 (`status: running`) is not a result and not a failure, so call `--wait` again until it prints the final JSON, and judge only that. Never end your turn while that background run is going; keep calling `--wait` until it prints a result.
  
  When a check failed, put a `failures:` section just before the handshake, as in contract §3: one entry per failed check with its command, exit code, log path, and the lines of its `tail` that show the cause. The orchestrator hands that section to the fix pass, so copy the lines from the JSON rather than summarizing them.
  
@@ -93,15 +93,17 @@
  follow_ups: []
  ```
  
-@@ -28,7 +30,7 @@ follow_ups: []
+@@ -28,8 +30,8 @@ follow_ups: []
  **No tracker access.** Read the ticket from the grounding block's `ticket_content:`. Do not fetch or update the ticket, and do not spawn a helper agent to do it; the orchestrator owns every tracker read and write (contract §8). Report a needed state change in `requested_state:` and anything to file in `follow_ups:`.
  
  
 -Call the `ccm-*` scripts the skill calls by bare name (`ccm-context`, not the `${CLAUDE_PLUGIN_ROOT}/bin/ccm-context` path the procedure shows); plugin `bin/` is on the Bash `PATH`. Here only the session's permission rules apply, not the skill's `allowed-tools`, and a harness that grants Bash narrowly grants these scripts by bare name (`docs/cyrus-deployment.md`). Run each script as its own Bash call, with nothing chained to it: a compound command is refused as a whole when any other part of it is. If a bare name is not found, fall back to the path form.
 +Call the `ccm-*` scripts by the path the procedure shows (`"${CLAUDE_PLUGIN_ROOT}/bin/ccm-context"`, not the bare `ccm-context`): plugin `bin/` is not on the Bash `PATH` in every harness, and in a Cyrus session the bare name exits 127 (command not found). Run each script as its own Bash call, with nothing chained to it: a compound command is refused as a whole when any other part of it is. Here only the session's permission rules apply, not the skill's `allowed-tools`; if the path form is not found or is denied (a harness that grants Bash narrowly grants these scripts by bare name, `docs/cyrus-deployment.md`), fall back to the bare name.
  
- **Keep every call in the foreground.** You are a subagent, and a subagent returns to the orchestrator the moment it ends its turn. Pass `run_in_background: false` on every `Task` (Agent) call and every Bash call you make, including the ones a preloaded procedure tells you to launch in parallel: put a parallel batch in one message, and each result comes back in that message. A background task reports only through a completion notification, which arrives after you have already returned, so its work is lost and your handshake is missing.
+-**Keep every call in the foreground.** You are a subagent, and a subagent returns to the orchestrator the moment it ends its turn. Pass `run_in_background: false` on every `Task` (Agent) call and every Bash call you make, including the ones a preloaded procedure tells you to launch in parallel: put a parallel batch in one message, and each result comes back in that message. A background task reports only through a completion notification, which arrives after you have already returned, so its work is lost and your handshake is missing.
++**Keep every call in the foreground.** You are a subagent, and a subagent returns to the orchestrator the moment it ends its turn. Pass `run_in_background: false` on every `Task` (Agent) call and every Bash call you make, including the ones a preloaded procedure tells you to launch in parallel, with one exception: the procedure's step 2L call that starts the run with `--start --attached`, which you then follow with `--wait` calls in the foreground until it prints a result, never ending your turn in between: put a parallel batch in one message, and each result comes back in that message. A background task reports only through a completion notification, which arrives after you have already returned, so its work is lost and your handshake is missing.
  
+ The grounding block arrives as your task prompt — read the tracker / ticket / PR context and the needs-human config from it.
 ### agents/auto-work.md
 @@ -34,7 +34,7 @@ requested_state: <In Review on done; omit on needs-human and on a fix pass>
  **No tracker access.** Read the ticket from the grounding block's `ticket_content:`. Do not fetch or update the ticket, and do not spawn a helper agent to do it; the orchestrator owns every tracker read and write (contract §8). Report a needed state change in `requested_state:` and anything to file in `follow_ups:`.
@@ -351,7 +353,7 @@
  ```
  
 -Give the call the maximum Bash tool timeout (600000 ms). The JSON's check `status` is the verdict: `passed` (exit 0) or `failed` (exit 1). Exit 2 with top-level `status: nothing-to-run` means the test check was `skipped`; handle it as in Step 1 by its `reason` ("not configured": ask for the command; "disabled in config": say so and stop), and do not report it as a pass. A failed check carries `exit_code`, `duration_s`, the last 40 lines as `tail`, and the full output in the `log` file; read `log` for Step 4. A check that hit `validate_timeout_seconds` (default 540) fails with reason "timed out"; report it as a hang or a slow suite and suggest raising the key or adding a framework timeout flag.
-+Give the call the maximum Bash tool timeout (600000 ms). When the step 1 `--list` output's `timeout_seconds` is above 540, the suite can outlast one Bash call: run `"${CLAUDE_PLUGIN_ROOT}/bin/ccm-validate" --start --only test` instead, then `"${CLAUDE_PLUGIN_ROOT}/bin/ccm-validate" --wait` as its own call (maximum timeout) until it exits with a code other than 6, as `/ccmagic:validate` step 2L describes; that last call prints the same JSON as the plain call. The JSON's check `status` is the verdict: `passed` (exit 0) or `failed` (exit 1). Exit 2 with top-level `status: nothing-to-run` means the test check was `skipped`; handle it as in Step 1 by its `reason` ("not configured": ask for the command; "disabled in config": say so and stop), and do not report it as a pass. A failed check carries `exit_code`, `duration_s`, the last 40 lines as `tail`, and the full output in the `log` file; read `log` for Step 4. A check that hit `validate_timeout_seconds` (default 540) fails with reason "timed out"; report it as a hang or a slow suite and suggest raising the key or adding a framework timeout flag.
++Give the call the maximum Bash tool timeout (600000 ms). When the step 1 `--list` output's `timeout_seconds` is above 540, the suite can outlast one Bash call: start `"${CLAUDE_PLUGIN_ROOT}/bin/ccm-validate" --start --attached --only test` instead, as one Bash call with `run_in_background: true` (bare name `ccm-validate` if the path form is not found or is denied), then call `"${CLAUDE_PLUGIN_ROOT}/bin/ccm-validate" --wait` in ordinary Bash calls, each on its own (maximum timeout), until it exits with a code other than 6, as `/ccmagic:validate` step 2L describes; that last call prints the same JSON as the plain call. Do not end your turn while the background run is going. If the harness has no background option, run `"${CLAUDE_PLUGIN_ROOT}/bin/ccm-validate" --start --only test` as an ordinary call instead and say that this detached run does not survive in a sandbox that ends a call's processes. The JSON's check `status` is the verdict: `passed` (exit 0) or `failed` (exit 1). Exit 2 with top-level `status: nothing-to-run` means the test check was `skipped`; handle it as in Step 1 by its `reason` ("not configured": ask for the command; "disabled in config": say so and stop), and do not report it as a pass. A failed check carries `exit_code`, `duration_s`, the last 40 lines as `tail`, and the full output in the `log` file; read `log` for Step 4. A check that hit `validate_timeout_seconds` (default 540) fails with reason "timed out"; report it as a hang or a slow suite and suggest raising the key or adding a framework timeout flag.
  
  **Pattern, `--affected`, or `--coverage` runs:** use the framework-specific commands from `${CLAUDE_SKILL_DIR}/framework-commands.md`, one command per run, and read its exit code directly. Never chain commands with `||`. For each run, capture the exit code, full stdout/stderr, and timing.
  
@@ -362,7 +364,7 @@
  
 +### 1b. Install missing Node dependencies
 +
-+Skip this step when `--list`'s `timeout_seconds` is above 540: the detached run of step 2L installs the dependencies itself before its first check, under the same limit, and reports `environment` the same way.
++Skip this step when `--list`'s `timeout_seconds` is above 540: the background run of step 2L installs the dependencies itself before its first check, under the same limit, and reports `environment` the same way.
 +
 +If the `--list` output has an `install` object, the repository's `package.json` declares dependencies, one of them is not installed in `node_modules`, and a planned check runs through Node (`npm`, `npx`, `pnpm`, `yarn`, `bun`, `bunx`, or `node`, or a `package.json` script), so the checks would fail for a reason that is not the code. Install them first, as its own call with the maximum Bash tool timeout (600000 ms):
 +
@@ -379,36 +381,46 @@
  For each check with `status: planned`, in the listed order:
  
  ```bash
-@@ -37,7 +51,27 @@ For each check with `status: planned`, in the listed order:
+@@ -37,7 +51,37 @@ For each check with `status: planned`, in the listed order:
  
  Give each call the maximum Bash tool timeout (600000 ms). One call per check keeps each under the tool's 10-minute limit; the script enforces its own `validate_timeout_seconds` limit (default 540, which leaves room to report before the tool's limit) and reports a check that hits it as `failed` with reason "timed out". If the output has a `note`, no `timeout` binary was found and the checks ran unbounded; repeat the note in the report. If the Bash call itself times out and prints no JSON, count that check as failed with reason "timed out".
  
 -Each call prints `{status: pass | fail, checks: [{name, command, source, status, exit_code, duration_s, log, reason?, tail?}]}` and exits 0 on pass, 1 on fail. A failed check carries the last 40 lines of its output as `tail`; the full output is in the `log` file. Keep going after a failure so the report covers every check, unless the user asked to stop at the first failure.
 +Each call prints `{status: pass | fail | environment, install?, checks: [{name, command, source, status, exit_code, duration_s, log, reason?, tail?}]}` and exits 0 on pass, 1 on fail, and 5 on `environment` (missing dependencies it could not install, so no check ran; stop and report it as step 1b says). A failed check carries the last 40 lines of its output as `tail`; the full output is in the `log` file. Keep going after a failure so the report covers every check, unless the user asked to stop at the first failure.
 +
-+### 2L. Long checks: one detached run (`timeout_seconds` above 540)
++### 2L. Long checks: one background run (`timeout_seconds` above 540)
 +
-+Start every planned check in one run that outlives the Bash call, as its own call:
++Start every planned check in one run that outlives the Bash call. Make this one Bash call with `run_in_background: true`, so the harness owns the run as a background task:
++
++```bash
++"${CLAUDE_PLUGIN_ROOT}/bin/ccm-validate" --start --attached
++```
++
++If the path form is not found or is denied, make the same background call with the bare name `ccm-validate` in place of the path. With `--attached` the run happens in the foreground of that call, which the harness keeps running in the background: a sandboxed Bash tool (Cyrus) ends every process a call started when the call returns, so a run detached from an ordinary call dies with it, while a background task survives. The call prints nothing until the run ends, so do not read its output to follow the run; the state file is the interface. Do not wait for its completion notification either: go straight on to `--wait`.
++
++If the harness has no background option (the call is denied, or `run_in_background` is not a parameter of its Bash tool), start the run detached instead, as an ordinary call:
 +
 +```bash
 +"${CLAUDE_PLUGIN_ROOT}/bin/ccm-validate" --start
 +```
 +
-+It prints `{status: "started", run, pid, timeout_seconds, limit_s, checks}` (exit 0) and returns at once; the run goes on in the background, each check under its own `validate_timeout_seconds` limit. Then wait for it, each call on its own with the maximum Bash tool timeout (600000 ms):
++It prints `{status: "started", run, pid, timeout_seconds, limit_s, checks}` (exit 0) and returns at once. Say in the report that the run was detached, because a detached run does not survive in a sandbox that ends a call's processes; there the first `--wait` reports it failed with a `reason` about its heartbeat.
++
++Either way, wait for the run with ordinary Bash calls (not in the background), each on its own with the maximum Bash tool timeout (600000 ms):
 +
 +```bash
 +"${CLAUDE_PLUGIN_ROOT}/bin/ccm-validate" --wait
 +```
 +
-+Each call waits up to 480 seconds. Exit 6 with `{status: "running", elapsed_s, limit_s, done, running, pending}` means the run is still going: say which check is running, then call `--wait` again. Repeat until a call exits with another code; that call prints the plain run's JSON for every planned check (step 2's format, with `status` `pass`, `fail`, or `environment` and exit 0, 1, or 5), which is the result. A later `--wait` prints the same result again.
++Each call waits up to 480 seconds. Exit 6 with `{status: "running", elapsed_s, heartbeat_age_s, limit_s, done, running, pending}` means the run is still going: say which check is running, then call `--wait` again. Repeat until a call exits with another code; that call prints the plain run's JSON for every planned check (step 2's format, with `status` `pass`, `fail`, or `environment` and exit 0, 1, or 5), which is the result. A later `--wait` prints the same result again. Do not end your turn while the background run is going: keep calling `--wait` until it prints a result, since a turn that ends early returns without one.
 +
-+The loop has a limit: `limit_s` is the sum of the planned checks' limits (one more for an install) plus 120 seconds, and a `--wait` past it stops the run and returns `fail` with a top-level `reason`, the running check `failed` and the rest `skipped`. A run whose process died without a result is reported the same way. Stop calling `--wait` only on a result; if a `running` answer ever shows `elapsed_s` above `limit_s`, stop and count the running and pending checks as failed with reason "timed out". If one `--wait` Bash call itself times out and prints nothing, call `--wait` again.
++The loop has a limit: `limit_s` is the sum of the planned checks' limits (one more for an install) plus 120 seconds, and a `--wait` past it records the run as failed and returns `fail` with a top-level `reason`, the running check `failed` and the rest `skipped`. A run that stopped writing its heartbeat (none for more than 90 seconds, or none 30 seconds after its start) died without a result and is reported the same way. Stop calling `--wait` only on a result; if a `running` answer ever shows `elapsed_s` above `limit_s`, stop and count the running and pending checks as failed with reason "timed out". If one `--wait` Bash call itself times out and prints nothing, call `--wait` again.
 +
-+Other `--start` answers: `nothing-to-run` (exit 2) is step 1's case. `running` (exit 6) with a `note` means an earlier call in this checkout left a run going, which may have checked older code: `--wait` until it ends, discard that result, and `--start` again. Exit 1 with a `fail` result means the run could not start; report it as failed.
++Other `--start` answers: `nothing-to-run` (exit 2) is step 1's case. `running` (exit 6) with a `note` means an earlier call in this checkout left a run going, which may have checked older code: `--wait` until it ends, discard that result, and start again. Exit 1 with a `fail` result means the run could not start; report it as failed. The background call's own completion notification, when it arrives, carries the same final JSON as `--wait`; `--wait` is the one to judge.
  
  ### 3. Optional checks (interactive only)
  
-@@ -49,7 +83,7 @@ These are outside the script and never change the verdict. Offer them in interac
+@@ -49,7 +93,7 @@ These are outside the script and never change the verdict. Offer them in interac
  
  ## Validation Report Format
  
@@ -417,7 +429,7 @@
  
  ```markdown
  # Validation Report
-@@ -95,7 +129,7 @@ Timestamp: [ISO 8601 timestamp]
+@@ -95,7 +139,7 @@ Timestamp: [ISO 8601 timestamp]
  ## Smart Features
  
  ### 1. Auto-fix Mode (interactive only)
@@ -426,7 +438,7 @@
  ```bash
  # Auto-fix linting
  eslint --fix
-@@ -125,10 +159,12 @@ Commands and the time limit come from flat keys in the `ccmagic.local.md` frontm
+@@ -125,10 +169,12 @@ Commands and the time limit come from flat keys in the `ccmagic.local.md` frontm
  ---
  validate_lint: npm run lint:strict   # overrides detection
  validate_types: none                 # disables the check
@@ -440,7 +452,7 @@
  Keys: `validate_format`, `validate_lint`, `validate_types`, `validate_test`, `validate_build`, `validate_timeout_seconds`. See `docs/ccmagic.local.md.example`.
  
  ## Integration with Other Commands
-@@ -160,19 +196,20 @@ Autonomous mode is ON when the first present signal (in priority order) resolves
+@@ -160,19 +206,20 @@ Autonomous mode is ON when the first present signal (in priority order) resolves
  
  Absent all three, run the interactive path exactly as documented above.
  

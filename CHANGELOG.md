@@ -2,6 +2,12 @@
 
 All notable changes to ccmagic are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- `ccm-validate --start` runs died in a sandboxed Claude Code session. Under Cyrus the Bash tool runs in a bubblewrap sandbox that ends every process a call started when the call returns, detached or not, and appears to give each call its own PID namespace. On 2026-10-08 the worker that `--start` launched with `nohup setsid ... &` recorded pid 110, began `./gradlew test`, and died when the `--start` call returned: the check log stopped mid-download, and the next `--wait` reported "the validate run (pid 110) ended without a result". A pid recorded in one call also means nothing in a later one, so `--wait`'s `kill -0` and `/proc` checks could see another process or none, and its TERM and KILL to the recorded process groups could hit an unrelated process. The fix has three parts. `ccm-validate --start --attached` does the same setup and runs the worker in the foreground of that invocation, so whatever launched it owns its lifetime; it prints the final result and exits with its code. The worker now proves it is alive by a heartbeat: a loop in the worker writes `heartbeat_at` to `run.json` every 10 seconds (and the worker on each check transition), and `--wait` treats a run as dead when the heartbeat is more than 90 seconds old, or missing 30 seconds after the start, never by pid (`CCM_VALIDATE_HEARTBEAT_STALE_SECONDS` replaces the 90 for tests). `--wait` sends no signal: on a dead heartbeat or past `limit_s` it records the failed result with `abandoned: true`, and a live worker that sees a result it did not write stops its own check and exits without overwriting it; a killed worker's heartbeat loop stops the check it left running. Writes to `run.json` take a lock, so the worker, its loop, and `--wait` do not lose each other's updates. `/ccmagic:validate` step 2L, `/ccmagic:test`, and the autonomous validate agent now start the run with `--start --attached` as a Bash call with `run_in_background: true` (harness background tasks survive across calls in the same sandbox) and poll `--wait` in ordinary calls until a result, never ending the turn in between; a harness with no background option falls back to the detached `--start`, which the report must say does not survive such a sandbox. A plain `ccm-validate` call is unchanged.
+
 ## [3.18.1] - 2026-10
 
 ### Fixed
