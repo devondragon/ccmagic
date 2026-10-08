@@ -2,6 +2,12 @@
 
 All notable changes to ccmagic are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- `ccm-validate --start` could not start a run on a host without `ps`. The worker read its process group with `ps` under `set -o pipefail`, so a missing `ps` ended it before it recorded its pid, and `--start` reported "the validate run did not start"; `--wait`'s liveness check also used `ps`, so a live run would have read as dead. Both now use `ps` where it works and `/proc` otherwise. Found on the Cyrus container, which has no `ps`, on the first autonomous run with a long validate (AIE-282, 2026-10-08).
+
 ## [3.18.0] - 2026-10
 
 ### Added

@@ -179,12 +179,32 @@ st_update() {
   jq "$@" "$state_file" >"$tmp" && mv -f "$tmp" "$state_file"
 }
 
+# proc_cmd PID: the process's command line, from ps where it works, else from
+# /proc (a minimal Linux image, such as the Cyrus container, has no ps). Empty
+# when neither can tell.
+proc_cmd() {
+  local c=""
+  if command -v ps >/dev/null 2>&1; then c=$(ps -o command= -p "$1" 2>/dev/null || true); fi
+  if [ -z "$c" ] && [ -r "/proc/$1/cmdline" ]; then c=$(tr '\0' ' ' <"/proc/$1/cmdline" 2>/dev/null || true); fi
+  printf '%s' "$c"
+}
+
+# proc_pgid PID: the process's process group, from ps where it works, else from
+# /proc/PID/stat (the third field after the command name). Empty when neither
+# can tell.
+proc_pgid() {
+  local g=""
+  if command -v ps >/dev/null 2>&1; then g=$(ps -o pgid= -p "$1" 2>/dev/null | tr -d ' ' || true); fi
+  if [ -z "$g" ] && [ -r "/proc/$1/stat" ]; then g=$(sed 's/.*) //' "/proc/$1/stat" 2>/dev/null | awk '{print $3}' || true); fi
+  printf '%s' "$g"
+}
+
 # run_alive PID: the process is running and is a ccm-validate (a dead
 # worker's pid can be reused by another program).
 run_alive() {
   case $1 in ''|null) return 1 ;; esac
   kill -0 "$1" 2>/dev/null || return 1
-  ps -o command= -p "$1" 2>/dev/null | grep -q ccm-validate
+  proc_cmd "$1" | grep -q ccm-validate
 }
 
 # state_live: the state file names a run with no result whose process lives.
@@ -553,7 +573,7 @@ fi
 # the state file and its result there instead of on stdout.
 if [ "$mode" = worker ]; then
   [ -f "$state_file" ] && [ "$(jq -r .run "$state_file")" = "$run_id" ] || exit 4
-  pgid=$(ps -o pgid= -p $$ 2>/dev/null | tr -d ' ')
+  pgid=$(proc_pgid $$)
   # shellcheck disable=SC2016 # jq variables, expanded by jq
   st_update --argjson p $$ --arg g "$pgid" '.pid = $p | .pgid = ($g | tonumber? // null)'
 fi
