@@ -1569,6 +1569,13 @@ validate_node_check_next_to_gradle_still_needs_install() {
 # The state file of the detached run, in the test repo's git dir.
 vstate() { jq -r "$1" .git/ccmagic/validate/run.json; }
 
+# vdiag: print the run's state and output, for a failed assertion.
+vdiag() {
+  sed 's/^/    run.json: /' .git/ccmagic/validate/run.json 2>/dev/null || true
+  sed 's/^/    run.out: /' .git/ccmagic/validate/run.out 2>/dev/null || true
+  return 1
+}
+
 has_timeout_bin() { command -v timeout >/dev/null || command -v gtimeout >/dev/null; }
 
 validate_start_then_wait_passes() {
@@ -1642,7 +1649,7 @@ validate_timeout_seconds: 900'
   [[ $(jqval .reason) == *"(pid $pid) ended without a result"* ]]
   [[ $(jqval '.checks[] | select(.name == "build") | .reason') == "not run: "* ]]
   sleep 3
-  [ ! -e survived ]
+  check "$([ -e survived ] && echo survived || echo stopped)" "stopped"
   # The recorded result stands.
   run "$BIN/ccm-validate" --wait 0
   check "$(jqval .status),$RC" "fail,1"
@@ -1675,10 +1682,10 @@ validate_timeout_seconds: 1'
   CCM_VALIDATE_LIMIT_MARGIN_SECONDS=0 run "$BIN/ccm-validate" --start
   check "$(jqval .limit_s)" "1"
   run "$BIN/ccm-validate" --wait 10
-  check "$(jqval .status),$RC,$(check_status test)" "fail,1,failed"
-  [[ $(jqval .reason) == *"overall limit of 1s"* ]]
+  check "$(jqval .status),$RC,$(check_status test)" "fail,1,failed" || vdiag
+  check "$(jqval .reason)" "the validate run did not finish within its overall limit of 1s" || vdiag
   sleep 3
-  [ ! -e late ]
+  check "$([ -e late ] && echo late || echo stopped)" "stopped" || vdiag
 }
 
 validate_start_and_wait_edges() {
