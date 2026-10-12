@@ -570,6 +570,14 @@ seed_sql() {
   file=$(jq -r '.seed.sql.file' <<<"$DECL")
   user=$(jq -r '.seed.sql.user // "postgres"' <<<"$DECL")
   db=$(jq -r '.seed.sql.database // .seed.sql.user // "postgres"' <<<"$DECL")
+  # up waits only for the app, so the database may not be ready yet.
+  dc up -d --wait "$svc" || return 1
+  local i=0
+  until dc exec -T "$svc" pg_isready -U "$user" -d "$db" >/dev/null 2>&1; do
+    i=$((i + 1))
+    [ "$i" -lt 30 ] || { echo "seed-sql: $svc did not accept connections within 30 s"; return 1; }
+    sleep 1
+  done
   dc exec -T "$svc" psql -U "$user" -d "$db" -v ON_ERROR_STOP=1 <"$ROOT/$file"
 }
 

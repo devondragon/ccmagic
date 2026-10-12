@@ -4484,11 +4484,14 @@ EOS
   "$BIN/ccm-harness" down ENG-30 >/dev/null
 }
 
-# Review focus 4: the sandbox masks some dotfiles with /dev/null; a FIFO
-# stands in for that device node here.
+# Review focus 4: the sandbox masks some tracked dotfiles with /dev/null; a
+# FIFO replacing a committed file stands in for that device node here.
 harness_seed_skips_non_regular_files() {
   need_docker || return 0
   harness_file
+  echo real >w/.masked
+  git add -A && git -c user.email=t@t -c user.name=t commit -qm masked
+  command rm -f w/.masked
   mkfifo w/.masked
   "$BIN/ccm-harness" up ENG-31 >/dev/null
   run "$BIN/ccm-harness" seed ENG-31
