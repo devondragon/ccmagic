@@ -2,6 +2,12 @@
 
 All notable changes to ccmagic are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.19.0] - 2026-10
+
+### Added
+
+- A visual criterion (a screenshot or a visible UI state in the acceptance criteria) never parks an autonomous run by itself. The run summary lists the criteria it could not check under a new `### UAT checklist` section, posted on the PR and the ticket. `visual_checklist: off` drops them instead.
+
 ## [3.18.3] - 2026-10
 
 ### Fixed

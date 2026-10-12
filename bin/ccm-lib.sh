@@ -28,7 +28,8 @@ CCM_CONFIG_DEFAULTS='{
   "validate_lint": "",
   "validate_types": "",
   "validate_test": "",
-  "validate_build": ""
+  "validate_build": "",
+  "visual_checklist": "on"
 }'
 
 # Print the frontmatter of a markdown file as a JSON object of string values.

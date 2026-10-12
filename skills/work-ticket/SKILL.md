@@ -379,6 +379,7 @@ Also read these keys from `.claude/ccmagic.local.md`: `needs_human_state:`, `nee
   - If only minor/cosmetic unknowns remain, pick the reasonable option and note the choice in the PR body.
   - Record the implementation/architecture plan as a **PR comment** after the PR is created (Step 7) instead of pausing for confirmation.
 - **Step 6 (Validate scope):** a missing acceptance criterion means **not done** — keep working to close it. Never take the interactive "commit with gaps noted" option and never treat a partial as shippable. If a gap genuinely cannot be closed within the ticket's scope, stop with `needs-human` (the `reason` lists the unmet AC).
+  A visual criterion (one that asks for a screenshot or names a visible UI state: a page, a layout, a mode or element shown on screen) is not a gap this step can close by looking: implement what it describes, and leave the looking to auto-ticket's visual check or its UAT checklist. A visual criterion is never a `needs-human` reason by itself.
 - **Step 7 (PR confirmation):** create the PR without pausing.
 - **Sub-skills:** when invoking `/ccmagic:review`, `/ccmagic:review-ticket`, `/ccmagic:debug`, or `/ccmagic:push`, prepend the same autonomous grounding block so they don't pause either. Address CRITICAL review findings before proceeding; if a CRITICAL finding can't be resolved in-scope → `needs-human`.
 
