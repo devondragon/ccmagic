@@ -4485,6 +4485,63 @@ harness_sweep_removes_old_stacks_only() {
   check "$(jqval '.removed | length')" "0"
 }
 
+# Review focus 3: a prepare replaces any earlier result before --wait reads.
+harness_wait_never_reads_previous_result() {
+  need_compose || return 0
+  harness_file
+  local s
+  s="$(git rev-parse --path-format=absolute --git-dir)/ccmagic/harness/ccm-eng-20"
+  mkdir -p "$s"
+  echo '{"run":"old","prepared_at":1,"claimed_at":1,"heartbeat_at":1,"final":{"status":"up"},"exit_code":0}' >"$s/up.json"
+  run "$BIN/ccm-harness" up ENG-20 --prepare
+  check "$(jqval .status)" "prepared"
+  CCM_HARNESS_STALE_SECONDS=30 run "$BIN/ccm-harness" up ENG-20 --wait 1
+  check "$RC,$(jqval .status)" "6,running"
+}
+
+harness_wait_reports_unattached_run_dead() {
+  need_compose || return 0
+  harness_file
+  "$BIN/ccm-harness" up ENG-21 --prepare >/dev/null
+  sleep 3
+  CCM_HARNESS_STALE_SECONDS=3 run "$BIN/ccm-harness" up ENG-21 --wait 1
+  check "$RC,$(jqval .status)" "1,dead"
+}
+
+harness_attach_refuses_wrong_or_claimed_run() {
+  need_compose || return 0
+  harness_file
+  "$BIN/ccm-harness" up ENG-22 --prepare >/dev/null
+  run "$BIN/ccm-harness" up ENG-22 --attach not-the-run
+  check "$RC,$(jqval .status)" "4,refused"
+}
+
+harness_prepare_attach_wait_round_trip() {
+  need_docker || return 0
+  harness_file
+  local run_id
+  run "$BIN/ccm-harness" up ENG-23 --prepare
+  run_id=$(jqval .run)
+  "$BIN/ccm-harness" up ENG-23 --attach "$run_id" >/dev/null 2>&1 &
+  run "$BIN/ccm-harness" up ENG-23 --wait 300
+  check "$RC,$(jqval .status)" "0,up"
+  wait
+  run "$BIN/ccm-harness" up ENG-23 --attach "$run_id"
+  check "$RC,$(jqval .status)" "4,refused"
+  "$BIN/ccm-harness" down ENG-23 >/dev/null
+}
+
+# A lock holder killed mid-write leaves its lock directory; later calls break it.
+harness_prepare_survives_a_stale_lock() {
+  need_compose || return 0
+  harness_file
+  local s
+  s="$(git rev-parse --path-format=absolute --git-dir)/ccmagic/harness/ccm-eng-24"
+  mkdir -p "$s/lock"
+  run "$BIN/ccm-harness" up ENG-24 --prepare
+  check "$RC,$(jqval .status)" "0,prepared"
+}
+
 # ---- run -------------------------------------------------------------------
 
 MIRRORS=$(mktemp -d)

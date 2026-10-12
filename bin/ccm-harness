@@ -4,7 +4,7 @@
 # nothing.
 #
 # Usage: ccm-harness check [TICKET]
-#        ccm-harness up TICKET
+#        ccm-harness up TICKET [--prepare | --attach RUN | --wait [SECONDS]]
 #        ccm-harness down TICKET
 #        ccm-harness sweep [HOURS]
 #
@@ -36,13 +36,31 @@
 # seconds.
 # The up log is <state dir>/harness/<project>/up.log.
 #
+# Long runs (--prepare, --attach, --wait): a build and health wait can outlast
+# one tool call, and the Cyrus sandbox ends every process a Bash call started
+# when the call returns, so the run must be owned by a harness-managed
+# background call (ccm-validate --start --attached works the same way).
+# `up TICKET --prepare` is a call of its own: it writes up.json, replacing any
+# earlier result, and prints {status: prepared, run}. `up TICKET --attach RUN`,
+# started as a background task, runs the up in its foreground, prints its
+# result when finished, and exits with its code; it refuses (exit 4, {status:
+# refused, run, reason}) unless RUN is the prepared run, not yet claimed or
+# finished. `up TICKET --wait [SECONDS]` (default 480, at most 570) prints the
+# final result with its exit code, {status: running, run} (exit 6) when the
+# time is up, or {status: dead, run, reason} (exit 1) when the attached run
+# stopped sending heartbeats or the prepared run was never attached.
+# State: <state dir>/harness/<project>/up.json {run, prepared_at, claimed_at,
+# heartbeat_at, final, exit_code}, written under the lock directory up.json's
+# neighbor `lock`. CCM_HARNESS_STALE_SECONDS (tests only, default 90) is the
+# heartbeat staleness; the heartbeat interval is a third of it, at most 10 s.
+#
 # down: removes the ticket's runner and stack. Prints {status: down, project}.
 #
 # sweep [HOURS]: removes every ccm-* stack whose newest container is at least
 # HOURS old (default 6). Prints {status: swept, removed: [project, ...]}.
 #
-# Exit codes: 0 ok, 1 failed or invalid, 2 no harness, 3 not a git
-# repository, 4 usage error.
+# Exit codes: 0 ok, 1 failed or invalid (or a dead run), 2 no harness, 3 not a
+# git repository, 4 usage error or refused attach, 6 still running.
 set -uo pipefail
 
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -52,7 +70,7 @@ here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 HARNESS_REL=.ccmagic/harness.compose.yml
 
 usage() {
-  echo "usage: ccm-harness check [TICKET] | up TICKET | down TICKET | sweep [HOURS]" >&2
+  echo "usage: ccm-harness check [TICKET] | up TICKET [--prepare | --attach RUN | --wait [SECONDS]] | down TICKET | sweep [HOURS]" >&2
   exit 4
 }
 
@@ -309,6 +327,112 @@ ticket_names() {
   state_dir
 }
 
+lock() {
+  local i=0
+  until mkdir "$STATE/lock" 2>/dev/null; do
+    i=$((i + 1))
+    # A writer killed while holding the lock leaves it behind; after 5 s it is stale.
+    [ "$i" -lt 50 ] || { rmdir "$STATE/lock" 2>/dev/null; i=0; }
+    sleep 0.1
+  done
+}
+unlock() { rmdir "$STATE/lock" 2>/dev/null || true; }
+
+# upj_update JQ_ARGS... FILTER: rewrite up.json under the lock.
+upj_update() {
+  lock
+  jq "$@" "$STATE/up.json" >|"$STATE/up.json.tmp" && command mv -f "$STATE/up.json.tmp" "$STATE/up.json"
+  unlock
+}
+
+stale_seconds() { printf '%s' "${CCM_HARNESS_STALE_SECONDS:-90}"; }
+
+cmd_up_prepare() {
+  local run
+  run=$(date +%s)-$$
+  lock
+  jq -n --arg r "$run" --argjson t "$(date +%s)" \
+    '{run: $r, prepared_at: $t, claimed_at: null, heartbeat_at: null, final: null, exit_code: null}' >|"$STATE/up.json"
+  unlock
+  jq -n --arg r "$run" '{status: "prepared", run: $r}'
+}
+
+cmd_up_attach() {
+  local run=$1 ok out rc hb interval
+  lock
+  ok=$(jq -r --arg r "$run" 'select(.run == $r and .final == null and .claimed_at == null) | "yes"' "$STATE/up.json" 2>/dev/null || true)
+  if [ "$ok" = yes ]; then
+    jq --argjson t "$(date +%s)" '.claimed_at = $t | .heartbeat_at = $t' "$STATE/up.json" >|"$STATE/up.json.tmp" &&
+      command mv -f "$STATE/up.json.tmp" "$STATE/up.json"
+  fi
+  unlock
+  if [ "$ok" != yes ]; then
+    jq -n --arg r "$run" '{status: "refused", run: $r, reason: "not the prepared run, or already attached or finished"}'
+    exit 4
+  fi
+  interval=$(($(stale_seconds) / 3))
+  [ "$interval" -le 10 ] || interval=10
+  [ "$interval" -ge 1 ] || interval=1
+  # Beat only while up.json still names this run with no result.
+  (while sleep "$interval"; do
+    # shellcheck disable=SC2016  # jq variables
+    upj_update --arg r "$run" --argjson t "$(date +%s)" \
+      'if .run == $r and .final == null then .heartbeat_at = $t else . end'
+  done) &
+  hb=$!
+  HB_PID=$hb
+  trap 'stop_beat "$HB_PID"; exit 1' TERM INT HUP
+  out=$(do_up) && rc=0 || rc=$?
+  stop_beat "$hb"
+  trap - TERM INT HUP
+  # shellcheck disable=SC2016  # jq variables
+  upj_update --arg r "$run" --argjson f "$out" --argjson c "$rc" --argjson t "$(date +%s)" \
+    'if .run == $r then .final = $f | .exit_code = $c | .heartbeat_at = $t else . end'
+  printf '%s\n' "$out"
+  exit "$rc"
+}
+
+# End the heartbeat loop, its sleep, and reap it.
+stop_beat() {
+  pkill -P "$1" 2>/dev/null
+  kill "$1" 2>/dev/null
+  wait "$1" 2>/dev/null
+  return 0
+}
+
+cmd_up_wait() {
+  local secs=${1:-480} deadline now run final hb prep stale
+  case $secs in '' | *[!0-9]*) usage ;; esac
+  [ "$secs" -le 570 ] || secs=570
+  deadline=$(($(date +%s) + secs))
+  stale=$(stale_seconds)
+  while :; do
+    [ -f "$STATE/up.json" ] || { jq -n '{status: "dead", run: null, reason: "no run was prepared"}'; exit 1; }
+    run=$(jq -r '.run' "$STATE/up.json")
+    final=$(jq -c '.final' "$STATE/up.json")
+    if [ "$final" != null ]; then
+      printf '%s\n' "$final"
+      exit "$(jq -r '.exit_code' "$STATE/up.json")"
+    fi
+    now=$(date +%s)
+    hb=$(jq -r '.heartbeat_at // empty' "$STATE/up.json")
+    prep=$(jq -r '.prepared_at' "$STATE/up.json")
+    if [ -n "$hb" ] && [ $((now - hb)) -gt "$stale" ]; then
+      jq -n --arg r "$run" '{status: "dead", run: $r, reason: "the attached run stopped sending heartbeats"}'
+      exit 1
+    fi
+    if [ -z "$hb" ] && [ $((now - prep)) -gt $((stale * 2 / 3)) ]; then
+      jq -n --arg r "$run" '{status: "dead", run: $r, reason: "the prepared run was never attached"}'
+      exit 1
+    fi
+    if [ "$now" -ge "$deadline" ]; then
+      jq -n --arg r "$run" '{status: "running", run: $r}'
+      exit 6
+    fi
+    sleep 2
+  done
+}
+
 ticket_setup() {
   [ -n "${1:-}" ] || usage
   load_decl
@@ -321,10 +445,20 @@ cmd=${1:-}
 case $cmd in
   check) [ $# -le 1 ] || usage; cmd_check "$@" ;;
   up)
-    ticket_setup "${1:-}"
-    out=$(do_up) && rc=0 || rc=$?
-    printf '%s\n' "$out"
-    exit "$rc"
+    t=${1:-}
+    [ $# -gt 0 ] && shift
+    case ${1:-} in
+      --prepare) ticket_names "$t"; cmd_up_prepare ;;
+      --wait) ticket_names "$t"; cmd_up_wait "${2:-480}" ;;
+      --attach) [ -n "${2:-}" ] || usage; ticket_setup "$t"; cmd_up_attach "$2" ;;
+      '')
+        ticket_setup "$t"
+        out=$(do_up) && rc=0 || rc=$?
+        printf '%s\n' "$out"
+        exit "$rc"
+        ;;
+      *) usage ;;
+    esac
     ;;
   down) [ $# -eq 1 ] || usage; ticket_names "$1"; cmd_down ;;
   sweep) [ $# -le 1 ] || usage; cmd_sweep "${1:-6}" ;;
