@@ -31,6 +31,9 @@
 # build-failed, tail}, {status: unhealthy, timeout_seconds, logs}, or the
 # check's invalid or absent object (exit 1 or 2). published_url is null
 # unless CCM_HARNESS_PUBLISH=1, which publishes the app on 127.0.0.1 only.
+# health_timeout_seconds (default 600) measures app health only: its clock
+# starts when the runner is up, after the build. Each probe times out after 5
+# seconds.
 # The up log is <state dir>/harness/<project>/up.log.
 #
 # down: removes the ticket's runner and stack. Prints {status: down, project}.
@@ -206,7 +209,10 @@ remove_project() {
 
 cmd_down_quiet() {
   dk rm -f "$RUNNER" >/dev/null 2>&1
-  dc down -v --rmi local --remove-orphans >/dev/null 2>&1
+  # compose down needs a usable file; remove_project below needs none.
+  if [ -f "$HARNESS" ] && (cmd_check >/dev/null 2>&1); then
+    dc down -v --rmi local --remove-orphans >/dev/null 2>&1
+  fi
   remove_project "$PROJECT"
 }
 
@@ -242,7 +248,7 @@ cmd_sweep() {
 
 runner_get() {
   dk exec "$RUNNER" node -e \
-    'fetch(process.argv[1]).then(r => process.exit(r.status === 200 ? 0 : 1), () => process.exit(1))' "$1" \
+    'fetch(process.argv[1], { signal: AbortSignal.timeout(5000) }).then(r => process.exit(r.status === 200 ? 0 : 1), () => process.exit(1))' "$1" \
     >/dev/null 2>&1
 }
 
@@ -262,7 +268,7 @@ start_runner() {
 # Bring the stack up from nothing and wait for the app's health URL, as seen
 # from the runner on the stack's network. Prints the result JSON.
 do_up() {
-  local started log published=
+  local started hstart log published=
   started=$(date +%s)
   log=$STATE/up.log
   : >"$log"
@@ -280,8 +286,9 @@ do_up() {
     jq -n --arg t "$(tail -40 "$log")" '{status: "runner-failed", tail: $t}'
     return 1
   fi
+  hstart=$(date +%s)
   until runner_get "http://$SERVICE:$PORT$HEALTH"; do
-    if [ $(($(date +%s) - started)) -ge "$TIMEOUT" ]; then
+    if [ $(($(date +%s) - hstart)) -ge "$TIMEOUT" ]; then
       dc logs --no-color --tail 200 >>"$log" 2>&1
       jq -n --arg t "$(tail -200 "$log")" --argjson s "$TIMEOUT" '{status: "unhealthy", timeout_seconds: $s, logs: $t}'
       return 1
@@ -294,13 +301,19 @@ do_up() {
     '{status: "up", project: $p, runner: $r, app_url: $u, published_url: (if $pub == "" then null else $pub end), duration_s: $d}'
 }
 
-ticket_setup() {
+# PROJECT, RUNNER, and STATE for a ticket, without reading the harness file.
+ticket_names() {
   [ -n "${1:-}" ] || usage
   PROJECT=$(project_for "$1")
   RUNNER=$PROJECT-runner
-  load_decl
-  APP_URL=http://$SERVICE:$PORT
   state_dir
+}
+
+ticket_setup() {
+  [ -n "${1:-}" ] || usage
+  load_decl
+  ticket_names "$1"
+  APP_URL=http://$SERVICE:$PORT
 }
 
 cmd=${1:-}
@@ -313,7 +326,7 @@ case $cmd in
     printf '%s\n' "$out"
     exit "$rc"
     ;;
-  down) [ $# -eq 1 ] || usage; ticket_setup "$1"; cmd_down ;;
+  down) [ $# -eq 1 ] || usage; ticket_names "$1"; cmd_down ;;
   sweep) [ $# -le 1 ] || usage; cmd_sweep "${1:-6}" ;;
   *) usage ;;
 esac

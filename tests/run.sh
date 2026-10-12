@@ -4419,8 +4419,14 @@ harness_up_reports_unhealthy_with_logs() {
   harness_file
   sed -i.bak 's#health: /,#health: /missing,#; s#health_timeout_seconds: 120#health_timeout_seconds: 10#' .ccmagic/harness.compose.yml && rm -f .ccmagic/harness.compose.yml.bak
   git -c user.email=t@t -c user.name=t commit -qam unhealthy
+  local t0 t1
+  t0=$(date +%s)
   run "$BIN/ccm-harness" up ENG-10
+  t1=$(date +%s)
   check "$RC,$(jqval .status)" "1,unhealthy"
+  # The health clock starts after the build, so the whole call is the build
+  # plus 10 seconds plus one probe and slack.
+  [ $((t1 - t0)) -lt 120 ] || { echo "    up took $((t1 - t0))s"; return 1; }
   [[ $(jqval .logs) == *nginx* ]] || { echo "    no service logs in the result"; return 1; }
   "$BIN/ccm-harness" down ENG-10 >/dev/null
 }
@@ -4453,6 +4459,17 @@ harness_up_twice_starts_fresh() {
   check "$(jqval .status)" "up"
   docker exec ccm-eng-13-runner test ! -e /work/marker
   "$BIN/ccm-harness" down ENG-13 >/dev/null
+}
+
+harness_down_works_without_a_valid_harness_file() {
+  need_docker || return 0
+  harness_file
+  "$BIN/ccm-harness" up ENG-14 >/dev/null
+  rm -f .ccmagic/harness.compose.yml
+  run "$BIN/ccm-harness" down ENG-14
+  check "$RC,$(jqval .status)" "0,down"
+  check "$(docker ps -aq --filter label=com.docker.compose.project=ccm-eng-14 | wc -l | tr -d ' ')" "0"
+  check "$(docker ps -aq --filter label=ccm.project=ccm-eng-14 | wc -l | tr -d ' ')" "0"
 }
 
 harness_sweep_removes_old_stacks_only() {
