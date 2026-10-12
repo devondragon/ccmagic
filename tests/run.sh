@@ -4349,6 +4349,49 @@ harness_check_playwright_version_must_match() {
   check "$(jqval .status)" "ok"
 }
 
+harness_check_rejects_interpolation_in_include() {
+  need_compose || return 0
+  mkdir -p .ccmagic
+  # shellcheck disable=SC2016  # literal ${...} is the point of this test
+  printf 'services:\n  other:\n    image: nginx:1.27-alpine\n    environment: [ "TOKEN=${GH_TOKEN}" ]\n' >.ccmagic/inc.yml
+  harness_file
+  { echo 'include: [ inc.yml ]'; cat .ccmagic/harness.compose.yml; } >.ccmagic/h2.yml && mv -f .ccmagic/h2.yml .ccmagic/harness.compose.yml
+  GH_TOKEN=leak run "$BIN/ccm-harness" check
+  check "$RC,$(jqval .rule)" "1,interpolation"
+  [[ $OUT != *leak* ]] || { echo "    the token reached the output"; return 1; }
+}
+
+harness_check_rejects_yaml_escaped_interpolation() {
+  need_compose || return 0
+  harness_file '    environment: [ "TOKEN=\x24{GH_TOKEN}" ]'
+  run "$BIN/ccm-harness" check
+  check "$RC,$(jqval .rule)" "1,interpolation"
+}
+
+harness_check_allows_dollar_in_comment() {
+  need_compose || return 0
+  # shellcheck disable=SC2016  # literal $ is the point of this test
+  harness_file '    # set $HOME later'
+  run "$BIN/ccm-harness" check
+  check "$(jqval .status)" "ok"
+}
+
+harness_check_rejects_app_not_a_mapping() {
+  need_compose || return 0
+  harness_file
+  sed -i.bak 's#^  app: {.*#  app: nope#' .ccmagic/harness.compose.yml && rm -f .ccmagic/harness.compose.yml.bak
+  run "$BIN/ccm-harness" check
+  check "$RC,$(jqval .rule)" "1,declaration"
+}
+
+harness_check_rejects_runner_not_a_mapping() {
+  need_compose || return 0
+  harness_file
+  sed -i.bak 's#^  runner: {.*#  runner: [ x ]#' .ccmagic/harness.compose.yml && rm -f .ccmagic/harness.compose.yml.bak
+  run "$BIN/ccm-harness" check
+  check "$RC,$(jqval .rule)" "1,declaration"
+}
+
 # Review focus 1: Compose refuses uppercase project names.
 harness_project_name_is_lowercase() {
   need_compose || return 0

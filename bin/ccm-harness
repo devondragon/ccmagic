@@ -72,15 +72,21 @@ invalid() {
 }
 
 cmd_check() {
-  local ticket=${1:-} line cfg broken decl workdir image lock locked tag
+  local ticket=${1:-} line raw cfg broken decl workdir image lock locked tag
   [ -f "$HARNESS" ] || {
     jq -n --arg f "$HARNESS_REL" '{status: "absent", file: $f}'
     exit 2
   }
-  # $$ is Compose's escape for a literal $, so only an unescaped $ counts.
-  # shellcheck disable=SC2016  # the pattern is a regex, not an expansion
-  line=$(sed 's/\$\$//g' "$HARNESS" | grep -nE '\$(\{|[A-Za-z_])' | head -1 || true)
-  [ -z "$line" ] || invalid interpolation "$HARNESS_REL line ${line%%:*} interpolates a variable; write every value literally"
+  # Read the merged model before Compose interpolates it, so included and
+  # extended files are covered, YAML escapes are decoded, and comments are
+  # gone. $$ is Compose's escape for a literal $ and stays $$ here.
+  raw=$(dc config --no-interpolate --no-env-resolution --format json 2>"$TMPERR") ||
+    invalid compose "docker compose config failed: $(head -1 "$TMPERR")"
+  line=$(jq -r '
+    [ paths(type == "string") as $p | select((getpath($p) | gsub("\\$\\$"; "") | test("\\$(\\{|[A-Za-z_])")))
+      | ($p | map(tostring) | join(".")) ] | .[0] // empty' <<<"$raw") ||
+    invalid compose "could not read the Compose model"
+  [ -z "$line" ] || invalid interpolation "$line interpolates a variable; write every value literally"
   cfg=$(dc config --format json --no-env-resolution 2>"$TMPERR") ||
     invalid compose "docker compose config failed: $(head -1 "$TMPERR")"
   broken=$(jq -r --arg nb "${CCM_HARNESS_NO_BIND_MOUNTS:-}" '
@@ -98,10 +104,16 @@ cmd_check() {
       (svc | . as $s | (.value.volumes // [])[] | select($nb == "1" and .type == "bind")
         | "bind-mount\tservice \($s.key) bind-mounts \(.source); the daemon cannot see this checkout, so build the files into the image"),
       (if (.["x-ccm-harness"] | type) != "object" then "declaration\tthe file has no top-level x-ccm-harness mapping" else empty end)
-    ] | .[0] // empty' <<<"$cfg")
+    ] | .[0] // empty' <<<"$cfg") ||
+    invalid compose "could not evaluate the Compose model"
   [ -z "$broken" ] || invalid "${broken%%$'\t'*}" "${broken#*$'\t'}"
   decl=$(jq -c '.["x-ccm-harness"]' <<<"$cfg")
   broken=$(jq -r --argjson svcs "$(jq -c '.services | keys' <<<"$cfg")" '
+    if (.app | type) != "object" then "app must be a mapping"
+    elif (.runner | type) != "object" then "runner must be a mapping"
+    elif .seed != null and (.seed | type) != "object" then "seed must be a mapping"
+    elif .env != null and (.env | type) != "object" then "env must be a mapping"
+    else
     [ (if .version != 1 then "version must be 1" else empty end),
       (if (.app.service | type) != "string" or ([.app.service] | inside($svcs) | not) then "app.service must name a service in the file" else empty end),
       (if (.app.port | type) != "number" then "app.port must be a number" else empty end),
@@ -109,7 +121,9 @@ cmd_check() {
       (if (.runner.image | type) != "string" then "runner.image is required" else empty end),
       (if (.runner.workdir | type) != "string" then "runner.workdir is required" else empty end),
       (if .evidence != null and ([.evidence] | inside(["auto", "push", "off"]) | not) then "evidence must be auto, push, or off" else empty end)
-    ] | .[0] // empty' <<<"$decl")
+    ] | .[0] // empty
+    end' <<<"$decl") ||
+    invalid declaration "x-ccm-harness could not be read"
   [ -z "$broken" ] || invalid declaration "x-ccm-harness: $broken"
   workdir=$(jq -r '.runner.workdir' <<<"$decl")
   image=$(jq -r '.runner.image' <<<"$decl")
