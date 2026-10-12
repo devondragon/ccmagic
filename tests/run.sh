@@ -4700,6 +4700,105 @@ harness_dead_run_cannot_be_attached() {
   check "$RC,$(jqval .status)" "0,prepared"
 }
 
+evidence_setup() {
+  git init -q --bare "$T/remote.git"
+  git remote add origin "$T/remote.git"
+  printf 'png-1' >"$T/a.png"
+  printf 'png-2' >"$T/b.png"
+}
+
+harness_evidence_parentless_commit() {
+  need_compose || return 0
+  harness_file
+  evidence_setup
+  fx repo-view '{"nameWithOwner":"acme/app","visibility":"PRIVATE","defaultBranchRef":{"name":"main"}}'
+  local head before
+  head=$(git rev-parse HEAD)
+  before=$(git status --porcelain; git rev-parse HEAD; git branch --show-current)
+  run "$BIN/ccm-harness" evidence ENG-40 "$head" "$T/a.png" "$T/b.png"
+  check "$RC,$(jqval .status),$(jqval .ref)" "0,pushed,refs/heads/ccmagic-evidence/ENG-40"
+  check "$(git -C "$T/remote.git" rev-list --parents -n1 refs/heads/ccmagic-evidence/ENG-40 | wc -w | tr -d ' ')" "1"
+  check "$(git -C "$T/remote.git" ls-tree -r --name-only refs/heads/ccmagic-evidence/ENG-40 | tr '\n' ' ')" "$head/a.png $head/b.png "
+  check "$(jqval '.urls[0].url')" "https://github.com/acme/app/blob/$(jqval .commit)/$head/a.png?raw=true"
+  check "$(git status --porcelain; git rev-parse HEAD; git branch --show-current)" "$before"
+}
+
+harness_evidence_replaces_previous_round() {
+  need_compose || return 0
+  harness_file
+  evidence_setup
+  fx repo-view '{"nameWithOwner":"acme/app","visibility":"PRIVATE","defaultBranchRef":{"name":"main"}}'
+  "$BIN/ccm-harness" evidence ENG-41 "$(git rev-parse HEAD)" "$T/a.png" >/dev/null
+  run "$BIN/ccm-harness" evidence ENG-41 "$(git rev-parse HEAD)" "$T/b.png"
+  check "$(git -C "$T/remote.git" ls-tree -r --name-only refs/heads/ccmagic-evidence/ENG-41 | sed 's#.*/##')" "b.png"
+}
+
+# Review focus 5.
+harness_evidence_skipped_on_public_repo() {
+  need_compose || return 0
+  harness_file
+  evidence_setup
+  fx repo-view '{"nameWithOwner":"acme/app","visibility":"PUBLIC","defaultBranchRef":{"name":"main"}}'
+  run "$BIN/ccm-harness" evidence ENG-42 "$(git rev-parse HEAD)" "$T/a.png"
+  check "$RC,$(jqval .status)" "0,skipped"
+  check "$(git -C "$T/remote.git" for-each-ref | wc -l | tr -d ' ')" "0"
+}
+
+harness_evidence_push_failure_is_reported() {
+  need_compose || return 0
+  harness_file
+  git remote add origin "$T/missing.git"
+  printf 'png' >"$T/a.png"
+  fx repo-view '{"nameWithOwner":"acme/app","visibility":"PRIVATE","defaultBranchRef":{"name":"main"}}'
+  run "$BIN/ccm-harness" evidence ENG-43 "$(git rev-parse HEAD)" "$T/a.png"
+  check "$RC,$(jqval .status)" "1,failed"
+}
+
+harness_evidence_temp_index_removed_on_every_path() {
+  need_compose || return 0
+  harness_file
+  evidence_setup
+  fx repo-view '{"nameWithOwner":"acme/app","visibility":"PRIVATE","defaultBranchRef":{"name":"main"}}'
+  local head tmp
+  head=$(git rev-parse HEAD)
+  tmp=$(mktemp -d)
+  TMPDIR=$tmp run "$BIN/ccm-harness" evidence ENG-44 "$head" "$T/a.png" "$T/missing.png"
+  check "$RC,$(jqval .status)" "1,failed"
+  check "$(find "$tmp" -mindepth 1 | wc -l | tr -d ' ')" "0"
+  TMPDIR=$tmp run "$BIN/ccm-harness" evidence ENG-44 "$head" "$T/a.png"
+  check "$RC,$(jqval .status)" "0,pushed"
+  check "$(find "$tmp" -mindepth 1 | wc -l | tr -d ' ')" "0"
+  rm -rf "$tmp"
+}
+
+harness_evidence_png_name_with_spaces() {
+  need_compose || return 0
+  harness_file
+  evidence_setup
+  fx repo-view '{"nameWithOwner":"acme/app","visibility":"PRIVATE","defaultBranchRef":{"name":"main"}}'
+  local head
+  head=$(git rev-parse HEAD)
+  printf 'png-3' >"$T/my shot.png"
+  run "$BIN/ccm-harness" evidence ENG-45 "$head" "$T/my shot.png"
+  check "$RC,$(jqval .status)" "0,pushed"
+  check "$(git -C "$T/remote.git" ls-tree -r --name-only refs/heads/ccmagic-evidence/ENG-45)" "$head/my shot.png"
+  check "$(jqval '.urls[0].url')" "https://github.com/acme/app/blob/$(jqval .commit)/$head/my%20shot.png?raw=true"
+}
+
+harness_evidence_rejects_invalid_ref_name() {
+  need_compose || return 0
+  harness_file
+  evidence_setup
+  fx repo-view '{"nameWithOwner":"acme/app","visibility":"PRIVATE","defaultBranchRef":{"name":"main"}}'
+  local head t
+  head=$(git rev-parse HEAD)
+  for t in "ENG 46" "ENG..46" 'ENG~46'; do
+    run "$BIN/ccm-harness" evidence "$t" "$head" "$T/a.png"
+    check "$RC,$(jqval .status),$(jqval .error | grep -c 'not a valid git ref')" "1,failed,1"
+  done
+  check "$(git -C "$T/remote.git" for-each-ref | wc -l | tr -d ' ')" "0"
+}
+
 # ---- run -------------------------------------------------------------------
 
 MIRRORS=$(mktemp -d)

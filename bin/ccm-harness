@@ -8,6 +8,7 @@
 #        ccm-harness down TICKET
 #        ccm-harness seed TICKET
 #        ccm-harness shoot TICKET SCRIPT
+#        ccm-harness evidence TICKET HEAD_SHA PNG...
 #        ccm-harness sweep [HOURS]
 #
 # The harness is .ccmagic/harness.compose.yml, a Compose file whose top-level
@@ -50,6 +51,16 @@
 # ${TMPDIR:-/tmp}/ccm-harness/<project>/. Prints {status: shot, dir, files}
 # for the .png files, or {status: shoot-failed, exit_code, tail} or {status:
 # no-screenshots, dir} (exit 1).
+#
+# evidence: publishes screenshots for a PR as one parentless commit, force-pushed
+# to refs/heads/ccmagic-evidence/<TICKET> (a ref ccmagic owns, never a PR
+# branch), so the ref holds only the latest round. The commit's tree is
+# <HEAD_SHA>/<file name> per PNG. It is built with git plumbing (hash-object,
+# a throwaway index, write-tree, commit-tree), so it never switches branch,
+# touches the index or working tree, or needs a second worktree. Prints
+# {status: pushed, ref, commit, urls: [{file, url}]} (exit 0), {status:
+# skipped, reason} (exit 0; evidence: off, or evidence: auto on a repository
+# that is not private or internal), or {status: failed, error} (exit 1).
 #
 # Long runs (--prepare, --attach, --wait): a build and health wait can outlast
 # one tool call, and the Cyrus sandbox ends every process a Bash call started
@@ -96,7 +107,7 @@ here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 HARNESS_REL=.ccmagic/harness.compose.yml
 
 usage() {
-  echo "usage: ccm-harness check [TICKET] | up TICKET [--prepare | --attach RUN | --wait [SECONDS]] | down TICKET | seed TICKET | shoot TICKET SCRIPT | sweep [HOURS]" >&2
+  echo "usage: ccm-harness check [TICKET] | up TICKET [--prepare | --attach RUN | --wait [SECONDS]] | down TICKET | seed TICKET | shoot TICKET SCRIPT | evidence TICKET HEAD_SHA PNG... | sweep [HOURS]" >&2
   exit 4
 }
 
@@ -611,6 +622,50 @@ cmd_shoot() {
   jq -n --arg d "$out" --argjson f "$files" '{status: "shot", dir: $d, files: $f}'
 }
 
+cmd_evidence() {
+  local ticket=$1 head=$2 policy view slug vis idx f blob tree commit name email ref err urls='[]'
+  shift 2
+  [ $# -gt 0 ] || usage
+  policy=$(jq -r '.evidence // "auto"' <<<"$DECL")
+  [ "$policy" != off ] || { jq -n '{status: "skipped", reason: "evidence: off"}'; return 0; }
+  view=$(gh repo view --json nameWithOwner,visibility 2>/dev/null || true)
+  [ -n "$view" ] || view='{}'
+  slug=$(jq -r '.nameWithOwner // empty' <<<"$view" 2>/dev/null || true)
+  vis=$(jq -r '.visibility // empty' <<<"$view" 2>/dev/null || true)
+  [ -n "$slug" ] || slug=$(ccm_repo_slug)
+  if [ "$policy" = auto ] && [ "$vis" != PRIVATE ] && [ "$vis" != INTERNAL ]; then
+    jq -n --arg v "${vis:-unknown}" '{status: "skipped", reason: ("repository visibility is " + $v + "; set evidence: push to push anyway")}'
+    return 0
+  fi
+  ref=refs/heads/ccmagic-evidence/$ticket
+  if ! git check-ref-format "$ref"; then
+    jq -n --arg t "$ticket" '{status: "failed", error: ("ticket " + $t + " is not a valid git ref name")}'
+    exit 1
+  fi
+  for f in "$@"; do
+    [ -f "$f" ] || { jq -n --arg f "$f" '{status: "failed", error: ("no such file: " + $f)}'; exit 1; }
+  done
+  idx=$(mktemp -d "${TMPDIR:-/tmp}/ccm-evidence.XXXXXX")
+  for f in "$@"; do
+    blob=$(git hash-object -w -- "$f") || { rm -rf "$idx"; jq -n --arg f "$f" '{status: "failed", error: ("cannot store " + $f)}'; exit 1; }
+    GIT_INDEX_FILE=$idx/index git update-index --add --cacheinfo "100644,$blob,$head/$(basename "$f")" || { rm -rf "$idx"; jq -n --arg f "$f" '{status: "failed", error: ("cannot stage " + $f)}'; exit 1; }
+    urls=$(jq -c --arg n "$(basename "$f")" '. + [{file: $n}]' <<<"$urls")
+  done
+  tree=$(GIT_INDEX_FILE=$idx/index git write-tree) || { rm -rf "$idx"; jq -n '{status: "failed", error: "cannot write tree"}'; exit 1; }
+  rm -rf "$idx"
+  name=$(git config user.name || echo ccmagic)
+  email=$(git config user.email || echo ccmagic@localhost)
+  commit=$(GIT_AUTHOR_NAME=$name GIT_AUTHOR_EMAIL=$email GIT_COMMITTER_NAME=$name GIT_COMMITTER_EMAIL=$email \
+    git commit-tree "$tree" -m "ccmagic evidence: $ticket at $head") || { jq -n '{status: "failed", error: "cannot create commit"}'; exit 1; }
+  if ! err=$(git push --force --quiet origin "$commit:$ref" 2>&1); then
+    jq -n --arg e "$(head -1 <<<"$err")" '{status: "failed", error: $e}'
+    exit 1
+  fi
+  jq -n --arg r "$ref" --arg c "$commit" --arg s "$slug" --arg h "$head" --argjson u "$urls" \
+    '{status: "pushed", ref: $r, commit: $c,
+      urls: [$u[] | .url = "https://github.com/\($s)/blob/\($c)/\($h)/\(.file | @uri)?raw=true"]}'
+}
+
 ticket_setup() {
   [ -n "${1:-}" ] || usage
   load_decl
@@ -641,6 +696,7 @@ case $cmd in
   down) [ $# -eq 1 ] || usage; ticket_names "$1"; cmd_down ;;
   seed) [ $# -eq 1 ] || usage; ticket_setup "$1"; cmd_seed ;;
   shoot) [ $# -eq 2 ] || usage; ticket_setup "$1"; cmd_shoot "$2" ;;
+  evidence) [ $# -ge 3 ] || usage; ticket_setup "$1"; cmd_evidence "$@" ;;
   sweep) [ $# -le 1 ] || usage; cmd_sweep "${1:-6}" ;;
   *) usage ;;
 esac
