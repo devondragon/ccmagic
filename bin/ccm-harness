@@ -31,8 +31,9 @@
 # stack, starts the runner container on the stack's network, and waits for
 # the app's health URL as the runner sees it. Prints {status: up, project,
 # runner, app_url, published_url, duration_s} (exit 0), or {status:
-# build-failed, tail}, {status: unhealthy, timeout_seconds, logs}, or the
-# check's invalid or absent object (exit 1 or 2). published_url is null
+# build-failed, tail}, {status: runner-failed, tail} (the stack built but the
+# runner container did not start), {status: unhealthy, timeout_seconds,
+# logs}, or the check's invalid or absent object (exit 1 or 2). published_url is null
 # unless CCM_HARNESS_PUBLISH=1, which publishes the app on 127.0.0.1 only.
 # health_timeout_seconds (default 600) measures app health only: its clock
 # starts when the runner is up, after the build. Each probe times out after 5

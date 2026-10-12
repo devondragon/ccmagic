@@ -93,7 +93,7 @@ visual_criteria:
 ~~~
 ```
 
-A visual fix pass carries `fix_source: visual` and a `findings_to_fix:` section with one item per unmet criterion (`V{n}: {criterion} | {why} | {screenshot path}`) or the harness's `failed-in-change` reason.
+A visual fix pass carries `fix_source: visual` and a `findings_to_fix:` section with one item per unmet criterion (`V{n}: {criterion} | {why} | {screenshot path}`) or, for the harness's `failed-in-change`, one item `harness: {reason}`, whose id in `applied_findings:` is `harness`.
 
 **Fix passes.** The orchestrator never edits code. When a review returns `fixable-findings` (its Step 3), the visual check finds an unmet criterion (its Step 2b), or local validation fails (its Step 4b), it runs the work step (`auto-work`) again as a **fix pass**: the grounding block carries `fix_pass:` and `fix_source:` and a `findings_to_fix:` section, and no `review_pass:` or `previous_findings:`:
 

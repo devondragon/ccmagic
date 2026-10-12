@@ -634,6 +634,23 @@ stop_review_verdict_values() {
   check "$(blocked)" "allow"
 }
 
+# Task 8 review fixes: the visual step routes runner-failed, the work step
+# knows a visual fix pass and the harness item, and head drift matches test
+# and doc paths by segment and suffix, not by substring.
+# shellcheck disable=SC2016 # literal backticks in the markdown being matched
+skills_visual_fix_round_wired() {
+  local missing=''
+  grep -qF '`runner-failed`' "$ROOT/agents/auto-visual.md" || missing+=" agent-runner-failed"
+  grep -qF '{status: runner-failed, tail}' "$ROOT/bin/ccm-harness" || missing+=" header-runner-failed"
+  grep -qF '(`fix_source: visual`), Read the screenshot' "$ROOT/skills/work-ticket/SKILL.md" || missing+=" work-ticket"
+  grep -qF '(`fix_source: visual`), Read the screenshot' "$ROOT/agents/auto-work.md" || missing+=" auto-work"
+  grep -qF 'one item `harness: {reason}`' "$ROOT/skills/auto-ticket/SKILL.md" || missing+=" step-2b-harness-id"
+  grep -qF 'one item `harness: {reason}`' "$ROOT/skills/auto-ticket/autonomous-contract.md" || missing+=" contract-harness-id"
+  grep -qF 'a segment `test`, `tests`, `__tests__`, or `spec`' "$ROOT/skills/auto-ticket/SKILL.md" || missing+=" head-drift-segments"
+  grep -qF 'a path containing `test` or `spec`' "$ROOT/skills/auto-ticket/SKILL.md" && missing+=" head-drift-substring"
+  check "${missing# }" ""
+}
+
 # The SubagentStop hook checks the visual step's handshake like the other
 # done | needs-human steps.
 guard_stop_hook_checks_auto_visual() {
