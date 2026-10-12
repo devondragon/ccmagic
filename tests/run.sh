@@ -88,6 +88,31 @@ hook() {
   OUT=$(printf '%s' "$input" | "${HOOK_BASH:-bash}" "$HOOKS/pre-tool-use-guard.sh" 2>"$T/stderr") && RC=0 || RC=$?
 }
 
+need_compose() { docker compose version >/dev/null 2>&1 || { echo "    skipped: no docker compose"; return 1; }; }
+# shellcheck disable=SC2015  # the || arm must run when either check fails
+need_docker() { need_compose && docker info >/dev/null 2>&1 || { echo "    skipped: no Docker daemon"; return 1; }; }
+
+# harness_file [EXTRA_SERVICE_YAML] [DECL_EXTRA_YAML]: a minimal harness. The
+# app is nginx serving index.html; the runner is node:22-alpine with workdir w/.
+harness_file() {
+  mkdir -p .ccmagic/app w
+  printf 'FROM nginx:1.27-alpine\nCOPY index.html /usr/share/nginx/html/index.html\n' >.ccmagic/app/Dockerfile
+  echo '<h1>harness ok</h1>' >.ccmagic/app/index.html
+  cat >.ccmagic/harness.compose.yml <<EOF
+services:
+  app:
+    build: { context: app }
+${1:-}
+x-ccm-harness:
+  version: 1
+  app: { service: app, port: 80, health: /, health_timeout_seconds: 120 }
+  runner: { image: "node:22-alpine", workdir: w }
+${2:-}
+EOF
+  echo '{"name":"w","private":true}' >w/package.json
+  git add -A && git -c user.email=t@t -c user.name=t commit -qm harness
+}
+
 check() {
   if [ "$1" != "$2" ]; then
     echo "    expected: $2"
@@ -4218,12 +4243,128 @@ openspecver_version_in_one_place() {
   check "$hits" ""
 }
 
+# ---- ccm-harness -----------------------------------------------------------
+
+harness_check_absent() {
+  run "$BIN/ccm-harness" check
+  check "$RC,$(jqval .status)" "2,absent"
+}
+
+harness_check_ok() {
+  need_compose || return 0
+  harness_file
+  run "$BIN/ccm-harness" check
+  check "$RC,$(jqval .status),$(jqval .declaration.app.port),$(jqval .declaration.runner.workdir)" "0,ok,80,w"
+}
+
+harness_check_rejects_interpolation() {
+  need_compose || return 0
+  # shellcheck disable=SC2016  # literal $ is the point of this test
+  harness_file '    environment: [ "TOKEN=${GH_TOKEN}" ]'
+  run "$BIN/ccm-harness" check
+  check "$RC,$(jqval .rule)" "1,interpolation"
+}
+
+harness_check_allows_escaped_dollar() {
+  need_compose || return 0
+  # shellcheck disable=SC2016  # literal $ is the point of this test
+  harness_file '    command: [ "sh", "-c", "echo $$HOME" ]'
+  run "$BIN/ccm-harness" check
+  check "$(jqval .status)" "ok"
+}
+
+harness_check_rejects_env_file() {
+  need_compose || return 0
+  mkdir -p .ccmagic && echo 'A=1' >.ccmagic/app.env
+  harness_file '    env_file: [ app.env ]'
+  run "$BIN/ccm-harness" check
+  check "$RC,$(jqval .rule)" "1,env-file"
+}
+
+# Review focus 2: a bare key would take the caller's value.
+harness_check_rejects_environment_passthrough() {
+  need_compose || return 0
+  harness_file '    environment: [ GH_TOKEN ]'
+  GH_TOKEN=leak run "$BIN/ccm-harness" check
+  check "$RC,$(jqval .rule)" "1,environment-passthrough"
+  [[ $OUT != *leak* ]] || { echo "    the token reached the output"; return 1; }
+}
+
+harness_check_rejects_published_port() {
+  need_compose || return 0
+  harness_file '    ports: [ "8080:80" ]'
+  run "$BIN/ccm-harness" check
+  check "$RC,$(jqval .rule)" "1,published-port"
+}
+
+harness_check_rejects_privileged() {
+  need_compose || return 0
+  harness_file '    privileged: true'
+  run "$BIN/ccm-harness" check
+  check "$RC,$(jqval .rule)" "1,forbidden-key"
+}
+
+harness_check_rejects_network_mode_host() {
+  need_compose || return 0
+  harness_file '    network_mode: host'
+  run "$BIN/ccm-harness" check
+  check "$RC,$(jqval .rule)" "1,forbidden-key"
+}
+
+harness_check_bind_mount_only_under_flag() {
+  need_compose || return 0
+  harness_file '    volumes: [ "./app:/srv" ]'
+  run "$BIN/ccm-harness" check
+  check "$(jqval .status)" "ok"
+  CCM_HARNESS_NO_BIND_MOUNTS=1 run "$BIN/ccm-harness" check
+  check "$RC,$(jqval .rule)" "1,bind-mount"
+}
+
+harness_check_missing_declaration() {
+  need_compose || return 0
+  mkdir -p .ccmagic && printf 'services:\n  app:\n    image: nginx:1.27-alpine\n' >.ccmagic/harness.compose.yml
+  run "$BIN/ccm-harness" check
+  check "$RC,$(jqval .rule)" "1,declaration"
+}
+
+harness_check_playwright_needs_lockfile() {
+  need_compose || return 0
+  harness_file
+  echo '{"name":"w","devDependencies":{"@playwright/test":"^1.48.0"}}' >w/package.json
+  run "$BIN/ccm-harness" check
+  check "$RC,$(jqval .rule)" "1,playwright-lockfile"
+}
+
+harness_check_playwright_version_must_match() {
+  need_compose || return 0
+  harness_file
+  sed -i.bak 's#node:22-alpine#mcr.microsoft.com/playwright:v1.48.0-noble#' .ccmagic/harness.compose.yml && rm -f .ccmagic/harness.compose.yml.bak
+  echo '{"name":"w","devDependencies":{"@playwright/test":"^1.48.0"}}' >w/package.json
+  echo '{"lockfileVersion":3,"packages":{"node_modules/@playwright/test":{"version":"1.61.1"}}}' >w/package-lock.json
+  git add -A && git -c user.email=t@t -c user.name=t commit -qm lock
+  run "$BIN/ccm-harness" check
+  check "$RC,$(jqval .rule)" "1,playwright-version"
+  sed -i.bak 's#v1.48.0#v1.61.1#' .ccmagic/harness.compose.yml && rm -f .ccmagic/harness.compose.yml.bak
+  run "$BIN/ccm-harness" check
+  check "$(jqval .status)" "ok"
+}
+
+# Review focus 1: Compose refuses uppercase project names.
+harness_project_name_is_lowercase() {
+  need_compose || return 0
+  harness_file
+  run "$BIN/ccm-harness" check AIE-317
+  check "$(jqval .project)" "ccm-aie-317"
+  run "$BIN/ccm-harness" check '#42'
+  check "$(jqval .project)" "ccm--42"
+}
+
 # ---- run -------------------------------------------------------------------
 
 MIRRORS=$(mktemp -d)
 trap 'rm -rf "$MIRRORS"' EXIT
 
-for fn in $(declare -F | awk '{print $3}' | grep -E '^(context|ci|merge_gate|guard|post|postreview|stop|threads|reply|validate|route|doctor|extreview|skills|spec_block|scope|finish|baseline|openspecver)_'); do
+for fn in $(declare -F | awk '{print $3}' | grep -E '^(context|ci|merge_gate|guard|post|postreview|stop|threads|reply|validate|route|doctor|extreview|skills|spec_block|scope|finish|baseline|openspecver|harness)_'); do
   t "$fn" "$fn"
 done
 

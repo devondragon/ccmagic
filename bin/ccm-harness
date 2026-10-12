@@ -1,0 +1,135 @@
+#!/usr/bin/env bash
+# ccm-harness: bring up a repository's UI harness for one ticket in Docker,
+# run commands in it, and copy screenshots out, printing JSON. It judges
+# nothing.
+#
+# Usage: ccm-harness check [TICKET]
+#
+# The harness is .ccmagic/harness.compose.yml, a Compose file whose top-level
+# x-ccm-harness key declares how ccmagic uses it (docs/harness.md). The file
+# is committed, and every value in it is literal.
+#
+# Docker and Compose always run with an emptied environment: only PATH, HOME,
+# DOCKER_HOST, DOCKER_CONFIG, and TMPDIR pass through, and Compose reads no
+# .env file. A session's GH_TOKEN, CLAUDE_CODE_OAUTH_TOKEN, and tracker
+# secrets therefore cannot reach a container by interpolation or by a bare
+# `environment: [KEY]`. These rules catch mistakes; they are not a security
+# boundary, since a session can drive the Docker API directly.
+#
+# check: validates the file and prints {status: ok, file, project, declaration}
+# (exit 0), {status: absent, file} (exit 2), or {status: invalid, rule,
+# detail} (exit 1). project is ccm-<TICKET lowercased> when TICKET is given.
+#
+# Exit codes: 0 ok, 1 failed or invalid, 2 no harness, 3 not a git
+# repository, 4 usage error.
+set -uo pipefail
+
+here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck source=bin/ccm-lib.sh
+. "$here/ccm-lib.sh"
+
+HARNESS_REL=.ccmagic/harness.compose.yml
+
+usage() {
+  echo "usage: ccm-harness check [TICKET]" >&2
+  exit 4
+}
+
+ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || {
+  jq -n '{status: "error", error: "not a git repository"}'
+  exit 3
+}
+HARNESS=$ROOT/$HARNESS_REL
+TMPERR=$(mktemp "${TMPDIR:-/tmp}/ccm-harness.XXXXXX")
+trap 'rm -f "$TMPERR"' EXIT
+PROJECT=
+OVERRIDE=
+
+# ccm-<ticket>, lowercased, every character Compose refuses replaced by '-'.
+project_for() {
+  printf 'ccm-%s' "$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9_-' '-')"
+}
+
+clean_env() {
+  local v args=()
+  for v in PATH HOME DOCKER_HOST DOCKER_CONFIG TMPDIR; do
+    [ -n "${!v:-}" ] && args+=("$v=${!v}")
+  done
+  env -i ${args[@]+"${args[@]}"} "$@"
+}
+
+dk() { clean_env docker "$@"; }
+
+dc() {
+  local files=(-f "$HARNESS")
+  [ -n "$OVERRIDE" ] && files+=(-f "$OVERRIDE")
+  clean_env docker compose --env-file /dev/null "${files[@]}" -p "${PROJECT:-ccm-check}" "$@"
+}
+
+invalid() {
+  jq -n --arg r "$1" --arg d "$2" '{status: "invalid", rule: $r, detail: $d}'
+  exit 1
+}
+
+cmd_check() {
+  local ticket=${1:-} line cfg broken decl workdir image lock locked tag
+  [ -f "$HARNESS" ] || {
+    jq -n --arg f "$HARNESS_REL" '{status: "absent", file: $f}'
+    exit 2
+  }
+  # $$ is Compose's escape for a literal $, so only an unescaped $ counts.
+  # shellcheck disable=SC2016  # the pattern is a regex, not an expansion
+  line=$(sed 's/\$\$//g' "$HARNESS" | grep -nE '\$(\{|[A-Za-z_])' | head -1 || true)
+  [ -z "$line" ] || invalid interpolation "$HARNESS_REL line ${line%%:*} interpolates a variable; write every value literally"
+  cfg=$(dc config --format json --no-env-resolution 2>"$TMPERR") ||
+    invalid compose "docker compose config failed: $(head -1 "$TMPERR")"
+  broken=$(jq -r --arg nb "${CCM_HARNESS_NO_BIND_MOUNTS:-}" '
+    def svc: .services | to_entries[];
+    [ (svc | select(.value.env_file) | "env-file\tservice \(.key) names an env_file; write values in environment instead"),
+      (svc | . as $s | (.value.environment // {}) | to_entries[] | select(.value == null)
+        | "environment-passthrough\tservice \($s.key) takes \(.key) from the caller'"'"'s environment; give it a literal value"),
+      (svc | . as $s | ("privileged", "cap_add", "devices", "restart") as $k
+        | select(($s.value[$k] // false) != false and ($s.value[$k] // []) != [])
+        | "forbidden-key\tservice \($s.key) sets \($k)"),
+      (svc | select(.value.network_mode == "host") | "forbidden-key\tservice \(.key) sets network_mode: host"),
+      (svc | select(.value.pid == "host") | "forbidden-key\tservice \(.key) sets pid: host"),
+      (svc | select((.value.ports // []) | length > 0)
+        | "published-port\tservice \(.key) publishes a port; the runner reaches services on the stack network"),
+      (svc | . as $s | (.value.volumes // [])[] | select($nb == "1" and .type == "bind")
+        | "bind-mount\tservice \($s.key) bind-mounts \(.source); the daemon cannot see this checkout, so build the files into the image"),
+      (if (.["x-ccm-harness"] | type) != "object" then "declaration\tthe file has no top-level x-ccm-harness mapping" else empty end)
+    ] | .[0] // empty' <<<"$cfg")
+  [ -z "$broken" ] || invalid "${broken%%$'\t'*}" "${broken#*$'\t'}"
+  decl=$(jq -c '.["x-ccm-harness"]' <<<"$cfg")
+  broken=$(jq -r --argjson svcs "$(jq -c '.services | keys' <<<"$cfg")" '
+    [ (if .version != 1 then "version must be 1" else empty end),
+      (if (.app.service | type) != "string" or ([.app.service] | inside($svcs) | not) then "app.service must name a service in the file" else empty end),
+      (if (.app.port | type) != "number" then "app.port must be a number" else empty end),
+      (if (.app.health | type) != "string" or (.app.health | startswith("/") | not) then "app.health must be a path starting with /" else empty end),
+      (if (.runner.image | type) != "string" then "runner.image is required" else empty end),
+      (if (.runner.workdir | type) != "string" then "runner.workdir is required" else empty end),
+      (if .evidence != null and ([.evidence] | inside(["auto", "push", "off"]) | not) then "evidence must be auto, push, or off" else empty end)
+    ] | .[0] // empty' <<<"$decl")
+  [ -z "$broken" ] || invalid declaration "x-ccm-harness: $broken"
+  workdir=$(jq -r '.runner.workdir' <<<"$decl")
+  image=$(jq -r '.runner.image' <<<"$decl")
+  if [ -f "$ROOT/$workdir/package.json" ] &&
+    jq -e '((.dependencies // {}) + (.devDependencies // {}))["@playwright/test"]' "$ROOT/$workdir/package.json" >/dev/null; then
+    lock=$workdir/package-lock.json
+    git -C "$ROOT" ls-files --error-unmatch "$lock" >/dev/null 2>&1 ||
+      invalid playwright-lockfile "$workdir/package.json uses @playwright/test, and $lock is not committed; the runner image must match the locked version"
+    locked=$(jq -r '.packages["node_modules/@playwright/test"].version // empty' "$ROOT/$lock")
+    tag=$(sed -nE 's#^mcr\.microsoft\.com/playwright:v([0-9]+\.[0-9]+\.[0-9]+).*#\1#p' <<<"$image")
+    [ -n "$locked" ] && [ "$tag" = "$locked" ] ||
+      invalid playwright-version "runner image $image does not match @playwright/test ${locked:-(not in the lockfile)} in $lock; its browsers work only with their own version"
+  fi
+  jq -n --arg f "$HARNESS_REL" --arg p "${ticket:+$(project_for "$ticket")}" --argjson d "$decl" \
+    '{status: "ok", file: $f, project: (if $p == "" then null else $p end), declaration: $d}'
+}
+
+cmd=${1:-}
+[ $# -gt 0 ] && shift
+case $cmd in
+  check) [ $# -le 1 ] || usage; cmd_check "$@" ;;
+  *) usage ;;
+esac
