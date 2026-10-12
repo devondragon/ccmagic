@@ -35,7 +35,7 @@ command -v jq >/dev/null 2>&1 || exit 0
 agent_type=$(jq -r '.agent_type // empty' <<<"$INPUT")
 case $agent_type in
   ccmagic:auto-review) allowed="clean fixable-findings needs-human" ;;
-  ccmagic:auto-work|ccmagic:auto-feedback|ccmagic:auto-validate|ccmagic:auto-finish|ccmagic:auto-push) allowed="done needs-human" ;;
+  ccmagic:auto-work|ccmagic:auto-feedback|ccmagic:auto-validate|ccmagic:auto-finish|ccmagic:auto-push|ccmagic:auto-visual) allowed="done needs-human" ;;
   *) exit 0 ;;
 esac
 [ "$(jq -r '.stop_hook_active // false' <<<"$INPUT")" = true ] && exit 0

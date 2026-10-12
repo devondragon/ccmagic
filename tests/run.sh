@@ -634,6 +634,15 @@ stop_review_verdict_values() {
   check "$(blocked)" "allow"
 }
 
+# The SubagentStop hook checks the visual step's handshake like the other
+# done | needs-human steps.
+guard_stop_hook_checks_auto_visual() {
+  run_stop_hook $'status: clean\nreason: ok\nfollow_ups: []' ccmagic:auto-visual
+  check "$(blocked)" "block"
+  run_stop_hook $'harness: ran\njudged_head: abc\nvisual_results:\n- V1: met | ok | x.png\nevidence: pushed\n\nstatus: done\nreason: 1 of 1 met\nfollow_ups: []' ccmagic:auto-visual
+  check "$(blocked)" "allow"
+}
+
 stop_review_head_line_passes() {
   run_stop_hook $'# Ticket-Grounded Review: ENG-1\n...\n```\nstatus: clean\nhead: 0123456789abcdef0123456789abcdef01234567\nreason: no findings\nfollow_ups: []\n```' ccmagic:auto-review
   check "$(blocked)" "allow"
@@ -2707,6 +2716,20 @@ context_visual_checklist_default_on() {
   check "$(jqval .config.visual_checklist)" "on"
 }
 
+# The visual step is wired into auto-ticket (UI harness design, rollout step 3).
+# shellcheck disable=SC2016 # literal backticks and ${...} in the markdown being matched
+skills_auto_visual_wired() {
+  local missing='' f="$ROOT/skills/auto-ticket/SKILL.md"
+  [ -f "$ROOT/agents/auto-visual.md" ] || missing+=" agent"
+  grep -qF '## Step 2b: Visual check' "$f" || missing+=" step-2b"
+  grep -qF '| visual | `auto-visual` | `opus` | `model_visual` |' "$f" || missing+=" registry"
+  grep -qF 'Bash(${CLAUDE_PLUGIN_ROOT}/bin/ccm-harness *), Bash(ccm-harness *)' "$f" || missing+=" allowed-tools"
+  grep -qF '### Visual check' "$f" || missing+=" summary-section"
+  grep -qF 'visual_criteria:' "$ROOT/skills/auto-ticket/autonomous-contract.md" || missing+=" contract-grounding"
+  grep -qF '"Bash(ccm-harness *)"' "$ROOT/docs/cyrus-deployment.md" || missing+=" cyrus-grant"
+  check "${missing# }" ""
+}
+
 # A parent spec ticket's parked record carries no openspec key, which Reeve's
 # schema would reject along with the whole record (RV-82).
 # shellcheck disable=SC2016 # literal backticks in the markdown and descriptions
@@ -3719,13 +3742,18 @@ strip_spec_only() {
 STANDALONE_SKILLS_SINCE_BASELINE=(spec-baseline)
 # Their scripts, which docs/cyrus-deployment.md need not grant.
 STANDALONE_SCRIPTS_SINCE_BASELINE=(ccm-baseline-check)
+# Step agents added since $SPEC_BASELINE. They are new files, so the every-ticket
+# comparison has no baseline for them; auto-ticket's changes that run them are in
+# $EVERY_TICKET_DIFF.
+ADDED_AGENTS_SINCE_BASELINE=(agents/auto-visual.md)
 
 spec_prompt_files() {
   { git -C "$ROOT" ls-tree -r --name-only "$SPEC_BASELINE" -- skills agents
     git -C "$ROOT" ls-files -- skills agents; } | LC_ALL=C sort -u |
-    awk -v skip="${STANDALONE_SKILLS_SINCE_BASELINE[*]}" '
-      BEGIN { n = split(skip, s, " ") }
-      { for (i = 1; i <= n; i++) if (index($0, "skills/" s[i] "/") == 1) next; print }'
+    awk -v skip="${STANDALONE_SKILLS_SINCE_BASELINE[*]}" -v added="${ADDED_AGENTS_SINCE_BASELINE[*]}" '
+      BEGIN { n = split(skip, s, " "); m = split(added, a, " ") }
+      { for (i = 1; i <= m; i++) if ($0 == a[i]) next
+        for (i = 1; i <= n; i++) if (index($0, "skills/" s[i] "/") == 1) next; print }'
 }
 
 skills_spec_only_blocks_well_formed() {
@@ -3784,14 +3812,18 @@ skills_auto_ticket_follow_up_dedupe() {
 }
 
 # The hooks change only to accept the work step's tasks_done: line (these two
-# added lines in hooks/lib-handshake.sh) and, for every ticket, by the RV-86
-# finish guard: its own hook file and one PreToolUse entry in hooks.json.
+# added lines in hooks/lib-handshake.sh), to check the visual step's handshake
+# (the changed case arm in hooks/subagent-stop-handshake.sh, spec decision 4 of
+# the UI harness design), and, for every ticket, by the RV-86 finish guard: its
+# own hook file and one PreToolUse entry in hooks.json.
 skills_hooks_only_accept_tasks_done() {
   local changed
   changed=$(git -C "$ROOT" diff "$SPEC_BASELINE" -- hooks ':(exclude)hooks/hooks.json' ':(exclude)hooks/pre-tool-use-finish-guard.sh' |
     grep -E '^[-+]' | grep -vE '^(\+\+\+|---) ' || true)
   check "$changed" "+#   tasks_done: [ids]            (optional: work step on a Reeve spec ticket only)
-+        if (l ~ /^[[:space:]]*tasks_done:/) continue"
++        if (l ~ /^[[:space:]]*tasks_done:/) continue
+-  ccmagic:auto-work|ccmagic:auto-feedback|ccmagic:auto-validate|ccmagic:auto-finish|ccmagic:auto-push) allowed=\"done needs-human\" ;;
++  ccmagic:auto-work|ccmagic:auto-feedback|ccmagic:auto-validate|ccmagic:auto-finish|ccmagic:auto-push|ccmagic:auto-visual) allowed=\"done needs-human\" ;;"
   git -C "$ROOT" show "$SPEC_BASELINE:hooks/hooks.json" | jq -S . >"$T/hooks-base"
   jq -S 'del(.hooks.PreToolUse[] | select(.matcher == "Agent|Task" and .hooks == [{type: "command",
     command: "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/pre-tool-use-finish-guard.sh\"", timeout: 10}]))' \

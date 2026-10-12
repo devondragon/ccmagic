@@ -2,6 +2,13 @@
 
 All notable changes to ccmagic are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.20.0] - 2026-10
+
+### Added
+
+- `bin/ccm-harness` brings a repository's UI harness (`.ccmagic/harness.compose.yml`, `docs/harness.md`) up for one ticket in Docker, seeds it, takes screenshots in a runner container, and pushes them as evidence. Compose runs with an emptied environment, and the file's rules refuse interpolation, env files, bare environment keys, published ports, privileged settings, and (with `CCM_HARNESS_NO_BIND_MOUNTS=1`) bind mounts.
+- auto-ticket's new Step 2b runs the `auto-visual` step when a ticket has visual criteria and the repository has a harness: it judges each screenshot, sends unmet criteria to a fix pass, and repeats up to three rounds. The run summary gains a Visual check section.
+
 ## [3.19.0] - 2026-10
 
 ### Added
