@@ -4,6 +4,9 @@
 # nothing.
 #
 # Usage: ccm-harness check [TICKET]
+#        ccm-harness up TICKET
+#        ccm-harness down TICKET
+#        ccm-harness sweep [HOURS]
 #
 # The harness is .ccmagic/harness.compose.yml, a Compose file whose top-level
 # x-ccm-harness key declares how ccmagic uses it (docs/harness.md). The file
@@ -20,6 +23,21 @@
 # (exit 0), {status: absent, file} (exit 2), or {status: invalid, rule,
 # detail} (exit 1). project is ccm-<TICKET lowercased> when TICKET is given.
 #
+# up: first sweeps stacks older than 6 hours and removes this ticket's earlier
+# stack, so a rerun never reuses old volumes. Then it builds and starts the
+# stack, starts the runner container on the stack's network, and waits for
+# the app's health URL as the runner sees it. Prints {status: up, project,
+# runner, app_url, published_url, duration_s} (exit 0), or {status:
+# build-failed, tail}, {status: unhealthy, timeout_seconds, logs}, or the
+# check's invalid or absent object (exit 1 or 2). published_url is null
+# unless CCM_HARNESS_PUBLISH=1, which publishes the app on 127.0.0.1 only.
+# The up log is <state dir>/harness/<project>/up.log.
+#
+# down: removes the ticket's runner and stack. Prints {status: down, project}.
+#
+# sweep [HOURS]: removes every ccm-* stack whose newest container is at least
+# HOURS old (default 6). Prints {status: swept, removed: [project, ...]}.
+#
 # Exit codes: 0 ok, 1 failed or invalid, 2 no harness, 3 not a git
 # repository, 4 usage error.
 set -uo pipefail
@@ -31,7 +49,7 @@ here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 HARNESS_REL=.ccmagic/harness.compose.yml
 
 usage() {
-  echo "usage: ccm-harness check [TICKET]" >&2
+  echo "usage: ccm-harness check [TICKET] | up TICKET | down TICKET | sweep [HOURS]" >&2
   exit 4
 }
 
@@ -141,9 +159,161 @@ cmd_check() {
     '{status: "ok", file: $f, project: (if $p == "" then null else $p end), declaration: $d}'
 }
 
+# Set DECL and its fields from a passing check, or print the check's result
+# and exit with its code.
+load_decl() {
+  local out rc
+  out=$(cmd_check) && rc=0 || rc=$?
+  if [ "$rc" -ne 0 ]; then
+    printf '%s\n' "$out"
+    exit "$rc"
+  fi
+  DECL=$(jq -c '.declaration' <<<"$out")
+  SERVICE=$(jq -r '.app.service' <<<"$DECL")
+  PORT=$(jq -r '.app.port' <<<"$DECL")
+  HEALTH=$(jq -r '.app.health' <<<"$DECL")
+  TIMEOUT=$(jq -r '.app.health_timeout_seconds // 600' <<<"$DECL")
+  IMAGE=$(jq -r '.runner.image' <<<"$DECL")
+  # shellcheck disable=SC2034  # used by the commands added after up
+  WORKDIR=$(jq -r '.runner.workdir' <<<"$DECL")
+}
+
+state_dir() {
+  STATE=$(ccm_state_dir)/harness/$PROJECT
+  mkdir -p "$STATE"
+}
+
+# Remove everything labeled with project P: containers (the runner carries
+# ccm.project), networks, volumes, and images. Needs no compose file.
+remove_project() {
+  local p=$1 f ids
+  for f in "label=ccm.project=$p" "label=com.docker.compose.project=$p"; do
+    ids=$(dk ps -aq --filter "$f")
+    # shellcheck disable=SC2086
+    [ -z "$ids" ] || dk rm -f $ids >/dev/null 2>&1
+  done
+  ids=$(dk network ls -q --filter "label=com.docker.compose.project=$p")
+  # shellcheck disable=SC2086
+  [ -z "$ids" ] || dk network rm $ids >/dev/null 2>&1
+  ids=$(dk volume ls -q --filter "label=com.docker.compose.project=$p")
+  # shellcheck disable=SC2086
+  [ -z "$ids" ] || dk volume rm -f $ids >/dev/null 2>&1
+  ids=$(dk image ls -q --filter "label=com.docker.compose.project=$p")
+  # shellcheck disable=SC2086
+  [ -z "$ids" ] || dk image rm -f $ids >/dev/null 2>&1
+  return 0
+}
+
+cmd_down_quiet() {
+  dk rm -f "$RUNNER" >/dev/null 2>&1
+  dc down -v --rmi local --remove-orphans >/dev/null 2>&1
+  remove_project "$PROJECT"
+}
+
+cmd_down() {
+  cmd_down_quiet
+  jq -n --arg p "$PROJECT" '{status: "down", project: $p}'
+}
+
+# Each ccm-* project with the creation time of its newest container.
+projects_with_age() {
+  local ids
+  ids=$({ dk ps -aq --filter label=ccm.project; dk ps -aq --filter label=com.docker.compose.project; } | sort -u)
+  [ -n "$ids" ] || return 0
+  # shellcheck disable=SC2086
+  dk inspect $ids | jq -r '.[]
+    | [(.Config.Labels["ccm.project"] // .Config.Labels["com.docker.compose.project"]),
+       (.Created | sub("\\.[0-9]+"; "") | fromdateiso8601)] | @tsv' |
+    sort -t "$(printf '\t')" -k1,1 -k2,2nr | awk -F '\t' '!seen[$1]++'
+}
+
+cmd_sweep() {
+  local hours=${1:-6} cutoff p created removed=()
+  case $hours in '' | *[!0-9]*) usage ;; esac
+  cutoff=$(($(date +%s) - hours * 3600))
+  while IFS="$(printf '\t')" read -r p created; do
+    case $p in ccm-*) ;; *) continue ;; esac
+    [ "$created" -le "$cutoff" ] || continue
+    remove_project "$p"
+    removed+=("$p")
+  done < <(projects_with_age)
+  jq -n '{status: "swept", removed: $ARGS.positional}' --args ${removed[@]+"${removed[@]}"}
+}
+
+runner_get() {
+  dk exec "$RUNNER" node -e \
+    'fetch(process.argv[1]).then(r => process.exit(r.status === 200 ? 0 : 1), () => process.exit(1))' "$1" \
+    >/dev/null 2>&1
+}
+
+start_runner() {
+  local cid net kv env=()
+  cid=$(dc ps -q "$SERVICE" 2>/dev/null | head -1)
+  [ -n "$cid" ] || return 1
+  net=$(dk inspect "$cid" | jq -r '.[0].NetworkSettings.Networks | keys[0]')
+  while IFS= read -r kv; do
+    [ -n "$kv" ] && env+=(-e "$kv")
+  done < <(jq -r '.env // {} | to_entries[] | "\(.key)=\(.value)"' <<<"$DECL")
+  dk run -d --name "$RUNNER" --label "ccm.project=$PROJECT" --network "$net" -w /work \
+    -e "APP_BASE_URL=$APP_URL" -e OUT_DIR=/out ${env[@]+"${env[@]}"} \
+    --entrypoint sleep "$IMAGE" infinity >/dev/null
+}
+
+# Bring the stack up from nothing and wait for the app's health URL, as seen
+# from the runner on the stack's network. Prints the result JSON.
+do_up() {
+  local started log published=
+  started=$(date +%s)
+  log=$STATE/up.log
+  : >"$log"
+  cmd_sweep 6 >/dev/null
+  cmd_down_quiet
+  if [ "${CCM_HARNESS_PUBLISH:-}" = 1 ]; then
+    OVERRIDE=$STATE/publish.yml
+    printf 'services:\n  %s:\n    ports: ["127.0.0.1::%s"]\n' "$SERVICE" "$PORT" >"$OVERRIDE"
+  fi
+  if ! dc up -d --build >>"$log" 2>&1; then
+    jq -n --arg t "$(tail -40 "$log")" '{status: "build-failed", tail: $t}'
+    return 1
+  fi
+  if ! start_runner >>"$log" 2>&1; then
+    jq -n --arg t "$(tail -40 "$log")" '{status: "runner-failed", tail: $t}'
+    return 1
+  fi
+  until runner_get "http://$SERVICE:$PORT$HEALTH"; do
+    if [ $(($(date +%s) - started)) -ge "$TIMEOUT" ]; then
+      dc logs --no-color --tail 200 >>"$log" 2>&1
+      jq -n --arg t "$(tail -200 "$log")" --argjson s "$TIMEOUT" '{status: "unhealthy", timeout_seconds: $s, logs: $t}'
+      return 1
+    fi
+    sleep 5
+  done
+  [ -n "$OVERRIDE" ] && published="http://$(dc port "$SERVICE" "$PORT" | head -1)"
+  jq -n --arg p "$PROJECT" --arg r "$RUNNER" --arg u "$APP_URL" --arg pub "$published" \
+    --argjson d $(($(date +%s) - started)) \
+    '{status: "up", project: $p, runner: $r, app_url: $u, published_url: (if $pub == "" then null else $pub end), duration_s: $d}'
+}
+
+ticket_setup() {
+  [ -n "${1:-}" ] || usage
+  PROJECT=$(project_for "$1")
+  RUNNER=$PROJECT-runner
+  load_decl
+  APP_URL=http://$SERVICE:$PORT
+  state_dir
+}
+
 cmd=${1:-}
 [ $# -gt 0 ] && shift
 case $cmd in
   check) [ $# -le 1 ] || usage; cmd_check "$@" ;;
+  up)
+    ticket_setup "${1:-}"
+    out=$(do_up) && rc=0 || rc=$?
+    printf '%s\n' "$out"
+    exit "$rc"
+    ;;
+  down) [ $# -eq 1 ] || usage; ticket_setup "$1"; cmd_down ;;
+  sweep) [ $# -le 1 ] || usage; cmd_sweep "${1:-6}" ;;
   *) usage ;;
 esac

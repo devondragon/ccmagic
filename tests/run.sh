@@ -4402,6 +4402,72 @@ harness_project_name_is_lowercase() {
   check "$(jqval .project)" "ccm--42"
 }
 
+harness_up_down_round_trip() {
+  need_docker || return 0
+  harness_file
+  run "$BIN/ccm-harness" up ENG-9
+  check "$RC,$(jqval .status),$(jqval .app_url),$(jqval .published_url)" "0,up,http://app:80,null"
+  docker exec ccm-eng-9-runner node -e 'fetch(process.env.APP_BASE_URL).then(r => r.text()).then(t => process.exit(t.includes("harness ok") ? 0 : 1))'
+  run "$BIN/ccm-harness" down ENG-9
+  check "$(jqval .status)" "down"
+  check "$(docker ps -aq --filter label=com.docker.compose.project=ccm-eng-9 | wc -l | tr -d ' ')" "0"
+  check "$(docker ps -aq --filter label=ccm.project=ccm-eng-9 | wc -l | tr -d ' ')" "0"
+}
+
+harness_up_reports_unhealthy_with_logs() {
+  need_docker || return 0
+  harness_file
+  sed -i.bak 's#health: /,#health: /missing,#; s#health_timeout_seconds: 120#health_timeout_seconds: 10#' .ccmagic/harness.compose.yml && rm -f .ccmagic/harness.compose.yml.bak
+  git -c user.email=t@t -c user.name=t commit -qam unhealthy
+  run "$BIN/ccm-harness" up ENG-10
+  check "$RC,$(jqval .status)" "1,unhealthy"
+  [[ $(jqval .logs) == *nginx* ]] || { echo "    no service logs in the result"; return 1; }
+  "$BIN/ccm-harness" down ENG-10 >/dev/null
+}
+
+harness_up_reports_build_failure() {
+  need_docker || return 0
+  harness_file
+  echo 'RUN false' >>.ccmagic/app/Dockerfile
+  git -c user.email=t@t -c user.name=t commit -qam broken
+  run "$BIN/ccm-harness" up ENG-11
+  check "$RC,$(jqval .status)" "1,build-failed"
+  "$BIN/ccm-harness" down ENG-11 >/dev/null
+}
+
+harness_up_publishes_only_on_request() {
+  need_docker || return 0
+  harness_file
+  CCM_HARNESS_PUBLISH=1 run "$BIN/ccm-harness" up ENG-12
+  [[ $(jqval .published_url) == http://127.0.0.1:* ]] || { echo "    published_url: $(jqval .published_url)"; return 1; }
+  curl -fsS "$(jqval .published_url)/" | grep -q 'harness ok'
+  "$BIN/ccm-harness" down ENG-12 >/dev/null
+}
+
+harness_up_twice_starts_fresh() {
+  need_docker || return 0
+  harness_file
+  "$BIN/ccm-harness" up ENG-13 >/dev/null
+  docker exec ccm-eng-13-runner sh -c 'echo stale > /work/marker'
+  run "$BIN/ccm-harness" up ENG-13
+  check "$(jqval .status)" "up"
+  docker exec ccm-eng-13-runner test ! -e /work/marker
+  "$BIN/ccm-harness" down ENG-13 >/dev/null
+}
+
+harness_sweep_removes_old_stacks_only() {
+  need_docker || return 0
+  docker run -d --name ccm-sweep-old --label com.docker.compose.project=ccm-sweep-old alpine:3.20 sleep 600 >/dev/null
+  docker run -d --name other-sweep --label com.docker.compose.project=other-sweep alpine:3.20 sleep 600 >/dev/null
+  run "$BIN/ccm-harness" sweep 0
+  [[ $(jqval '.removed | join(",")') == *ccm-sweep-old* ]] || { echo "    removed: $(jqval .removed)"; return 1; }
+  check "$(docker ps -aq --filter name=ccm-sweep-old | wc -l | tr -d ' ')" "0"
+  check "$(docker ps -aq --filter name=other-sweep | wc -l | tr -d ' ')" "1"
+  docker rm -f other-sweep >/dev/null
+  run "$BIN/ccm-harness" sweep 6
+  check "$(jqval '.removed | length')" "0"
+}
+
 # ---- run -------------------------------------------------------------------
 
 MIRRORS=$(mktemp -d)
