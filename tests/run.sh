@@ -4461,6 +4461,74 @@ harness_up_twice_starts_fresh() {
   "$BIN/ccm-harness" down ENG-13 >/dev/null
 }
 
+harness_seed_and_shoot() {
+  need_docker || return 0
+  harness_file '' '  seed: { command: [ node, seed.js ] }
+  env: { GREETING: hello }'
+  echo 'require("fs").writeFileSync("/work/seeded", process.env.GREETING)' >w/seed.js
+  git add -A && git -c user.email=t@t -c user.name=t commit -qm seed
+  "$BIN/ccm-harness" up ENG-30 >/dev/null
+  run "$BIN/ccm-harness" seed ENG-30
+  check "$RC,$(jqval .status)" "0,seeded"
+  check "$(docker exec ccm-eng-30-runner cat /work/seeded)" "hello"
+  cat >"$T/shoot.js" <<'EOS'
+const fs = require('fs');
+fetch(process.env.APP_BASE_URL).then(r => r.text()).then(t => {
+  fs.writeFileSync(process.env.OUT_DIR + '/home.png', t);
+  fs.writeFileSync(process.env.OUT_DIR + '/notes.txt', 'not a png');
+});
+EOS
+  TMPDIR=$T run "$BIN/ccm-harness" shoot ENG-30 "$T/shoot.js"
+  check "$RC,$(jqval .status),$(jqval '.files | length')" "0,shot,1"
+  grep -q 'harness ok' "$(jqval '.files[0]')"
+  "$BIN/ccm-harness" down ENG-30 >/dev/null
+}
+
+# Review focus 4: the sandbox masks some dotfiles with /dev/null; a FIFO
+# stands in for that device node here.
+harness_seed_skips_non_regular_files() {
+  need_docker || return 0
+  harness_file
+  mkfifo w/.masked
+  "$BIN/ccm-harness" up ENG-31 >/dev/null
+  run "$BIN/ccm-harness" seed ENG-31
+  check "$RC,$(jqval .status)" "0,seeded"
+  docker exec ccm-eng-31-runner test -f /work/package.json
+  docker exec ccm-eng-31-runner test ! -e /work/.masked
+  "$BIN/ccm-harness" down ENG-31 >/dev/null
+}
+
+harness_seed_reports_failing_step() {
+  need_docker || return 0
+  harness_file '' '  seed: { command: [ node, -e, "process.exit(3)" ] }'
+  "$BIN/ccm-harness" up ENG-32 >/dev/null
+  run "$BIN/ccm-harness" seed ENG-32
+  check "$RC,$(jqval .status),$(jqval .step),$(jqval .exit_code)" "1,seed-failed,seed-command,3"
+  "$BIN/ccm-harness" down ENG-32 >/dev/null
+}
+
+harness_seed_needs_up() {
+  need_compose || return 0
+  harness_file
+  run "$BIN/ccm-harness" seed ENG-33
+  check "$RC,$(jqval .status)" "1,not-up"
+}
+
+harness_seed_sql_runs_in_the_database_service() {
+  need_docker || return 0
+  harness_file '  db:
+    image: postgres:16-alpine
+    environment: [ "POSTGRES_PASSWORD=pw" ]
+    healthcheck: { test: [ "CMD-SHELL", "pg_isready -U postgres" ], interval: 2s, timeout: 3s, retries: 30 }' '  seed: { sql: { service: db, file: seed.sql } }'
+  echo "create table t (n int); insert into t values (42);" >seed.sql
+  git add -A && git -c user.email=t@t -c user.name=t commit -qm sql
+  "$BIN/ccm-harness" up ENG-34 >/dev/null
+  run "$BIN/ccm-harness" seed ENG-34
+  check "$RC,$(jqval .status),$(jqval '.steps[0].name')" "0,seeded,seed-sql"
+  check "$(docker exec "$(docker ps -q --filter label=com.docker.compose.project=ccm-eng-34 --filter label=com.docker.compose.service=db)" psql -U postgres -tAc 'select n from t')" "42"
+  "$BIN/ccm-harness" down ENG-34 >/dev/null
+}
+
 harness_down_works_without_a_valid_harness_file() {
   need_docker || return 0
   harness_file

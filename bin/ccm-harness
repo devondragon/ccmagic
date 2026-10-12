@@ -6,6 +6,8 @@
 # Usage: ccm-harness check [TICKET]
 #        ccm-harness up TICKET [--prepare | --attach RUN | --wait [SECONDS]]
 #        ccm-harness down TICKET
+#        ccm-harness seed TICKET
+#        ccm-harness shoot TICKET SCRIPT
 #        ccm-harness sweep [HOURS]
 #
 # The harness is .ccmagic/harness.compose.yml, a Compose file whose top-level
@@ -35,6 +37,19 @@
 # starts when the runner is up, after the build. Each probe times out after 5
 # seconds.
 # The up log is <state dir>/harness/<project>/up.log.
+#
+# seed: needs the stack up. Runs, in order, the SQL file (seed.sql, piped to
+# psql in its service), a copy of the workdir's regular files into the runner's
+# /work, runner.setup, and seed.command, both in /work. Prints {status:
+# seeded, steps}, {status: seed-failed, step, exit_code, tail} (exit 1), or
+# {status: not-up} (exit 1). The log is <state dir>/harness/<project>/seed.log.
+#
+# shoot: runs a Playwright script in the runner from /work/.ccm-shoot/ (so
+# @playwright/test resolves from /work/node_modules) with APP_BASE_URL and
+# OUT_DIR=/out set, then copies /out to a local directory under
+# ${TMPDIR:-/tmp}/ccm-harness/<project>/. Prints {status: shot, dir, files}
+# for the .png files, or {status: shoot-failed, exit_code, tail} or {status:
+# no-screenshots, dir} (exit 1).
 #
 # Long runs (--prepare, --attach, --wait): a build and health wait can outlast
 # one tool call, and the Cyrus sandbox ends every process a Bash call started
@@ -81,7 +96,7 @@ here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 HARNESS_REL=.ccmagic/harness.compose.yml
 
 usage() {
-  echo "usage: ccm-harness check [TICKET] | up TICKET [--prepare | --attach RUN | --wait [SECONDS]] | down TICKET | sweep [HOURS]" >&2
+  echo "usage: ccm-harness check [TICKET] | up TICKET [--prepare | --attach RUN | --wait [SECONDS]] | down TICKET | seed TICKET | shoot TICKET SCRIPT | sweep [HOURS]" >&2
   exit 4
 }
 
@@ -206,7 +221,6 @@ load_decl() {
   HEALTH=$(jq -r '.app.health' <<<"$DECL")
   TIMEOUT=$(jq -r '.app.health_timeout_seconds // 600' <<<"$DECL")
   IMAGE=$(jq -r '.runner.image' <<<"$DECL")
-  # shellcheck disable=SC2034  # used by the commands added after up
   WORKDIR=$(jq -r '.runner.workdir' <<<"$DECL")
 }
 
@@ -497,6 +511,98 @@ cmd_up_wait() {
   done
 }
 
+require_runner() {
+  [ "$(dk inspect -f '{{.State.Running}}' "$RUNNER" 2>/dev/null)" = true ] || {
+    jq -n --arg p "$PROJECT" '{status: "not-up", project: $p}'
+    exit 1
+  }
+}
+
+# step NAME CMD...: run CMD, appending to seed.log; on failure print the
+# failure and exit 1. Records successful steps in STEPS.
+STEPS='[]'
+step() {
+  local name=$1 rc
+  shift
+  "$@" >>"$STATE/seed.log" 2>&1 && rc=0 || rc=$?
+  if [ "$rc" -ne 0 ]; then
+    jq -n --arg n "$name" --argjson c "$rc" --arg t "$(tail -40 "$STATE/seed.log")" \
+      '{status: "seed-failed", step: $n, exit_code: $c, tail: $t}'
+    exit 1
+  fi
+  STEPS=$(jq -c --arg n "$name" '. + [{name: $n, exit_code: 0}]' <<<"$STEPS")
+}
+
+# Copy the workdir's regular files into the runner. Only regular files go:
+# the Cyrus sandbox masks some dotfiles with /dev/null, which a copy of the
+# whole directory would carry in as device nodes.
+copy_workdir() {
+  local list f
+  list=$(mktemp "${TMPDIR:-/tmp}/ccm-harness-files.XXXXXX")
+  (cd "$ROOT/$WORKDIR" && git ls-files -z --cached --others --exclude-standard) |
+    while IFS= read -r -d '' f; do
+      [ -f "$ROOT/$WORKDIR/$f" ] && printf '%s\0' "$f"
+    done >"$list"
+  # macOS files carry xattrs (com.apple.provenance), which the daemon cannot
+  # set in the container; GNU and BSD tar both accept --no-xattrs when new
+  # enough, and an older tar has none to drop on Linux.
+  local opts=()
+  if tar --no-xattrs -cf /dev/null --files-from /dev/null 2>/dev/null; then opts=(--no-xattrs); fi
+  COPYFILE_DISABLE=1 tar -C "$ROOT/$WORKDIR" ${opts[@]+"${opts[@]}"} --null -T "$list" -cf - | dk cp - "$RUNNER:/work"
+  local rc=$?
+  rm -f "$list"
+  return "$rc"
+}
+
+# decl_words JQ_PATH: the command array at JQ_PATH in DECL, one word per line.
+decl_words() { jq -r "$1 // [] | .[]" <<<"$DECL"; }
+
+in_runner() {
+  local words=() w
+  while IFS= read -r w; do words+=("$w"); done < <(decl_words "$1")
+  [ ${#words[@]} -gt 0 ] || return 0
+  dk exec -w /work "$RUNNER" "${words[@]}"
+}
+
+seed_sql() {
+  local svc file user db
+  svc=$(jq -r '.seed.sql.service' <<<"$DECL")
+  file=$(jq -r '.seed.sql.file' <<<"$DECL")
+  user=$(jq -r '.seed.sql.user // "postgres"' <<<"$DECL")
+  db=$(jq -r '.seed.sql.database // .seed.sql.user // "postgres"' <<<"$DECL")
+  dc exec -T "$svc" psql -U "$user" -d "$db" -v ON_ERROR_STOP=1 <"$ROOT/$file"
+}
+
+cmd_seed() {
+  require_runner
+  : >"$STATE/seed.log"
+  if [ "$(jq -r '.seed.sql.file // empty' <<<"$DECL")" != "" ]; then step seed-sql seed_sql; fi
+  step copy-workdir copy_workdir
+  if [ "$(jq -r '.runner.setup // [] | length' <<<"$DECL")" -gt 0 ]; then step setup in_runner .runner.setup; fi
+  if [ "$(jq -r '.seed.command // [] | length' <<<"$DECL")" -gt 0 ]; then step seed-command in_runner .seed.command; fi
+  jq -n --argjson s "$STEPS" '{status: "seeded", steps: $s}'
+}
+
+cmd_shoot() {
+  local script=$1 name out rc files
+  [ -f "$script" ] || { jq -n --arg s "$script" '{status: "error", error: ("no such script: " + $s)}'; exit 4; }
+  require_runner
+  name=$(basename "$script")
+  dk exec "$RUNNER" sh -c 'rm -rf /out && mkdir -p /out /work/.ccm-shoot' >/dev/null
+  dk cp "$script" "$RUNNER:/work/.ccm-shoot/$name" >/dev/null
+  dk exec -w /work "$RUNNER" node ".ccm-shoot/$name" >"$STATE/shoot.log" 2>&1 && rc=0 || rc=$?
+  if [ "$rc" -ne 0 ]; then
+    jq -n --argjson c "$rc" --arg t "$(tail -40 "$STATE/shoot.log")" '{status: "shoot-failed", exit_code: $c, tail: $t}'
+    exit 1
+  fi
+  out=${TMPDIR:-/tmp}/ccm-harness/$PROJECT/shots-$(date +%s)
+  mkdir -p "$out"
+  dk cp "$RUNNER:/out/." "$out" >/dev/null
+  files=$(find "$out" -type f -name '*.png' | LC_ALL=C sort | jq -R . | jq -sc .)
+  [ "$files" != "[]" ] || { jq -n --arg d "$out" '{status: "no-screenshots", dir: $d}'; exit 1; }
+  jq -n --arg d "$out" --argjson f "$files" '{status: "shot", dir: $d, files: $f}'
+}
+
 ticket_setup() {
   [ -n "${1:-}" ] || usage
   load_decl
@@ -525,6 +631,8 @@ case $cmd in
     esac
     ;;
   down) [ $# -eq 1 ] || usage; ticket_names "$1"; cmd_down ;;
+  seed) [ $# -eq 1 ] || usage; ticket_setup "$1"; cmd_seed ;;
+  shoot) [ $# -eq 2 ] || usage; ticket_setup "$1"; cmd_shoot "$2" ;;
   sweep) [ $# -le 1 ] || usage; cmd_sweep "${1:-6}" ;;
   *) usage ;;
 esac
