@@ -1146,6 +1146,54 @@ reply_fixed_refuses_unpushed_commit() {
   [[ $(jqval .error) == *"not pushed"* ]]
 }
 
+# A sandboxed session (Cyrus) pushes without writing an upstream: `git push -u`
+# cannot write .git/config, and its worktrees start with --no-track. The
+# remote-tracking ref origin/<branch> is still updated by the push.
+# push.default simple keeps @{push} unresolved, as it is with no upstream.
+reply_fixed_accepts_origin_branch_without_upstream() {
+  seed_marked_threads "x" "y"
+  git branch --unset-upstream
+  git config push.default simple
+  fx reply '{"id":557}'
+  fx graphql-resolve '{"data":{"resolveReviewThread":{"thread":{"isResolved":true}}}}'
+  run "$BIN/ccm-pr-reply" 7 101 --disposition fixed --commit "$FIX" --body "Fixed."
+  check "$(jqval .reply_id),$RC" "557,0"
+}
+
+reply_fixed_refuses_unpushed_commit_without_upstream() {
+  seed_marked_threads "x" "y"
+  git branch --unset-upstream
+  git config push.default simple
+  echo 3 >a.ts; git -c user.email=t@t -c user.name=t commit -qam "fix: local only"
+  run "$BIN/ccm-pr-reply" 7 100 --disposition fixed --commit "$(git rev-parse HEAD)" --body "Fixed."
+  check "$RC" "1"
+  [[ $(jqval .error) == *"not pushed"*"refs/remotes/origin/main"* ]]
+}
+
+# An upstream on another branch (a worktree created tracking origin/main)
+# does not hide the push to origin/<branch>.
+reply_fixed_accepts_origin_branch_beside_other_upstream() {
+  seed_marked_threads "x" "y"
+  git checkout -q -b feature/ENG-1-x
+  echo 3 >a.ts; git -c user.email=t@t -c user.name=t commit -qam "fix: on the branch"
+  git push -q origin feature/ENG-1-x
+  git branch -q --set-upstream-to=origin/main
+  git config push.default simple
+  fx reply '{"id":558}'
+  fx graphql-resolve '{"data":{"resolveReviewThread":{"thread":{"isResolved":true}}}}'
+  run "$BIN/ccm-pr-reply" 7 101 --disposition fixed --commit "$(git rev-parse HEAD)" --body "Fixed."
+  check "$(jqval .reply_id),$RC" "558,0"
+}
+
+reply_fixed_refuses_branch_never_pushed() {
+  seed_marked_threads "x" "y"
+  git checkout -q -b feature/ENG-2-y
+  git config push.default simple
+  run "$BIN/ccm-pr-reply" 7 100 --disposition fixed --commit "$FIX" --body "Fixed."
+  check "$RC" "1"
+  [[ $(jqval .error) == *"has no upstream and no origin/feature/ENG-2-y ref"* ]]
+}
+
 reply_deferred_needs_ticket() {
   seed_marked_threads "x" "y"
   run "$BIN/ccm-pr-reply" 7 100 --disposition deferred --body "Later."

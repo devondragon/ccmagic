@@ -2,6 +2,12 @@
 
 All notable changes to ccmagic are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.18.3] - 2026-10
+
+### Fixed
+
+- `ccm-pr-reply --disposition fixed` refused every fix in a Cyrus session with "is not pushed yet (not in the upstream branch)". It proved the push only through `@{upstream}`, and a Cyrus branch has none: Cyrus creates worktrees with `git worktree add --no-track -b`, and its bubblewrap sandbox keeps a read-only `.git/config.lock` in the shared git dir while a Bash call runs, so `git push -u` pushes and exits 0 but prints "unable to write upstream branch configuration" and records no upstream. The push still updates `refs/remotes/origin/<branch>`. The check now passes when the commit is an ancestor of any of `@{upstream}`, `@{push}` (which resolves without an upstream only under `push.default` `current` or `matching`), or `refs/remotes/origin/<branch>`, so an upstream on another branch (a worktree created tracking `origin/main`) no longer hides the push either. It fails, naming the refs it checked, when the commit is in none of them, and says the branch has no upstream and no `origin/<branch>` ref when none resolves. `/ccmagic:push` in autonomous mode now pulls with `git pull --rebase origin {branch}`, since a bare `git pull --rebase` needs an upstream, and says the upstream-configuration error after a landed push is not a failure, and `/ccmagic:pr` says a failed `--set-upstream-to` in a sandbox can be ignored.
+
 ## [3.18.2] - 2026-10
 
 ### Fixed

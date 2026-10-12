@@ -327,10 +327,10 @@ Absent all three, run the interactive path exactly as documented above.
 ### Behavior at each human-gate
 
 - **Step 2 (Sensitive files):** never commit a file that trips the sensitive-file check (the hook denies it in autonomous runs regardless, and ignores `CCMAGIC_ALLOW_SENSITIVE`) — **skip it** (exclude it from every commit group) and never prompt to remember the choice. If a flagged file is **genuinely required** for the change to be correct/complete, stop with `needs-human` (do not commit secrets unattended; the `reason` names the file). Commit everything that is *not* flagged as normal.
-- **Step 5 (No upstream):** create it with `git push -u origin {branch}` — no prompt.
-- **Step 5 (Behind remote):** run `git pull --rebase`. If it rebases cleanly, continue and push. If it hits conflicts, stop with `needs-human` — never force-push (the hook denies any force push in an autonomous run).
+- **Step 5 (No upstream):** create it with `git push -u origin {branch}`, with no prompt. In a sandboxed session (Cyrus) the push lands but git cannot write `.git/config`, so it exits 0 after printing `error: unable to write upstream branch configuration` and the branch keeps no upstream. That line is not a failed push: confirm the push with `git rev-parse origin/{branch}` against `HEAD`, and expect the next push in the run to find no upstream again.
+- **Step 5 (Behind remote):** run `git pull --rebase origin {branch}`, naming the remote and branch, since the branch may have no upstream. If it rebases cleanly, continue and push. If it hits conflicts, stop with `needs-human` — never force-push (the hook denies any force push in an autonomous run).
 - **Commit messages:** the hook denies a commit whose subject doesn't match the conventional-commit format in an autonomous run, and says why. Rewrite the subject and commit again.
-- **Push rejected:** retry once with `git pull --rebase` then re-push; if still rejected → `needs-human`.
+- **Push rejected:** retry once with `git pull --rebase origin {branch}` then re-push; if still rejected → `needs-human`.
 - **Commit notes:** when the grounding block carries a `commit_notes:` section (from `auto-ticket`'s fix pass, contract §3), write each line into the body of the commit that holds the file the line starts with, or into the first commit's body when no commit holds that file. Every line goes into some commit; never drop one.
 
 ### Handshake (emit last, in autonomous mode)

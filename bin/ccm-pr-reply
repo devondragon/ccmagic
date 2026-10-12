@@ -11,10 +11,12 @@
 #
 # The reply ends with <!-- ccmagic:disposition=... -->, which ccm-pr-threads
 # reads to decide the thread is handled. For `fixed`, the commit must exist
-# locally and already be pushed (an ancestor of the branch's upstream), and
-# the thread is then resolved on GitHub. If resolving fails (for example a
-# token without pull-request write access) the reply still stands and
-# "resolved" is false; ccm-pr-threads still counts the verified marker.
+# locally and already be pushed (an ancestor of the branch's upstream, its
+# @{push} ref, or refs/remotes/origin/<branch>, so a branch with no upstream
+# configured still counts once pushed), and the thread is then resolved on
+# GitHub. If resolving fails (for example a token without pull-request write
+# access) the reply still stands and "resolved" is false; ccm-pr-threads
+# still counts the verified marker.
 #
 # Output: {reply_id, thread_id, disposition, resolved}
 # Exit codes: 0 posted, 1 refused (bad commit, thread not found), 3 GitHub
@@ -34,7 +36,7 @@ while [ $# -gt 0 ]; do
     --commit) commit=${2:-}; shift ;;
     --ticket) ticket=${2:-}; shift ;;
     --body) body=${2:-}; have_body=true; shift ;;
-    -h|--help) sed -n '2,21p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,23p' "$0"; exit 0 ;;
     -*) usage "unknown flag $1" ;;
     *) if [ -z "$pr" ]; then pr=${1#\#}; elif [ -z "$comment" ]; then comment=$1; else usage "unexpected argument $1"; fi ;;
   esac
@@ -53,8 +55,29 @@ case $disposition in
     if ! full=$(git rev-parse --verify --quiet "$commit^{commit}"); then
       jq -n --arg c "$commit" '{error: ("commit " + $c + " does not exist locally")}'; exit 1
     fi
-    if ! git merge-base --is-ancestor "$full" "@{upstream}" 2>/dev/null; then
-      jq -n --arg c "$commit" '{error: ("commit " + $c + " is not pushed yet (not in the upstream branch); push before replying")}'; exit 1
+    # A pushed commit is in at least one of: the branch's upstream, its push
+    # ref (@{push}, which resolves without an upstream only under
+    # push.default current or matching), or refs/remotes/origin/<branch>. A
+    # sandboxed session (Cyrus) cannot write .git/config, so `git push -u`
+    # pushes and updates the remote-tracking ref but records no upstream, and
+    # its worktrees start with --no-track; the tracking ref is then the only
+    # proof of the push.
+    branch=$(git symbolic-ref --quiet --short HEAD 2>/dev/null || true)
+    refs=()
+    for ref in "@{upstream}" "@{push}" ${branch:+"refs/remotes/origin/$branch"}; do
+      if r=$(git rev-parse --verify --quiet --symbolic-full-name "$ref" 2>/dev/null) && [ -n "$r" ]; then
+        case " ${refs[*]-} " in *" $r "*) ;; *) refs+=("$r") ;; esac
+      fi
+    done
+    if [ ${#refs[@]} -eq 0 ]; then
+      jq -n --arg c "$commit" --arg b "${branch:-HEAD}" '{error: ("commit " + $c + " is not pushed yet: branch " + $b + " has no upstream and no origin/" + $b + " ref; push the branch before replying")}'; exit 1
+    fi
+    pushed=false
+    for r in "${refs[@]}"; do
+      if git merge-base --is-ancestor "$full" "$r" 2>/dev/null; then pushed=true; break; fi
+    done
+    if [ "$pushed" != true ]; then
+      jq -n --arg c "$commit" --arg refs "${refs[*]}" '{error: ("commit " + $c + " is not pushed yet (not in " + ($refs | split(" ") | join(", ")) + "); push before replying")}'; exit 1
     fi
     marker="<!-- ccmagic:disposition=fixed commit=$full -->"
     ;;

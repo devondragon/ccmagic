@@ -215,6 +215,7 @@ Create as draft if:
    ```bash
    git branch --set-upstream-to=origin/$(git branch --show-current)
    ```
+   A sandboxed session (Cyrus) cannot write `.git/config`, so this fails there; ignore the failure. Nothing in ccmagic needs the upstream once the branch is pushed: `ccm-pr-reply` also accepts `origin/{branch}`.
 
 ## Integration with Other Commands
 
