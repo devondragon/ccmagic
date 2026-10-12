@@ -4673,7 +4673,8 @@ harness_prepare_refuses_while_run_is_live() {
   kids=$(pgrep -P "$pid" || true)
   before=$(jq -S -c 'del(.heartbeat_at)' "$s")
   run "$BIN/ccm-harness" up ENG-26 --prepare
-  local rc_status="$RC,$(jqval .status),$(jqval .run)"
+  local rc_status
+  rc_status="$RC,$(jqval .status),$(jqval .run)"
   local after
   after=$(jq -S -c 'del(.heartbeat_at)' "$s")
   kill "$pid" 2>/dev/null
@@ -4795,6 +4796,19 @@ harness_evidence_rejects_invalid_ref_name() {
   for t in "ENG 46" "ENG..46" 'ENG~46'; do
     run "$BIN/ccm-harness" evidence "$t" "$head" "$T/a.png"
     check "$RC,$(jqval .status),$(jqval .error | grep -c 'not a valid git ref')" "1,failed,1"
+  done
+  check "$(git -C "$T/remote.git" for-each-ref | wc -l | tr -d ' ')" "0"
+}
+
+harness_evidence_rejects_bad_head_sha() {
+  need_compose || return 0
+  harness_file
+  evidence_setup
+  fx repo-view '{"nameWithOwner":"acme/app","visibility":"PRIVATE","defaultBranchRef":{"name":"main"}}'
+  local h
+  for h in "abc/def" "a b" "abc123"; do
+    run "$BIN/ccm-harness" evidence ENG-47 "$h" "$T/a.png"
+    check "$RC,$(jqval .status),$(jqval .error)" "1,failed,HEAD_SHA must be a full commit SHA"
   done
   check "$(git -C "$T/remote.git" for-each-ref | wc -l | tr -d ' ')" "0"
 }
