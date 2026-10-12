@@ -52,8 +52,12 @@
 # A live run is never replaced: while up.json names a run with no result that
 # is attached with a fresh heartbeat, or prepared and not yet past the grace,
 # --prepare prints {status: running, run} (exit 6) and changes nothing. The
-# heartbeat loop ends when the attach process is gone or up.json no longer
-# names its run. When --wait declares a run dead it records that as the run's
+# do_up runs as a child of the attach, writing its result to up.result.<run>
+# in the state directory; the heartbeat loop follows that child, not the
+# attach, and ends when the child is gone or up.json no longer names its run.
+# If the attach is SIGKILLed, do_up and the heartbeat carry on, so the run
+# stays live (--prepare refuses, and no second up touches the project) until
+# the stack work ends, then goes dead after the stale window. When --wait declares a run dead it records that as the run's
 # result (exit_code 1, abandoned: true), so a late --attach of it is refused
 # and a later --prepare may replace it.
 # State: <state dir>/harness/<project>/up.json {run, prepared_at, claimed_at,
@@ -377,7 +381,7 @@ cmd_up_prepare() {
 }
 
 cmd_up_attach() {
-  local run=$1 ok out rc hb interval attach_pid
+  local run=$1 ok out rc hb interval up_pid res
   lock
   ok=$(jq -r --arg r "$run" 'select(.run == $r and .final == null and .claimed_at == null) | "yes"' "$STATE/up.json" 2>/dev/null || true)
   if [ "$ok" = yes ]; then
@@ -392,14 +396,23 @@ cmd_up_attach() {
   interval=$(($(stale_seconds) / 3))
   [ "$interval" -le 10 ] || interval=10
   [ "$interval" -ge 1 ] || interval=1
-  # Beat only while this attach lives and up.json still names this run with no
-  # result. $$ is this process's pid inside the subshell too, and bash 3.2 has
-  # no BASHPID, so it is captured here.
-  attach_pid=$$
+  # do_up runs as a child of this call and writes its result to a file, so
+  # that a SIGKILLed attach leaves it running, not half-owned: the heartbeat
+  # follows do_up itself, the run stays live until the stack work is done, and
+  # no second do_up can start on the project meanwhile.
+  res=$STATE/up.result.$run
+  command rm -f "$res" "$res.rc"
+  (
+    do_up >|"$res"
+    echo "$?" >|"$res.rc"
+  ) </dev/null &
+  UP_PID=$!
+  up_pid=$UP_PID
+  # Beat while do_up lives and up.json still names this run with no result.
   (
     last=0
     while :; do
-      kill -0 "$attach_pid" 2>/dev/null || exit 0
+      kill -0 "$up_pid" 2>/dev/null || exit 0
       jq -e --arg r "$run" 'select(.run == $r and .final == null)' "$STATE/up.json" >/dev/null 2>&1 || exit 0
       now=$(date +%s)
       if [ $((now - last)) -ge "$interval" ]; then
@@ -413,10 +426,18 @@ cmd_up_attach() {
   ) </dev/null &
   hb=$!
   HB_PID=$hb
-  trap 'stop_beat "$HB_PID"; exit 1' TERM INT HUP
-  out=$(do_up) && rc=0 || rc=$?
+  trap 'stop_beat "$HB_PID"; stop_beat "$UP_PID"; exit 1' TERM INT HUP
+  wait "$up_pid" 2>/dev/null
   stop_beat "$hb"
   trap - TERM INT HUP
+  out=$(cat "$res" 2>/dev/null)
+  rc=$(cat "$res.rc" 2>/dev/null)
+  if ! jq -e type <<<"$out" >/dev/null 2>&1; then
+    out='{"status":"error","reason":"do_up produced no result"}'
+    rc=1
+  fi
+  case $rc in '' | *[!0-9]*) rc=1 ;; esac
+  command rm -f "$res" "$res.rc"
   # shellcheck disable=SC2016  # jq variables
   upj_update --arg r "$run" --argjson f "$out" --argjson c "$rc" --argjson t "$(date +%s)" \
     'if .run == $r then .final = $f | .exit_code = $c | .heartbeat_at = $t else . end'

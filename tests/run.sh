@@ -4545,7 +4545,7 @@ harness_prepare_survives_a_stale_lock() {
 # A harness whose health never passes, so an attached up stays running.
 hx_slow_health() {
   harness_file
-  sed -i.bak -e 's#health: /,#health: /missing,#' -e 's#health_timeout_seconds: 120#health_timeout_seconds: 600#' .ccmagic/harness.compose.yml
+  sed -i.bak -e 's#health: /,#health: /missing,#' -e "s#health_timeout_seconds: 120#health_timeout_seconds: ${1:-600}#" .ccmagic/harness.compose.yml
   command rm -f .ccmagic/harness.compose.yml.bak
   git add -A && git -c user.email=t@t -c user.name=t commit -qm slow
 }
@@ -4561,24 +4561,31 @@ hx_wait_claimed() {
   return 1
 }
 
-# Review fix 1: a SIGKILLed attach must not leave a heartbeat behind.
+# Review fix 1: a SIGKILLed attach leaves do_up running; the run stays live
+# until it ends, then goes dead.
 harness_wait_reports_killed_attach_dead() {
   need_docker || return 0
-  hx_slow_health
-  local run_id pid kids k
+  hx_slow_health 25
+  local run_id pid kids k t0 elapsed
   run "$BIN/ccm-harness" up ENG-25 --prepare
   run_id=$(jqval .run)
   CCM_HARNESS_STALE_SECONDS=6 "$BIN/ccm-harness" up ENG-25 --attach "$run_id" >/dev/null 2>&1 &
   pid=$!
   hx_wait_claimed ccm-eng-25 || { kill -9 "$pid"; return 1; }
-  sleep 2
   kids=$(pgrep -P "$pid" || true)
+  t0=$(date +%s)
   kill -9 "$pid"
-  CCM_HARNESS_STALE_SECONDS=6 run "$BIN/ccm-harness" up ENG-25 --wait 40
-  for k in $kids; do pkill -9 -P "$k" 2>/dev/null || true; kill -9 "$k" 2>/dev/null || true; done
   wait "$pid" 2>/dev/null || true
+  sleep 9
+  CCM_HARNESS_STALE_SECONDS=6 run "$BIN/ccm-harness" up ENG-25 --prepare
+  check "$RC,$(jqval .status)" "6,running"
+  CCM_HARNESS_STALE_SECONDS=6 run "$BIN/ccm-harness" up ENG-25 --wait 90
+  elapsed=$(($(date +%s) - t0))
+  for k in $kids; do pkill -9 -P "$k" 2>/dev/null || true; kill -9 "$k" 2>/dev/null || true; done
   "$BIN/ccm-harness" down ENG-25 >/dev/null
   check "$RC,$(jqval .status)" "1,dead"
+  # do_up's health wait (25 s) had to finish first.
+  [ "$elapsed" -ge 25 ] || { echo "    dead after only ${elapsed}s"; return 1; }
 }
 
 # Review fix 2: a live run is never replaced.
