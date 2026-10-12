@@ -4542,6 +4542,86 @@ harness_prepare_survives_a_stale_lock() {
   check "$RC,$(jqval .status)" "0,prepared"
 }
 
+# A harness whose health never passes, so an attached up stays running.
+hx_slow_health() {
+  harness_file
+  sed -i.bak -e 's#health: /,#health: /missing,#' -e 's#health_timeout_seconds: 120#health_timeout_seconds: 600#' .ccmagic/harness.compose.yml
+  command rm -f .ccmagic/harness.compose.yml.bak
+  git add -A && git -c user.email=t@t -c user.name=t commit -qm slow
+}
+
+# Wait until up.json of PROJECT has a claim, up to 30 s.
+hx_wait_claimed() {
+  local f i
+  f="$(git rev-parse --path-format=absolute --git-dir)/ccmagic/harness/$1/up.json"
+  for i in $(seq 1 60); do
+    [ "$(jq -r '.claimed_at // empty' "$f" 2>/dev/null)" != "" ] && return 0
+    sleep 0.5
+  done
+  return 1
+}
+
+# Review fix 1: a SIGKILLed attach must not leave a heartbeat behind.
+harness_wait_reports_killed_attach_dead() {
+  need_docker || return 0
+  hx_slow_health
+  local run_id pid kids k
+  run "$BIN/ccm-harness" up ENG-25 --prepare
+  run_id=$(jqval .run)
+  CCM_HARNESS_STALE_SECONDS=6 "$BIN/ccm-harness" up ENG-25 --attach "$run_id" >/dev/null 2>&1 &
+  pid=$!
+  hx_wait_claimed ccm-eng-25 || { kill -9 "$pid"; return 1; }
+  sleep 2
+  kids=$(pgrep -P "$pid" || true)
+  kill -9 "$pid"
+  CCM_HARNESS_STALE_SECONDS=6 run "$BIN/ccm-harness" up ENG-25 --wait 40
+  for k in $kids; do pkill -9 -P "$k" 2>/dev/null || true; kill -9 "$k" 2>/dev/null || true; done
+  wait "$pid" 2>/dev/null || true
+  "$BIN/ccm-harness" down ENG-25 >/dev/null
+  check "$RC,$(jqval .status)" "1,dead"
+}
+
+# Review fix 2: a live run is never replaced.
+harness_prepare_refuses_while_run_is_live() {
+  need_docker || return 0
+  hx_slow_health
+  local run_id pid kids k s before
+  s="$(git rev-parse --path-format=absolute --git-dir)/ccmagic/harness/ccm-eng-26/up.json"
+  run "$BIN/ccm-harness" up ENG-26 --prepare
+  run_id=$(jqval .run)
+  "$BIN/ccm-harness" up ENG-26 --attach "$run_id" >/dev/null 2>&1 &
+  pid=$!
+  hx_wait_claimed ccm-eng-26 || { kill -9 "$pid"; return 1; }
+  kids=$(pgrep -P "$pid" || true)
+  before=$(jq -S -c 'del(.heartbeat_at)' "$s")
+  run "$BIN/ccm-harness" up ENG-26 --prepare
+  local rc_status="$RC,$(jqval .status),$(jqval .run)"
+  local after
+  after=$(jq -S -c 'del(.heartbeat_at)' "$s")
+  kill "$pid" 2>/dev/null
+  for k in $kids; do pkill -9 -P "$k" 2>/dev/null || true; kill -9 "$k" 2>/dev/null || true; done
+  wait "$pid" 2>/dev/null || true
+  "$BIN/ccm-harness" down ENG-26 >/dev/null
+  check "$rc_status" "6,running,$run_id"
+  check "$after" "$before"
+}
+
+# Review fix 2: a run declared dead cannot be attached late, and can be replaced.
+harness_dead_run_cannot_be_attached() {
+  need_compose || return 0
+  harness_file
+  local run_id
+  run "$BIN/ccm-harness" up ENG-27 --prepare
+  run_id=$(jqval .run)
+  sleep 3
+  CCM_HARNESS_STALE_SECONDS=3 run "$BIN/ccm-harness" up ENG-27 --wait 1
+  check "$RC,$(jqval .status)" "1,dead"
+  run "$BIN/ccm-harness" up ENG-27 --attach "$run_id"
+  check "$RC,$(jqval .status)" "4,refused"
+  run "$BIN/ccm-harness" up ENG-27 --prepare
+  check "$RC,$(jqval .status)" "0,prepared"
+}
+
 # ---- run -------------------------------------------------------------------
 
 MIRRORS=$(mktemp -d)

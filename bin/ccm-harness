@@ -49,6 +49,13 @@
 # final result with its exit code, {status: running, run} (exit 6) when the
 # time is up, or {status: dead, run, reason} (exit 1) when the attached run
 # stopped sending heartbeats or the prepared run was never attached.
+# A live run is never replaced: while up.json names a run with no result that
+# is attached with a fresh heartbeat, or prepared and not yet past the grace,
+# --prepare prints {status: running, run} (exit 6) and changes nothing. The
+# heartbeat loop ends when the attach process is gone or up.json no longer
+# names its run. When --wait declares a run dead it records that as the run's
+# result (exit_code 1, abandoned: true), so a late --attach of it is refused
+# and a later --prepare may replace it.
 # State: <state dir>/harness/<project>/up.json {run, prepared_at, claimed_at,
 # heartbeat_at, final, exit_code}, written under the lock directory up.json's
 # neighbor `lock`. CCM_HARNESS_STALE_SECONDS (tests only, default 90) is the
@@ -348,9 +355,21 @@ upj_update() {
 stale_seconds() { printf '%s' "${CCM_HARNESS_STALE_SECONDS:-90}"; }
 
 cmd_up_prepare() {
-  local run
+  local run live stale
   run=$(date +%s)-$$
+  stale=$(stale_seconds)
   lock
+  # A live run is never replaced: a second up on the project would tear down
+  # the stack the first is building.
+  live=$(jq -r --argjson now "$(date +%s)" --argjson st "$stale" '
+    select(.final == null and
+      (if .heartbeat_at != null then $now - .heartbeat_at <= $st
+       else $now - .prepared_at <= ($st * 2 / 3 | floor) end)) | .run' "$STATE/up.json" 2>/dev/null || true)
+  if [ -n "$live" ]; then
+    unlock
+    jq -n --arg r "$live" '{status: "running", run: $r}'
+    exit 6
+  fi
   jq -n --arg r "$run" --argjson t "$(date +%s)" \
     '{run: $r, prepared_at: $t, claimed_at: null, heartbeat_at: null, final: null, exit_code: null}' >|"$STATE/up.json"
   unlock
@@ -358,7 +377,7 @@ cmd_up_prepare() {
 }
 
 cmd_up_attach() {
-  local run=$1 ok out rc hb interval
+  local run=$1 ok out rc hb interval attach_pid
   lock
   ok=$(jq -r --arg r "$run" 'select(.run == $r and .final == null and .claimed_at == null) | "yes"' "$STATE/up.json" 2>/dev/null || true)
   if [ "$ok" = yes ]; then
@@ -373,12 +392,25 @@ cmd_up_attach() {
   interval=$(($(stale_seconds) / 3))
   [ "$interval" -le 10 ] || interval=10
   [ "$interval" -ge 1 ] || interval=1
-  # Beat only while up.json still names this run with no result.
-  (while sleep "$interval"; do
-    # shellcheck disable=SC2016  # jq variables
-    upj_update --arg r "$run" --argjson t "$(date +%s)" \
-      'if .run == $r and .final == null then .heartbeat_at = $t else . end'
-  done) &
+  # Beat only while this attach lives and up.json still names this run with no
+  # result. $$ is this process's pid inside the subshell too, and bash 3.2 has
+  # no BASHPID, so it is captured here.
+  attach_pid=$$
+  (
+    last=0
+    while :; do
+      kill -0 "$attach_pid" 2>/dev/null || exit 0
+      jq -e --arg r "$run" 'select(.run == $r and .final == null)' "$STATE/up.json" >/dev/null 2>&1 || exit 0
+      now=$(date +%s)
+      if [ $((now - last)) -ge "$interval" ]; then
+        # shellcheck disable=SC2016  # jq variables
+        upj_update --arg r "$run" --argjson t "$now" \
+          'if .run == $r and .final == null then .heartbeat_at = $t else . end'
+        last=$now
+      fi
+      sleep 1
+    done
+  ) </dev/null &
   hb=$!
   HB_PID=$hb
   trap 'stop_beat "$HB_PID"; exit 1' TERM INT HUP
@@ -400,6 +432,19 @@ stop_beat() {
   return 0
 }
 
+# Record RUN as dead under the lock, so it can no longer be attached, then
+# print the dead object and exit 1. A run that finished meanwhile keeps its
+# result.
+mark_dead() {
+  local dead
+  dead=$(jq -nc --arg r "$1" --arg why "$2" '{status: "dead", run: $r, reason: $why}')
+  # shellcheck disable=SC2016  # jq variables
+  upj_update --arg r "$1" --argjson d "$dead" \
+    'if .run == $r and .final == null then .final = $d | .exit_code = 1 | .abandoned = true else . end'
+  printf '%s\n' "$dead"
+  exit 1
+}
+
 cmd_up_wait() {
   local secs=${1:-480} deadline now run final hb prep stale
   case $secs in '' | *[!0-9]*) usage ;; esac
@@ -418,12 +463,10 @@ cmd_up_wait() {
     hb=$(jq -r '.heartbeat_at // empty' "$STATE/up.json")
     prep=$(jq -r '.prepared_at' "$STATE/up.json")
     if [ -n "$hb" ] && [ $((now - hb)) -gt "$stale" ]; then
-      jq -n --arg r "$run" '{status: "dead", run: $r, reason: "the attached run stopped sending heartbeats"}'
-      exit 1
+      mark_dead "$run" "the attached run stopped sending heartbeats"
     fi
     if [ -z "$hb" ] && [ $((now - prep)) -gt $((stale * 2 / 3)) ]; then
-      jq -n --arg r "$run" '{status: "dead", run: $r, reason: "the prepared run was never attached"}'
-      exit 1
+      mark_dead "$run" "the prepared run was never attached"
     fi
     if [ "$now" -ge "$deadline" ]; then
       jq -n --arg r "$run" '{status: "running", run: $r}'
