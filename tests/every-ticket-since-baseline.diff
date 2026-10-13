@@ -177,11 +177,11 @@
 +
 +Runs only when Step 0 listed visual criteria (contract §4); otherwise go to Step 3.
 +
-+1. Run `"${CLAUDE_PLUGIN_ROOT}/bin/ccm-harness" check {TICKET-ID}` as its own Bash call. `absent`: the criteria stay on the UAT checklist with the note `no harness`; go to Step 3. `invalid`: the note becomes `harness invalid: {rule}`; go to Step 3.
-+2. `ok`: run the visual step via `run_step` with the grounding block plus `visual_round: 1` and a `visual_criteria:` section (`- V1: {criterion, verbatim}`, one line each). Parse the report's `harness:`, `judged_head:`, `visual_results:`, and `evidence:` lines above its handshake. A report missing `harness:` or `visual_results:` is a missing handshake (contract §3). The visual keys go only to the visual step, and its `steps` entry in the run record is `visual`.
++1. Run `"${CLAUDE_PLUGIN_ROOT}/bin/ccm-harness" check {TICKET-ID}` as its own Bash call. `absent`: the criteria stay on the UAT checklist with the note `no harness`; go to Step 3. `invalid`: the note becomes `harness invalid: {rule}`; go to Step 3. Any other outcome (an `error` status, exit 4, or the script not found or denied): the note becomes `harness could not start: check {status}`; go to Step 3.
++2. `ok`: run the visual step via `run_step` with the grounding block plus `visual_round: 1` and a `visual_criteria:` section (`- V1: {criterion, verbatim}`, one line each). Parse the report's `harness:`, `judged_head:`, `visual_results:`, and `evidence:` lines above its handshake. A report that is missing or unparseable, or that lacks `harness:` or `visual_results:`, is never a park (contract §3): treat it as `harness: could-not-start: visual step returned no report`, run `"${CLAUDE_PLUGIN_ROOT}/bin/ccm-harness" down {TICKET-ID}` yourself as its own Bash call, put the criteria on the UAT checklist with that note, and go to Step 3. The visual keys go only to the visual step, and its `steps` entry in the run record is `visual`.
 +3. Decide:
 +   - `harness: ran` and every criterion `met`: take the criteria off the UAT checklist, keep the results for Step 6, and go to Step 3.
-+   - `harness: ran` with a `not-met`, or `harness: failed-in-change: ...`, and `visual_round` below 3: run a fix pass on the work step via `run_step`, as in Step 3 items 1 and 2 (including the fix-pass git check), with `fix_source: visual`, the run-wide `fix_pass` counter, and a `findings_to_fix:` section with one item per `not-met` line (`V{n}: {criterion} | {why} | {screenshot path}`, the path so the work step can Read the image) or one item `harness: {reason}` for a `failed-in-change`, so `applied_findings:` can name it by the id `harness`. Then commit and push via `/ccmagic:push` (`run_step`), and run the visual step again with `visual_round` one higher. A fix pass or push that returns `needs-human`: **route-and-stop** (stage = `visual`).
++   - `harness: ran` with a `not-met`, or `harness: failed-in-change: ...`, and `visual_round` below 3: run a fix pass on the work step via `run_step`, as in Step 3 items 1 and 2 (including the fix-pass git check), with `fix_source: visual`, the run-wide `fix_pass` counter, and a `findings_to_fix:` section with one item per `not-met` line (`V{n}: {criterion} | {why} | {screenshot path}`, the path so the work step can Read the image) or one item `harness: {reason}` for a `failed-in-change`, so `applied_findings:` can name it by the id `harness`. Then commit and push via `/ccmagic:push` (`run_step`), and run the visual step again with `visual_round` one higher. Visual fix passes take their numbers from the run-wide `fix_pass` counter but do not count against `max_review_fix_passes`; `visual_round` (at most 3) is their bound. A fix pass or push that returns `needs-human`: **route-and-stop** (stage = `visual`).
 +   - `not-met` or `failed-in-change` still at `visual_round` 3: **route-and-stop** (stage = `visual`, reason: `visual criteria not met after 3 rounds: {V ids and why}`); the parked note carries the last `visual_results:` lines with their screenshot links.
 +   - `harness: could-not-start: ...` or `harness: timed-out`: the criteria stay on the UAT checklist with that reason as the note; go to Step 3. A harness that cannot start never blocks a merge.
 +4. Keep the last report's `judged_head` for Step 6.
@@ -191,7 +191,12 @@
  ---
  
  ## Step 3: Ticket-grounded review
-@@ -130,7 +146,7 @@ Run the review-ticket step via `run_step` — `/ccmagic:review-ticket {TICKET-ID
+@@ -126,11 +142,11 @@ Run the review-ticket step via `run_step` — `/ccmagic:review-ticket {TICKET-ID
+   4. **Re-review.** Re-invoke the review-ticket step via `run_step`, adding `review_pass: {review_pass}` to the grounding block (the run-wide review counter below, so 2 on the run's first re-review) so the reviewer produces a delta report (contract §2), and a `previous_findings:` section that copies the fix pass's `applied_findings:` list as reported, including the invariant test named for each finding fixed under contract §9, so the fresh review subagent knows what to verify.
+   5. `clean` → record its `head:` as `reviewed_head` and continue to Step 4. `fixable-findings` again and passes remain → repeat from item 1 with the new report's findings. Passes exhausted still not clean, or `needs-human` → **route-and-stop** (reason: the outstanding findings).
+ 
+-`fix_pass` and `review_pass` count across the whole run. `review_pass` goes up by one on every review-ticket call: the first Step 3 review is pass 1 (sent without the key), each re-review here and each 4f re-review takes the next number. When 4f sends a late-push re-review's findings back to this loop, it continues from the passes already used, so `max_review_fix_passes` bounds every review fix pass in the run, not each entry to the loop.
++`fix_pass` and `review_pass` count across the whole run. `review_pass` goes up by one on every review-ticket call: the first Step 3 review is pass 1 (sent without the key), each re-review here and each 4f re-review takes the next number. When 4f sends a late-push re-review's findings back to this loop, it continues from the passes already used, so `max_review_fix_passes` bounds every review fix pass in the run, not each entry to the loop. Step 2b's visual fix passes are numbered by `fix_pass` too but do not count against it.
  
  The fix-pass keys (`fix_pass:`, `fix_source:`, `findings_to_fix:`) go only to the work step's fix pass, `previous_findings:` only to the re-review, and `commit_notes:` only to the push step; leave them out of every other step's grounding block.
  
@@ -264,18 +269,19 @@
  
 +**UAT checklist.** In Step 0, after fetching the ticket, list its visual criteria (contract §4): each acceptance criterion that asks for a screenshot or names a visible UI state, copied verbatim. Until a check runs them, each goes on the UAT checklist with the note `no harness`. With `visual_checklist: off`, the section reads "none" and the criteria are dropped. The checklist is part of the summary, so it reaches the PR and the ticket wherever the summary does, the parked note included.
 +
-+**Head drift.** When the visual check ran, compare its `judged_head` with the PR head read for the run record: `git diff --name-only {judged_head} {head_sha}`. If any changed path is outside tests and docs (a test or doc path has a segment `test`, `tests`, `__tests__`, or `spec`, or a file name containing `.test.`, `.spec.`, or `_test.`, or lies under `docs/`, or ends in `.md`), say so under Visual check (`the PR head is now {sha}; {n} files changed since the check`) and put every visual criterion on the UAT checklist with the note `changed after the visual check`. The check is not run again.
++**Head drift.** Only when the visual step's last report was `harness: ran` (otherwise `judged_head` is `none`), compare its `judged_head` with the PR head read for the run record: `git diff --name-only {judged_head} {head_sha}`. If any changed path is outside tests and docs (a test or doc path has a segment `test`, `tests`, `__tests__`, or `spec`, or a file name containing `.test.`, `.spec.`, or `_test.`, or lies under `docs/`, or ends in `.md`), say so under Visual check (`the PR head is now {sha}; {n} files changed since the check`) and put every visual criterion on the UAT checklist with the note `changed after the visual check`. The check is not run again.
 +
  `steps` lists every sub-skill invocation of this run in order, one entry each, with the handshake `status` it returned; include `reason` whenever the sub-skill emitted one. Repeated review passes are separate entries, and each fix pass is a `work-ticket` entry whose `reason` starts with `fix pass {n} ({fix_source})`. `review_passes` is the total number of review-ticket calls in the run, 4f re-reviews included: the final `review_pass`, or 1 when there was no re-review. `follow_ups` has one entry per item on the run's follow-up list (empty array when there were none): `ticket` is the filed ID or null, and `reason` says why it wasn't filed (null when filed). The block is emitted on every outcome and under every transport. It is the machine-readable record an external gate reads, so its keys are fixed and must not be renamed; `follow_ups` was added in 3.13.0 as an additive key, and readers that don't know it ignore it.
  
  `version: 2` binds the record to what it describes, and Reeve treats a record whose binding doesn't match the PR it located as no record at all (RV-1). A version 2 record carries `repo`, `pr`, and `head_sha` on every outcome, never omitted (the one exception is the version 1 fallback below):
-@@ -311,8 +345,11 @@ There is no stalled outcome. Never hang waiting for input.
+@@ -311,8 +345,12 @@ There is no stalled outcome. Never hang waiting for input.
  | A sub-skill emits no handshake (crash/tool error) | Treat as `needs-human` → route-and-stop with reason "{skill} produced no handshake". |
  | `work-ticket` → `needs-human` | route-and-stop (stage `work-ticket`). |
  | `review-ticket` → `needs-human`, or `fixable-findings` unresolved after the bounded loop | route-and-stop (stage `review-ticket`). |
 -| A fix pass on the work step (Step 3 or 4b) returns `needs-human`, does not report an item it was sent, commits or switches branch, or changes no files | route-and-stop (stage `review-ticket` or `validate`); nothing from that pass is pushed, and the parked comment lists the uncommitted files it left. |
 -| `validate` → `needs-human` whose reason does not start with `failed:` (a crash, no handshake) | route-and-stop (stage `validate`) without a fix pass. |
 +| visual step → `needs-human`, or a visual fix pass fails | route-and-stop (stage `visual`). |
++| visual step returns no report, or one without `harness:` or `visual_results:` | Not a park: `harness: could-not-start: visual step returned no report`; take the harness down (Step 2b item 2), put the criteria on the UAT checklist, continue to Step 3. |
 +| A fix pass on the work step (Step 2b, 3, or 4b) returns `needs-human`, does not report an item it was sent, commits or switches branch, or changes no files | route-and-stop (stage `visual`, `review-ticket`, or `validate`); nothing from that pass is pushed, and the parked comment lists the uncommitted files it left. |
 +| `validate` → `needs-human` whose reason starts with `environment:` (missing Node dependencies that `ccm-validate` could not install), or does not start with `failed:` (a crash, no handshake) | route-and-stop (stage `validate`) without a fix pass. |
 +| `validate` → `needs-human` whose reason starts with `failed:`, however environmental the failure looks | Step 4b's fix passes, then route-and-stop if validation still fails. Never go on to finish. |
@@ -283,7 +289,7 @@
  | `pr-feedback` → `needs-human` (genuine reviewer tie) | route-and-stop (stage `pr-feedback`). |
  | Local `/ccmagic:validate` can't be made green within the bounded attempts | route-and-stop (reason: validation failures). |
  | CI never settles within `ci_timeout_minutes` (watch loop cap) | route-and-stop (reason: CI timeout). |
-@@ -320,7 +357,7 @@ There is no stalled outcome. Never hang waiting for input.
+@@ -320,7 +358,7 @@ There is no stalled outcome. Never hang waiting for input.
  | Step 4 pushed after the last clean review (4a or 4b) | Re-review the pushed head (4f). A stale review never reaches finish: a clean re-review of another head, an unreadable PR head, or findings with no review fix or feedback passes left → route-and-stop (stage `review-ticket`), before any fix is pushed. |
  | `finish-ticket` merge gate not satisfied | It returns `needs-human` and does not merge → route-and-stop (stage `finish-ticket`). |
  | `requested_state: {merge_handoff_state}` and no state of that exact name exists | route-and-stop (stage `finish-ticket`); nothing was merged on the hand-off path. |
@@ -368,7 +374,7 @@
 +evidence: pushed | skipped: <reason> | failed: <reason>
 +```
 +
-+`judged_head` is the PR head the screenshots were taken from (`none` when the harness never ran). `visual_results:` has one line per criterion it was sent; it is empty unless `harness: ran`. The orchestrator treats a report missing `harness:` or `visual_results:` as a missing handshake. An evidence failure never changes a judgment.
++`judged_head` is the PR head the screenshots were taken from (`none` when the harness never ran). `visual_results:` has one line per criterion it was sent; it is empty unless `harness: ran`. A visual report that is missing, unparseable, or lacks `harness:` or `visual_results:` is the one exception to the missing-handshake rule below: the orchestrator treats it as `harness: could-not-start: visual step returned no report`, takes the harness down, lists the criteria on the UAT checklist, and continues, since a visual criterion is never a reason to park (§4). An evidence failure never changes a judgment.
 +
 +A validate `needs-human` has one of two reasons. `environment:` means `ccm-validate` found the root `package.json`'s dependencies missing and could not install them (no lockfile, the lockfile's tool missing, or the install failing or timing out), so no check ran; there is no `failures:` section, and the orchestrator parks without a fix pass. `failed:` means a check ran and failed. When a check fails, the validate step's report carries a `failures:` section just before its handshake, and its `reason` starts with `failed:`. The orchestrator copies the section into a validate fix pass's `findings_to_fix:`:
  
@@ -383,7 +389,12 @@
  1. **Do not merge.** Leave the PR open.
  2. **Move the ticket to `needs_human_state`:**
     - **Linear** — `mcp__*Linear*__save_issue` transitioning to the state whose name matches `needs_human_state` (case-insensitive). If no such state exists, apply `needs_human_label` via `save_issue` labels and leave the state unchanged.
-@@ -214,12 +254,14 @@ When the run is on the **prompt-relay transport** (§7), the park routine change
+@@ -210,16 +250,18 @@ When the run is on the **prompt-relay transport** (§7), the park routine change
+ | `merge_owner` | string | `self` | Who owns merging the PR: `self` merges here, `reeve` hands off to an external merge gate instead of merging. |
+ | `merge_handoff_state` | string | `Awaiting Merge` | Tracker state a handed-off ticket moves to when `merge_owner: reeve`. |
+ | `max_feedback_passes` | int | `3` | Cap on the `pr-feedback` loop (orchestrator Step 4) before parking. |
+-| `max_review_fix_passes` | int | `3` | Cap on the ticket-review fix loop (orchestrator Step 3) before parking. |
++| `max_review_fix_passes` | int | `3` | Cap on the ticket-review fix loop (orchestrator Step 3) before parking. Visual fix passes (Step 2b) do not count against it; `visual_round`, at most 3, bounds them. |
  | `max_validate_attempts` | int | `2` | Cap on local `/ccmagic:validate` fix attempts (orchestrator Step 4b) before parking. |
  | `ci_timeout_minutes` | int | `30` | Max minutes to wait for CI to settle (orchestrator Step 4c) before parking on timeout; quantized up to whole 10-minute watch cycles (`CYCLES = ceil(minutes / 10)`). |
  | `ci_poll_interval_seconds` | int | `60` | Interval passed to `gh pr checks --watch` during the CI wait (orchestrator Step 4c); when the Checks API is unreadable (fine-grained PAT 403), the wait falls back to the Actions/Status APIs (Step 4c item 5) and this interval no longer applies. |

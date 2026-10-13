@@ -651,6 +651,27 @@ skills_visual_fix_round_wired() {
   check "${missing# }" ""
 }
 
+# Final review fixes: a missing visual report never parks, seed and shoot
+# carry a long Bash timeout, head drift needs harness: ran, the agent routes
+# every harness status, and visual fix passes do not use the review budget.
+# shellcheck disable=SC2016 # literal backticks and ${...} in the markdown being matched
+skills_visual_final_review_fixes() {
+  local missing='' f="$ROOT/skills/auto-ticket/SKILL.md" c="$ROOT/skills/auto-ticket/autonomous-contract.md" a="$ROOT/agents/auto-visual.md"
+  grep -qF 'treat it as `harness: could-not-start: visual step returned no report`, run `"${CLAUDE_PLUGIN_ROOT}/bin/ccm-harness" down {TICKET-ID}` yourself' "$f" || missing+=" no-report-step-2b"
+  grep -qF 'A report missing `harness:` or `visual_results:` is a missing handshake' "$f" && missing+=" no-report-still-parks"
+  grep -qF 'visual step returns no report' "$f" || missing+=" no-report-error-row"
+  grep -qF 'is the one exception to the missing-handshake rule below' "$c" || missing+=" no-report-contract"
+  [ "$(grep -cF 'with `timeout: 600000` on the Bash call' "$a")" = 2 ] || missing+=" seed-shoot-timeout"
+  grep -qF 'seed timed out' "$a" && grep -qF 'shoot timed out' "$a" || missing+=" timed-out-routing"
+  grep -qF 'seed not-up' "$a" && grep -qF 'shoot error: {error}' "$a" && grep -qF 'do_up produced no result' "$a" || missing+=" status-routing"
+  grep -qF 'harness check {status} {rule}` and go to step 7' "$a" || missing+=" check-to-step-7"
+  grep -qF 'harness could not start: check {status}' "$f" || missing+=" step-2b-check-other"
+  grep -qF "Only when the visual step's last report was \`harness: ran\`" "$f" || missing+=" head-drift-ran"
+  grep -qF 'do not count against `max_review_fix_passes`' "$f" || missing+=" budget-step-2b"
+  grep -qF 'Visual fix passes (Step 2b) do not count against it' "$c" || missing+=" budget-contract"
+  check "${missing# }" ""
+}
+
 # The SubagentStop hook checks the visual step's handshake like the other
 # done | needs-human steps.
 guard_stop_hook_checks_auto_visual() {
@@ -4463,6 +4484,12 @@ harness_up_down_round_trip() {
   check "$(docker ps -aq --filter label=ccm.project=ccm-eng-9 | wc -l | tr -d ' ')" "0"
 }
 
+# A failed up takes its stack down: no container with either label remains.
+no_stack_left() {
+  check "$(docker ps -aq --filter "label=com.docker.compose.project=$1" | wc -l | tr -d ' ')" "0"
+  check "$(docker ps -aq --filter "label=ccm.project=$1" | wc -l | tr -d ' ')" "0"
+}
+
 harness_up_reports_unhealthy_with_logs() {
   need_docker || return 0
   harness_file
@@ -4477,7 +4504,7 @@ harness_up_reports_unhealthy_with_logs() {
   # plus 10 seconds plus one probe and slack.
   [ $((t1 - t0)) -lt 120 ] || { echo "    up took $((t1 - t0))s"; return 1; }
   [[ $(jqval .logs) == *nginx* ]] || { echo "    no service logs in the result"; return 1; }
-  "$BIN/ccm-harness" down ENG-10 >/dev/null
+  no_stack_left ccm-eng-10
 }
 
 harness_up_reports_build_failure() {
@@ -4487,7 +4514,17 @@ harness_up_reports_build_failure() {
   git -c user.email=t@t -c user.name=t commit -qam broken
   run "$BIN/ccm-harness" up ENG-11
   check "$RC,$(jqval .status)" "1,build-failed"
-  "$BIN/ccm-harness" down ENG-11 >/dev/null
+  no_stack_left ccm-eng-11
+}
+
+harness_up_reports_runner_failure() {
+  need_docker || return 0
+  harness_file
+  sed -i.bak 's#image: "node:22-alpine"#image: "ccm-harness-test-no-such-image:0"#' .ccmagic/harness.compose.yml && rm -f .ccmagic/harness.compose.yml.bak
+  git -c user.email=t@t -c user.name=t commit -qam no-runner
+  run "$BIN/ccm-harness" up ENG-19
+  check "$RC,$(jqval .status)" "1,runner-failed"
+  no_stack_left ccm-eng-19
 }
 
 harness_up_publishes_only_on_request() {

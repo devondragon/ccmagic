@@ -33,7 +33,10 @@
 # runner, app_url, published_url, duration_s} (exit 0), or {status:
 # build-failed, tail}, {status: runner-failed, tail} (the stack built but the
 # runner container did not start), {status: unhealthy, timeout_seconds,
-# logs}, or the check's invalid or absent object (exit 1 or 2). published_url is null
+# logs}, or the check's invalid or absent object (exit 1 or 2). On
+# build-failed, runner-failed, and unhealthy, up captures the tail or logs and
+# then takes the stack down (as down does), so a failed up leaves nothing
+# running. published_url is null
 # unless CCM_HARNESS_PUBLISH=1, which publishes the app on 127.0.0.1 only.
 # health_timeout_seconds (default 600) measures app health only: its clock
 # starts when the runner is up, after the build. Each probe times out after 5
@@ -335,10 +338,12 @@ do_up() {
   fi
   if ! dc up -d --build >>"$log" 2>&1; then
     jq -n --arg t "$(tail -40 "$log")" '{status: "build-failed", tail: $t}'
+    cmd_down_quiet
     return 1
   fi
   if ! start_runner >>"$log" 2>&1; then
     jq -n --arg t "$(tail -40 "$log")" '{status: "runner-failed", tail: $t}'
+    cmd_down_quiet
     return 1
   fi
   hstart=$(date +%s)
@@ -346,6 +351,7 @@ do_up() {
     if [ $(($(date +%s) - hstart)) -ge "$TIMEOUT" ]; then
       dc logs --no-color --tail 200 >>"$log" 2>&1
       jq -n --arg t "$(tail -200 "$log")" --argjson s "$TIMEOUT" '{status: "unhealthy", timeout_seconds: $s, logs: $t}'
+      cmd_down_quiet
       return 1
     fi
     sleep 5

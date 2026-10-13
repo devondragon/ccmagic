@@ -182,7 +182,7 @@ visual_results:
 evidence: pushed | skipped: <reason> | failed: <reason>
 ```
 
-`judged_head` is the PR head the screenshots were taken from (`none` when the harness never ran). `visual_results:` has one line per criterion it was sent; it is empty unless `harness: ran`. The orchestrator treats a report missing `harness:` or `visual_results:` as a missing handshake. An evidence failure never changes a judgment.
+`judged_head` is the PR head the screenshots were taken from (`none` when the harness never ran). `visual_results:` has one line per criterion it was sent; it is empty unless `harness: ran`. A visual report that is missing, unparseable, or lacks `harness:` or `visual_results:` is the one exception to the missing-handshake rule below: the orchestrator treats it as `harness: could-not-start: visual step returned no report`, takes the harness down, lists the criteria on the UAT checklist, and continues, since a visual criterion is never a reason to park (§4). An evidence failure never changes a judgment.
 
 A validate `needs-human` has one of two reasons. `environment:` means `ccm-validate` found the root `package.json`'s dependencies missing and could not install them (no lockfile, the lockfile's tool missing, or the install failing or timing out), so no check ran; there is no `failures:` section, and the orchestrator parks without a fix pass. `failed:` means a check ran and failed. When a check fails, the validate step's report carries a `failures:` section just before its handshake, and its `reason` starts with `failed:`. The orchestrator copies the section into a validate fix pass's `findings_to_fix:`:
 
@@ -276,7 +276,7 @@ When the run is on the **prompt-relay transport** (§7), the park routine change
 | `merge_owner` | string | `self` | Who owns merging the PR: `self` merges here, `reeve` hands off to an external merge gate instead of merging. |
 | `merge_handoff_state` | string | `Awaiting Merge` | Tracker state a handed-off ticket moves to when `merge_owner: reeve`. |
 | `max_feedback_passes` | int | `3` | Cap on the `pr-feedback` loop (orchestrator Step 4) before parking. |
-| `max_review_fix_passes` | int | `3` | Cap on the ticket-review fix loop (orchestrator Step 3) before parking. |
+| `max_review_fix_passes` | int | `3` | Cap on the ticket-review fix loop (orchestrator Step 3) before parking. Visual fix passes (Step 2b) do not count against it; `visual_round`, at most 3, bounds them. |
 | `max_validate_attempts` | int | `2` | Cap on local `/ccmagic:validate` fix attempts (orchestrator Step 4b) before parking. |
 | `ci_timeout_minutes` | int | `30` | Max minutes to wait for CI to settle (orchestrator Step 4c) before parking on timeout; quantized up to whole 10-minute watch cycles (`CYCLES = ceil(minutes / 10)`). |
 | `ci_poll_interval_seconds` | int | `60` | Interval passed to `gh pr checks --watch` during the CI wait (orchestrator Step 4c); when the Checks API is unreadable (fine-grained PAT 403), the wait falls back to the Actions/Status APIs (Step 4c item 5) and this interval no longer applies. |
