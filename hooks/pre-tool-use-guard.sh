@@ -154,7 +154,7 @@ if [ "$is_push" = true ]; then
     [ "$force" = true ] || continue
     [ -n "$target" ] || target=$(git branch --show-current 2>/dev/null || true)
     if [ "$autonomous" = true ]; then
-      deny "ccmagic: autonomous runs never force-push (target: ${target:-unknown}). If the branch has diverged, rebase onto the remote (git pull --rebase) and push normally; if that conflicts, return needs-human."
+      deny "ccmagic: autonomous runs never force-push (target: ${target:-unknown}). If the branch has diverged, rebase onto the remote (git pull --rebase origin ${target:-<branch>}) and push normally; if that conflicts, return needs-human."
     fi
     default=$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null || true)
     default=${default#origin/}
