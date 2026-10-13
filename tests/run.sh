@@ -2665,6 +2665,23 @@ skills_call_scripts_by_plugin_path() {
   check "$(grep -lF 'by bare name (`ccm-context`' "$ROOT"/agents/*.md || true)" ""
 }
 
+# Spec decision 4: a visual criterion never parks a run by itself.
+# shellcheck disable=SC2016 # literal backticks in the markdown being matched
+skills_visual_criteria_never_park() {
+  local missing=
+  grep -qF 'A visual criterion is never a `needs-human` reason by itself' "$ROOT/skills/work-ticket/SKILL.md" || missing+=" work-ticket"
+  grep -qF 'is not missing AC when the code implements what it describes' "$ROOT/skills/review-ticket/SKILL.md" || missing+=" review-ticket"
+  grep -qF 'A visual criterion is never a reason to park' "$ROOT/skills/auto-ticket/autonomous-contract.md" || missing+=" contract"
+  grep -qF '### UAT checklist' "$ROOT/skills/auto-ticket/SKILL.md" || missing+=" summary-section"
+  grep -qF 'visual_checklist' "$ROOT/skills/auto-ticket/autonomous-contract.md" || missing+=" config-key"
+  check "${missing# }" ""
+}
+
+context_visual_checklist_default_on() {
+  run "$BIN/ccm-context" ENG-1
+  check "$(jqval .config.visual_checklist)" "on"
+}
+
 # A parent spec ticket's parked record carries no openspec key, which Reeve's
 # schema would reject along with the whole record (RV-82).
 # shellcheck disable=SC2016 # literal backticks in the markdown and descriptions

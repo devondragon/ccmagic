@@ -115,15 +115,17 @@
  **Keep every call in the foreground.** You are a subagent, and a subagent returns to the orchestrator the moment it ends its turn. Pass `run_in_background: false` on every `Task` (Agent) call and every Bash call you make, including the ones a preloaded procedure tells you to launch in parallel: put a parallel batch in one message, and each result comes back in that message. A background task reports only through a completion notification, which arrives after you have already returned, so its work is lost and your handshake is missing.
  
 ### skills/auto-ticket/SKILL.md
-@@ -79,7 +79,7 @@ Step agents cannot reach tracker MCP tools, so in this run **only this skill rea
+@@ -79,8 +79,8 @@ Step agents cannot reach tracker MCP tools, so in this run **only this skill rea
     "${CLAUDE_PLUGIN_ROOT}/bin/ccm-context" {TICKET-ID}   # argument given
     "${CLAUDE_PLUGIN_ROOT}/bin/ccm-context"               # no argument: parse the current branch
     ```
 -   (Bare `ccm-context` works too; plugin `bin/` is on `PATH`.) Run it, and every other `ccm-*` call in this skill, as its own Bash call with nothing chained to it: a session with narrow Bash grants refuses a compound command as a whole when any other part of it is refused. Read `ticket_id` from its JSON: the argument (a leading `#` stripped), or the segment after the branch prefix (`feature/ENG-123-slug` gives `ENG-123`, `bugfix/42-slug` gives `42`), the same parse `/ccmagic:finish-ticket` Step 1 uses. Do not re-parse the branch yourself. If `ticket_id` is null, **exit cleanly** with a one-line message asking the caller to pass one (`/ccmagic:auto-ticket {TICKET-ID}`); this is a setup error, not a parkable ticket, so do not wait for input. The same JSON's `tracker_hint`, `gh_available`, and `config.tracker` feed item 1's cascade (settings and arg/branch shape); the MCP probe, CLI probe, and transport detection stay in item 1.
+-3. **Load config** from the same output's `config` object, which already applies the precedence project `.claude/ccmagic.local.md` over user `~/.claude/ccmagic.local.md` over the built-in defaults (see contract §5). An explicit arg still beats `config`. Do not re-read the config files. Keys: `needs_human_state`, `needs_human_label` (default `needs-human`), `merge_owner` (default `self`), `merge_handoff_state` (default `Awaiting Merge`), `max_feedback_passes` (default `3`), `max_review_fix_passes` (default `3`), `max_validate_attempts` (default `2`), `ci_timeout_minutes` (default `30`), `ci_poll_interval_seconds` (default `60`), plus the usual `tracker` / `ticket_url_base` / `github_repo`, and the per-step model overrides `model_work_ticket`, `model_review_ticket`, `model_pr_feedback`, `model_finish_ticket`, `model_validate`, `model_push`. The model keys have no built-in default in `ccm-context`, so they appear in `config` only when set; when absent, use the registry value.
 +   Call it by this path, not by the bare name `ccm-context`, which is not on `PATH` in every harness; fall back to the bare name only when the path form is not found. Run it, and every other `ccm-*` call in this skill, as its own Bash call with nothing chained to it: a session with narrow Bash grants refuses a compound command as a whole when any other part of it is refused. Read `ticket_id` from its JSON: the argument (a leading `#` stripped), or the segment after the branch prefix (`feature/ENG-123-slug` gives `ENG-123`, `bugfix/42-slug` gives `42`), the same parse `/ccmagic:finish-ticket` Step 1 uses. Do not re-parse the branch yourself. If `ticket_id` is null, **exit cleanly** with a one-line message asking the caller to pass one (`/ccmagic:auto-ticket {TICKET-ID}`); this is a setup error, not a parkable ticket, so do not wait for input. The same JSON's `tracker_hint`, `gh_available`, and `config.tracker` feed item 1's cascade (settings and arg/branch shape); the MCP probe, CLI probe, and transport detection stay in item 1.
- 3. **Load config** from the same output's `config` object, which already applies the precedence project `.claude/ccmagic.local.md` over user `~/.claude/ccmagic.local.md` over the built-in defaults (see contract §5). An explicit arg still beats `config`. Do not re-read the config files. Keys: `needs_human_state`, `needs_human_label` (default `needs-human`), `merge_owner` (default `self`), `merge_handoff_state` (default `Awaiting Merge`), `max_feedback_passes` (default `3`), `max_review_fix_passes` (default `3`), `max_validate_attempts` (default `2`), `ci_timeout_minutes` (default `30`), `ci_poll_interval_seconds` (default `60`), plus the usual `tracker` / `ticket_url_base` / `github_repo`, and the per-step model overrides `model_work_ticket`, `model_review_ticket`, `model_pr_feedback`, `model_finish_ticket`, `model_validate`, `model_push`. The model keys have no built-in default in `ccm-context`, so they appear in `config` only when set; when absent, use the registry value.
++3. **Load config** from the same output's `config` object, which already applies the precedence project `.claude/ccmagic.local.md` over user `~/.claude/ccmagic.local.md` over the built-in defaults (see contract §5). An explicit arg still beats `config`. Do not re-read the config files. Keys: `needs_human_state`, `needs_human_label` (default `needs-human`), `merge_owner` (default `self`), `merge_handoff_state` (default `Awaiting Merge`), `max_feedback_passes` (default `3`), `max_review_fix_passes` (default `3`), `max_validate_attempts` (default `2`), `ci_timeout_minutes` (default `30`), `ci_poll_interval_seconds` (default `60`), `visual_checklist` (default `on`), plus the usual `tracker` / `ticket_url_base` / `github_repo`, and the per-step model overrides `model_work_ticket`, `model_review_ticket`, `model_pr_feedback`, `model_finish_ticket`, `model_validate`, `model_push`. The model keys have no built-in default in `ccm-context`, so they appear in `config` only when set; when absent, use the registry value.
  4. **Fetch the ticket** to confirm it exists (per the tracker's lookup in `work-ticket`/`review-ticket`), and keep its title, description, and acceptance criteria (a separate AC field too, if the tracker has one) exactly as written: the grounding block carries them to every step, and no step fetches the ticket again. If not found, stop (Sacred Rule). Then, on the **mcp** transport, assign the ticket to yourself and move it to In Progress, as `work-ticket` Step 2 describes for each tracker (the step agents no longer do this); if that fails, note it for the summary and continue. Under **prompt-relay** there is no MCP to fetch from, so instead confirm the ticket content (title + description) is present in the invocation arguments / grounding block, **or in a `.ccmagic-ticket.md` handoff file in the working directory**, read here in item 4 after `ccm-context` has run, never as the run's first call. The file is a fork-safe content source for harnesses (like Cyrus) that inject the ticket into a *parent* prompt the forked skill can't see. If you read it from the handoff file, delete it afterward with exactly `rm -f .ccmagic-ticket.md` as its own Bash call from the working directory, without a `cd` or other commands chained to it (the only `rm` this skill is granted, and a chained form doesn't match the grant) so it is never committed. If it's absent from all of these, stop with a setup-error message: this is the Sacred Rule made explicit, since the caller should have injected the content, so a missing body is a setup error, never a guess and never a park.
  5. **Build the grounding block** (contract §2) with the resolved values. Mint `run_id` first — a short unique id for this run (the last 6 digits of `date +%s`; skip `openssl` and other commands this skill doesn't grant); it keys the Step 6 idempotency guard. The block also carries the `transport:` line and, on every transport, the fenced `ticket_content:` section (contract §2), so every per-step agent receives the ticket body without fetching it. Prepend it to every sub-skill invocation below. `/ccmagic:auto-ticket` always drives sub-skills with `autonomous: true`, regardless of the `autonomous:` config default.
+ 
 @@ -155,7 +155,7 @@ Everything this pass pushes is measured against `H`, so bot reviews triggered *b
  **4a. Apply feedback.** Run the pr-feedback step via `run_step` — `/ccmagic:pr-feedback {PR_NUMBER}` with the grounding block. Autonomous `pr-feedback` applies address-now fixes, replies to declined/question threads, records each defer/out-of-scope item as a short description in `follow_ups` (it files no tickets in an orchestrated run; Step 6 does), and pushes. Collect its handshake counts; its `follow_ups` go on the run's list like every step's.
    - `needs-human` (e.g. a genuine reviewer tie) → **route-and-stop** (stage = `pr-feedback`).
@@ -166,7 +168,27 @@
  
  Under prompt-relay there is no create API, so list every item under "to file" for a human. Every item appears in the summary's Follow-ups section; "none" is correct only when the list is empty. A parked run does the same before route-and-stop posts its note.
  
-@@ -312,7 +317,9 @@ There is no stalled outcome. Never hang waiting for input.
+@@ -243,6 +248,10 @@ Under prompt-relay there is no create API, so list every item under "to file" fo
+ - To file (prompt-relay): {item} (from {step})
+ - {or "none" when no step reported a follow-up}
+ 
++### UAT checklist
++- [ ] {visual criterion, verbatim} ({why it is here: no harness | harness invalid: {rule} | harness could not start: {reason} | timed out | changed after the visual check})
++- {or "none"}
++
+ ### If parked
+ **Waiting on:** {the reason}. Nothing was merged. Resolve it, then re-run `/ccmagic:auto-ticket {TICKET-ID}`.
+ 
+@@ -252,6 +261,8 @@ Under prompt-relay there is no create API, so list every item under "to file" fo
+ ```
+ ````
+ 
++**UAT checklist.** In Step 0, after fetching the ticket, list its visual criteria (contract §4): each acceptance criterion that asks for a screenshot or names a visible UI state, copied verbatim. Until a check runs them, each goes on the UAT checklist with the note `no harness`. With `visual_checklist: off`, the section reads "none" and the criteria are dropped. The checklist is part of the summary, so it reaches the PR and the ticket wherever the summary does, the parked note included.
++
+ `steps` lists every sub-skill invocation of this run in order, one entry each, with the handshake `status` it returned; include `reason` whenever the sub-skill emitted one. Repeated review passes are separate entries, and each fix pass is a `work-ticket` entry whose `reason` starts with `fix pass {n} ({fix_source})`. `review_passes` is the total number of review-ticket calls in the run, 4f re-reviews included: the final `review_pass`, or 1 when there was no re-review. `follow_ups` has one entry per item on the run's follow-up list (empty array when there were none): `ticket` is the filed ID or null, and `reason` says why it wasn't filed (null when filed). The block is emitted on every outcome and under every transport. It is the machine-readable record an external gate reads, so its keys are fixed and must not be renamed; `follow_ups` was added in 3.13.0 as an additive key, and readers that don't know it ignore it.
+ 
+ `version: 2` binds the record to what it describes, and Reeve treats a record whose binding doesn't match the PR it located as no record at all (RV-1). A version 2 record carries `repo`, `pr`, and `head_sha` on every outcome, never omitted (the one exception is the version 1 fallback below):
+@@ -312,7 +323,9 @@ There is no stalled outcome. Never hang waiting for input.
  | `work-ticket` → `needs-human` | route-and-stop (stage `work-ticket`). |
  | `review-ticket` → `needs-human`, or `fixable-findings` unresolved after the bounded loop | route-and-stop (stage `review-ticket`). |
  | A fix pass on the work step (Step 3 or 4b) returns `needs-human`, does not report an item it was sent, commits or switches branch, or changes no files | route-and-stop (stage `review-ticket` or `validate`); nothing from that pass is pushed, and the parked comment lists the uncommitted files it left. |
@@ -177,7 +199,7 @@
  | `pr-feedback` → `needs-human` (genuine reviewer tie) | route-and-stop (stage `pr-feedback`). |
  | Local `/ccmagic:validate` can't be made green within the bounded attempts | route-and-stop (reason: validation failures). |
  | CI never settles within `ci_timeout_minutes` (watch loop cap) | route-and-stop (reason: CI timeout). |
-@@ -320,7 +327,7 @@ There is no stalled outcome. Never hang waiting for input.
+@@ -320,7 +333,7 @@ There is no stalled outcome. Never hang waiting for input.
  | Step 4 pushed after the last clean review (4a or 4b) | Re-review the pushed head (4f). A stale review never reaches finish: a clean re-review of another head, an unreadable PR head, or findings with no review fix or feedback passes left → route-and-stop (stage `review-ticket`), before any fix is pushed. |
  | `finish-ticket` merge gate not satisfied | It returns `needs-human` and does not merge → route-and-stop (stage `finish-ticket`). |
  | `requested_state: {merge_handoff_state}` and no state of that exact name exists | route-and-stop (stage `finish-ticket`); nothing was merged on the hand-off path. |
@@ -214,7 +236,24 @@
  
  ```
  failures:
-@@ -234,6 +245,7 @@ A project file overrides the user file, which overrides the built-in default. Th
+@@ -155,6 +166,8 @@ In an orchestrated run (§8) a sub-skill that would have transitioned ticket sta
+ 
+ The single routine the orchestrator (or a standalone top-level sub-skill) runs whenever an outcome is `needs-human`, the feedback-pass cap is hit still-not-clean, or CI/validation can't be made green within bounds. **Never merge in this path.**
+ 
++A visual criterion is never a reason to park. When a run cannot check one (no harness, or a harness that could not start for a reason outside the change), the criterion goes on the run summary's UAT checklist (the orchestrator's Step 6), which is posted on the PR and on the ticket, and the run continues. A run parks over a visual criterion only when the visual check ran and the criterion was still not met after its last round.
++
+ 1. **Do not merge.** Leave the PR open.
+ 2. **Move the ticket to `needs_human_state`:**
+    - **Linear** — `mcp__*Linear*__save_issue` transitioning to the state whose name matches `needs_human_state` (case-insensitive). If no such state exists, apply `needs_human_label` via `save_issue` labels and leave the state unchanged.
+@@ -214,6 +227,7 @@ When the run is on the **prompt-relay transport** (§7), the park routine change
+ | `max_validate_attempts` | int | `2` | Cap on local `/ccmagic:validate` fix attempts (orchestrator Step 4b) before parking. |
+ | `ci_timeout_minutes` | int | `30` | Max minutes to wait for CI to settle (orchestrator Step 4c) before parking on timeout; quantized up to whole 10-minute watch cycles (`CYCLES = ceil(minutes / 10)`). |
+ | `ci_poll_interval_seconds` | int | `60` | Interval passed to `gh pr checks --watch` during the CI wait (orchestrator Step 4c); when the Checks API is unreadable (fine-grained PAT 403), the wait falls back to the Actions/Status APIs (Step 4c item 5) and this interval no longer applies. |
++| `visual_checklist` | `on` \| `off` | `on` | `off` drops visual criteria the run could not check instead of listing them on the UAT checklist. |
+ | `model_work_ticket` | string | `opus` | Model for the work step's agent (`auto-work`). |
+ | `model_review_ticket` | string | `opus` | Model for the review step's agent (`auto-review`). |
+ | `model_pr_feedback` | string | `sonnet` | Model for the pr-feedback step's agent (`auto-feedback`). |
+@@ -234,6 +248,7 @@ A project file overrides the user file, which overrides the built-in default. Th
  
  - **Autonomous is additive.** Interactive behavior is never changed; every autonomous default is gated behind the signal above.
  - **Every decision is recorded** in the PR body/comments and/or a ticket comment, so an unattended run leaves an audit trail.
@@ -222,7 +261,7 @@
  - **Never finish on a stale review.** The last clean review's `head:` must be the PR head when `finish-ticket` runs. A late push (Step 4a or 4b) gets a re-review (orchestrator Step 4f) within the existing loop limits, and a run that can't re-review the pushed head parks.
  - **Every exit is `merged`, `handed-off` (only with `merge_owner: reeve`), or `parked-needs-human` (with a reason).** Never `stalled`, never a silent hang, never a merge on a guess.
  
-@@ -295,7 +307,7 @@ In an **orchestrated** run (the grounding block carries `orchestrator: auto-tick
+@@ -295,7 +310,7 @@ In an **orchestrated** run (the grounding block carries `orchestrator: auto-tick
  | `set_state(In Review \| Done \| merge_handoff_state)` | Report it in the handshake's `requested_state:`. | Applies it after the step returns (mcp), or relays it as `Requested state:` (prompt-relay). |
  | `comment(ticket, body)` | Skip. Put anything the ticket should carry (for example finish-ticket's closing or hand-off comment) in the step's final report. | Posts its run summary to the ticket in Step 6 (mcp). |
  | `link_pr(url)` | Skip; the PR URL is in the handshake's `reason` (work-ticket). | Links the PR to the ticket after the work step (mcp). |
@@ -361,6 +400,14 @@
  2. If `config.tracker` is `auto` or unset, run the detection cascade:
     - **Ticket shape:** `tracker_hint` from `ccm-context`: `github` for an integer ID, `linear` or `jira` when a key-shaped ID meets a `ticket_url_base` pointing at that tracker, `linear-or-jira` otherwise.
     - **MCP probe:** Linear MCP — a server available to the session (case-insensitive `mcp__*[Ll]inear*__get_issue`, incl. Cyrus's `mcp__linear__` and a still-connecting server; see contract §7); Atlassian/JIRA MCP (`mcp__*atlassian*__*` or `mcp__*Atlassian*__*`).
+@@ -234,6 +234,7 @@ Absent all three, run the interactive path exactly as documented above. Also rea
+ - **Step 7 (Drift handling):** apply rules instead of asking:
+   - **Out-of-scope changes** stay, but flag each one — leave the out-of-scope table populated and post a PR comment listing them — unless this pass's report is being posted as a PR comment (the *Report posting* rule below): a full report carries the out-of-scope table itself, and a delta report carries net-new out-of-scope items plus the reference to the prior report's table; either way, don't post both. Do not revert.
+   - **Missing AC** → treat as *not-done*: `fixable-findings` if the caller can close it in-scope; `needs-human` if it can't.
++  - A visual criterion (one that asks for a screenshot or names a visible UI state) is not missing AC when the code implements what it describes; auto-ticket's visual check or UAT checklist covers the looking. Report it as missing only when the code does not implement it.
+   - **CRITICAL findings** from `/ccmagic:review` must be fixed before proceeding → return them under `fixable-findings` (the caller fixes and re-reviews). A CRITICAL finding that needs human judgment → `needs-human`.
+ - **Report posting:** if a PR exists for the branch, post the Step 6 combined report (or the delta report on re-review passes) as a PR comment. Every posted report, full or delta, begins with the `# Ticket-Grounded Review: {TICKET-ID}` heading line with no preamble before it, and in autonomous mode ends with the handshake shown under *Verdict → handshake mapping*: the same keys in the same order, the actual verdict filled into `status:`, inside a code fence, as the last thing in the comment body (an external merge gate selects the comment by that heading and reads the handshake block that ends it; a fenced block is the rendering it reads without ambiguity); with no PR (e.g. a standalone pre-PR review), skip — the report in your output is the artifact.
+ 
 ### skills/review/SKILL.md
 @@ -290,7 +290,7 @@ After the review completes, record the counts as in Step 7d.
  
@@ -506,4 +553,13 @@
 +reason: <one line: "validation passed" or "no checks configured" on done; "failed: <check names>" or "environment: <install.reason>" on needs-human>
  follow_ups: []
  ```
+ 
+### skills/work-ticket/SKILL.md
+@@ -331,6 +331,7 @@ Also read these keys from `.claude/ccmagic.local.md`: `needs_human_state:`, `nee
+   - If only minor/cosmetic unknowns remain, pick the reasonable option and note the choice in the PR body.
+   - Record the implementation/architecture plan as a **PR comment** after the PR is created (Step 7) instead of pausing for confirmation.
+ - **Step 6 (Validate scope):** a missing acceptance criterion means **not done** — keep working to close it. Never take the interactive "commit with gaps noted" option and never treat a partial as shippable. If a gap genuinely cannot be closed within the ticket's scope, stop with `needs-human` (the `reason` lists the unmet AC).
++  A visual criterion (one that asks for a screenshot or names a visible UI state: a page, a layout, a mode or element shown on screen) is not a gap this step can close by looking: implement what it describes, and leave the looking to auto-ticket's visual check or its UAT checklist. A visual criterion is never a `needs-human` reason by itself.
+ - **Step 7 (PR confirmation):** create the PR without pausing.
+ - **Sub-skills:** when invoking `/ccmagic:review`, `/ccmagic:review-ticket`, `/ccmagic:debug`, or `/ccmagic:push`, prepend the same autonomous grounding block so they don't pause either. Address CRITICAL review findings before proceeding; if a CRITICAL finding can't be resolved in-scope → `needs-human`.
  
