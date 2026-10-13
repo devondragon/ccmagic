@@ -527,6 +527,7 @@ guard_normal_push_allowed_autonomously() {
   check "$(denied)" "allow"
 }
 
+# shellcheck disable=SC2016 # the literal command text
 guard_autonomous_review_stats_need_local() {
   hook '"${CLAUDE_PLUGIN_ROOT}/bin/ccm-review-route" --record testing=3,performance=0' ccmagic:auto-review
   check "$(denied)" "deny"
