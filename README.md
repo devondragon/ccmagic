@@ -38,7 +38,7 @@ claude --plugin-dir .claude/plugins/ccmagic
 
 ## What ships in v3
 
-25 skills organized by purpose:
+26 skills organized by purpose:
 
 ### Tracker workflow
 
@@ -83,6 +83,7 @@ All four auto-detect the tracker (Linear MCP → GitHub CLI → Atlassian/JIRA M
 |---|---|
 | `/ccmagic:map-codebase` | Brownfield onboarding — three parallel agents produce STACK / ARCHITECTURE / CONVENTIONS knowledge files |
 | `/ccmagic:spec-baseline [--capability <name>] [--check]` | OpenSpec baseline of current behavior: proposes a capability map (you confirm it), extracts behavior with read-only agents, writes `openspec/specs/<capability>/spec.md` and the evidence file `docs/openspec-baseline.md`, checks both, and opens a PR after your review; `--check` reports citations gone stale since the baseline. Writes only under `openspec/` and the evidence file |
+| `/ccmagic:propose <idea \| TICKET-ID \| document>` | Break an idea, a ticket, or a document such as a BRD into shippable increments. Reads the repository (on an OpenSpec repo, the current specs and the active changes), asks only what the code cannot answer, one question at a time, and stops for you to approve the split. With OpenSpec, writes each change folder under `openspec/changes/`, runs `openspec validate --strict`, `ccm-propose-check`, and, when the Reeve CLI is available, `reeve openspec render --grade`, then opens one PR per change after a second stop; it never merges. Without OpenSpec, drafts tickets in the form Reeve's intake grades well and, after you confirm, creates them in Linear's Backlog with blocking relations. For a document, records which of its requirements each change or ticket covers and lists the ones nothing covers |
 
 ### Design & visual QA (require Chrome DevTools MCP)
 
@@ -285,6 +286,7 @@ Rules that have one right answer are enforced in code, not left to the skill tex
 | `ccm-openspec-version` | Is the installed OpenSpec CLI one the format rules were checked on: prints `{version, tested, status}` with status `ok`, `newer` (a later 1.x, usable with a warning), `too-old`, `unsupported`, or `missing`, and exits 0 only for `ok` and `newer`. The tested version lives in this script alone. |
 | `ccm-finish-guard` | May an `/auto-ticket` run reach `finish-ticket`: reads the run's step history (the finish grounding block's `steps:` section) on stdin and passes only when the latest validate is `done`, the latest review `clean`, and no work-ticket or pr-feedback step ran after that validate; a missing or malformed history fails |
 | `ccm-baseline-check` | Does an OpenSpec baseline hold up: every spec requirement and scenario has its line in `docs/openspec-baseline.md`, every `path:line` citation resolves, every cited test exists, names are unique and free of characters Reeve rewrites, no em or en dash, and nothing outside `openspec/` and the evidence file changed since the merge base with the default branch; `--stale` adds each citation whose lines a commit after the baseline commit touched. Used by `/ccmagic:spec-baseline` |
+| `ccm-propose-check` | Do the change folders a `/ccmagic:propose` run wrote meet Reeve's planner and strict OpenSpec: only the new folders changed, each name is kebab-case, free of Reeve's refused words, and new (no active change or archive folder of that name), `proposal.md`, `tasks.md`, and `.openspec.yaml` exist with only known keys, `tasks.md` parses as Reeve parses it with every box empty and at most three sections, a delta for a capability with no spec has `## Purpose`, every MODIFIED, REMOVED, and RENAMED FROM name is in the current spec, and no em or en dash or written email address; `--probe-reeve` says whether the Reeve CLI and its config are there for render and `--grade`, without printing a secret |
 | `ccm-pr-reply` | Reply to a review thread with a disposition (`fixed --commit`, `declined`, `answered`, `deferred --ticket`); appends the marker, refuses an unpushed fix commit, and resolves the thread for `fixed` |
 
 **Hooks** (`hooks/hooks.json`):
