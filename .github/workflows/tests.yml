@@ -21,5 +21,8 @@ jobs:
         run: npm install -g @fission-ai/openspec@1.14.1 && openspec --version
       - name: shellcheck
         run: shellcheck -x bin/ccm-* hooks/*.sh tests/run.sh tests/relay-smoke.sh tests/stubs/gh evals/run.sh
+      - name: docker
+        # The ccm-harness tests skip without Docker; CI must never skip them.
+        run: docker compose version && docker info --format '{{.ServerVersion}}'
       - name: tests
         run: bash tests/run.sh

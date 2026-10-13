@@ -206,6 +206,7 @@ max_feedback_passes: 3         # cap on the pr-feedback loop before parking
 # max_validate_attempts: 2     # local /ccmagic:validate fix attempts
 # ci_timeout_minutes: 30       # how long to wait for CI before parking on timeout
 # ci_poll_interval_seconds: 60 # interval for the gh pr checks --watch CI wait
+# visual_checklist: on        # off drops unchecked visual criteria instead of listing them
 ```
 
 **Config precedence:** each key resolves highest-first — an explicit arg / grounding-block value → the project file `.claude/ccmagic.local.md` → the user file `~/.claude/ccmagic.local.md` → the built-in skill default. Put personal defaults (e.g. a longer `ci_timeout_minutes`) in the user file once and override them per-repo in the project file.
@@ -218,11 +219,15 @@ By default `auto-ticket` runs each lifecycle step in its own **forked subagent**
 
 | Step | Default model |
 |---|---|
-| work-ticket (and its review-fix and validate-fix passes) / review-ticket | `opus` |
+| work-ticket (and its visual-fix, review-fix, and validate-fix passes) / review-ticket / visual | `opus` |
 | pr-feedback / finish-ticket / validate | `sonnet` |
 | push | `haiku` |
 
 Each step always runs in its own subagent — override any step's model with `model_<step>` (e.g. `model_pr_feedback: opus`) (the agent file `agents/auto-<step>.md` is the authoritative model source).
+
+### Visual checks with a UI harness
+
+When a ticket's acceptance criteria ask for a screenshot or name a visible UI state, `auto-ticket` checks them against the running app if the repository has a UI harness, `.ccmagic/harness.compose.yml` (see [docs/harness.md](docs/harness.md)). After the PR opens, Step 2b runs the `auto-visual` step: `bin/ccm-harness` brings the app up for the ticket in Docker, seeds it, and takes one screenshot per criterion in a runner container, the step judges each screenshot, and unmet criteria go to a fix pass on the work step, up to three rounds before the run parks. The run summary's Visual check section lists each judgment; under the harness file's `evidence` setting (by default, on a private repository only) the screenshots are pushed to a `ccmagic-evidence/<ticket>` branch and linked from it. Without a harness, or when it cannot start, the criteria go on the summary's UAT checklist and the run continues.
 
 ### Headless runners (Cyrus)
 

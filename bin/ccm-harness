@@ -1,0 +1,741 @@
+#!/usr/bin/env bash
+# ccm-harness: bring up a repository's UI harness for one ticket in Docker,
+# run commands in it, and copy screenshots out, printing JSON. It judges
+# nothing.
+#
+# Usage: ccm-harness check [TICKET]
+#        ccm-harness up TICKET [--prepare | --attach RUN | --wait [SECONDS]]
+#        ccm-harness down TICKET
+#        ccm-harness seed TICKET
+#        ccm-harness shoot TICKET SCRIPT
+#        ccm-harness evidence TICKET HEAD_SHA PNG...
+#        ccm-harness sweep [HOURS]
+#
+# The harness is .ccmagic/harness.compose.yml, a Compose file whose top-level
+# x-ccm-harness key declares how ccmagic uses it (docs/harness.md). The file
+# is committed, and every value in it is literal.
+#
+# Docker and Compose always run with an emptied environment: only PATH, HOME,
+# DOCKER_HOST, DOCKER_CONFIG, and TMPDIR pass through, and Compose reads no
+# .env file. A session's GH_TOKEN, CLAUDE_CODE_OAUTH_TOKEN, and tracker
+# secrets therefore cannot reach a container by interpolation or by a bare
+# `environment: [KEY]`. These rules catch mistakes; they are not a security
+# boundary, since a session can drive the Docker API directly.
+#
+# check: validates the file and prints {status: ok, file, project, declaration}
+# (exit 0), {status: absent, file} (exit 2), or {status: invalid, rule,
+# detail} (exit 1). project is ccm-<TICKET lowercased> when TICKET is given.
+#
+# up: first sweeps stacks older than 6 hours and removes this ticket's earlier
+# stack, so a rerun never reuses old volumes. Then it builds and starts the
+# stack, starts the runner container on the stack's network, and waits for
+# the app's health URL as the runner sees it. Prints {status: up, project,
+# runner, app_url, published_url, duration_s} (exit 0), or {status:
+# build-failed, tail}, {status: runner-failed, tail} (the stack built but the
+# runner container did not start), {status: unhealthy, timeout_seconds,
+# logs}, or the check's invalid or absent object (exit 1 or 2). On
+# build-failed, runner-failed, and unhealthy, up captures the tail or logs and
+# then takes the stack down (as down does), so a failed up leaves nothing
+# running. An attached up does so only while up.json still names its run with
+# no result: a run --wait declared dead may have been replaced by a newer run
+# whose stack has the same names. published_url is null
+# unless CCM_HARNESS_PUBLISH=1, which publishes the app on 127.0.0.1 only.
+# health_timeout_seconds (default 600) measures app health only: its clock
+# starts when the runner is up, after the build. Each probe times out after 5
+# seconds.
+# The up log is <state dir>/harness/<project>/up.log.
+#
+# seed: needs the stack up. Runs, in order, the SQL file (seed.sql, piped to
+# psql in its service), a copy of the workdir's regular files into the runner's
+# /work, runner.setup, and seed.command, both in /work. Prints {status:
+# seeded, steps}, {status: seed-failed, step, exit_code, tail} (exit 1), or
+# {status: not-up} (exit 1). The log is <state dir>/harness/<project>/seed.log.
+#
+# shoot: runs a Playwright script in the runner from /work/.ccm-shoot/ (so
+# @playwright/test resolves from /work/node_modules) with APP_BASE_URL and
+# OUT_DIR=/out set, then copies /out to a local directory under
+# ${TMPDIR:-/tmp}/ccm-harness/<project>/. Prints {status: shot, dir, files}
+# for the .png files, or {status: shoot-failed, exit_code, tail} or {status:
+# no-screenshots, dir} (exit 1).
+#
+# evidence: publishes screenshots for a PR as one parentless commit, force-pushed
+# to refs/heads/ccmagic-evidence/<TICKET> (a ref ccmagic owns, never a PR
+# branch), so the ref holds only the latest round. The commit's tree is
+# <HEAD_SHA>/<file name> per PNG. It is built with git plumbing (hash-object,
+# a throwaway index, write-tree, commit-tree), so it never switches branch,
+# touches the index or working tree, or needs a second worktree. Prints
+# {status: pushed, ref, commit, urls: [{file, url}]} (exit 0), {status:
+# skipped, reason} (exit 0; evidence: off, or evidence: auto on a repository
+# that is not private or internal), or {status: failed, error} (exit 1).
+#
+# Long runs (--prepare, --attach, --wait): a build and health wait can outlast
+# one tool call, and the Cyrus sandbox ends every process a Bash call started
+# when the call returns, so the run must be owned by a harness-managed
+# background call (ccm-validate --start --attached works the same way).
+# `up TICKET --prepare` is a call of its own: it writes up.json, replacing any
+# earlier result, and prints {status: prepared, run}. `up TICKET --attach RUN`,
+# started as a background task, runs the up in its foreground, prints its
+# result when finished, and exits with its code; it refuses (exit 4, {status:
+# refused, run, reason}) unless RUN is the prepared run, not yet claimed or
+# finished. `up TICKET --wait [SECONDS]` (default 480, at most 570) prints the
+# final result with its exit code, {status: running, run} (exit 6) when the
+# time is up, or {status: dead, run, reason} (exit 1) when the attached run
+# stopped sending heartbeats or the prepared run was never attached.
+# A live run is never replaced: while up.json names a run with no result that
+# is attached with a fresh heartbeat, or prepared and not yet past the grace,
+# --prepare prints {status: running, run} (exit 6) and changes nothing. The
+# do_up runs as a child of the attach, writing its result to up.result.<run>
+# in the state directory; the heartbeat loop follows that child, not the
+# attach, and ends when the child is gone or up.json no longer names its run.
+# If the attach is SIGKILLed, do_up and the heartbeat carry on, so the run
+# stays live (--prepare refuses, and no second up touches the project) until
+# the stack work ends, then goes dead after the stale window. When --wait declares a run dead it records that as the run's
+# result (exit_code 1, abandoned: true), so a late --attach of it is refused
+# and a later --prepare may replace it.
+# State: <state dir>/harness/<project>/up.json {run, prepared_at, claimed_at,
+# heartbeat_at, final, exit_code}, written under the lock directory up.json's
+# neighbor `lock`. CCM_HARNESS_STALE_SECONDS (tests only, default 90) is the
+# heartbeat staleness; the heartbeat interval is a third of it, at most 10 s.
+#
+# down: removes the ticket's runner and stack. Prints {status: down, project}.
+#
+# sweep [HOURS]: removes every ccm-* stack whose newest container is at least
+# HOURS old (default 6). Prints {status: swept, removed: [project, ...]}.
+#
+# Exit codes: 0 ok, 1 failed or invalid (or a dead run), 2 no harness, 3 not a
+# git repository, 4 usage error or refused attach, 6 still running.
+set -uo pipefail
+
+here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck source=bin/ccm-lib.sh
+. "$here/ccm-lib.sh"
+
+HARNESS_REL=.ccmagic/harness.compose.yml
+
+usage() {
+  echo "usage: ccm-harness check [TICKET] | up TICKET [--prepare | --attach RUN | --wait [SECONDS]] | down TICKET | seed TICKET | shoot TICKET SCRIPT | evidence TICKET HEAD_SHA PNG... | sweep [HOURS]" >&2
+  exit 4
+}
+
+ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || {
+  jq -n '{status: "error", error: "not a git repository"}'
+  exit 3
+}
+HARNESS=$ROOT/$HARNESS_REL
+TMPERR=$(mktemp "${TMPDIR:-/tmp}/ccm-harness.XXXXXX")
+trap 'rm -f "$TMPERR"' EXIT
+PROJECT=
+OVERRIDE=
+
+# ccm-<ticket>, lowercased, every character Compose refuses replaced by '-'.
+project_for() {
+  printf 'ccm-%s' "$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9_-' '-')"
+}
+
+clean_env() {
+  local v args=()
+  for v in PATH HOME DOCKER_HOST DOCKER_CONFIG TMPDIR; do
+    [ -n "${!v:-}" ] && args+=("$v=${!v}")
+  done
+  env -i ${args[@]+"${args[@]}"} "$@"
+}
+
+dk() { clean_env docker "$@"; }
+
+dc() {
+  local files=(-f "$HARNESS")
+  [ -n "$OVERRIDE" ] && files+=(-f "$OVERRIDE")
+  clean_env docker compose --env-file /dev/null "${files[@]}" -p "${PROJECT:-ccm-check}" "$@"
+}
+
+invalid() {
+  jq -n --arg r "$1" --arg d "$2" '{status: "invalid", rule: $r, detail: $d}'
+  exit 1
+}
+
+cmd_check() {
+  local ticket=${1:-} line raw cfg broken decl workdir image lock locked tag
+  [ -f "$HARNESS" ] || {
+    jq -n --arg f "$HARNESS_REL" '{status: "absent", file: $f}'
+    exit 2
+  }
+  # Read the merged model before Compose interpolates it, so included and
+  # extended files are covered, YAML escapes are decoded, and comments are
+  # gone. $$ is Compose's escape for a literal $ and stays $$ here.
+  # --no-env-resolution is not used: Compose 2.30 and 2.33 have no such flag,
+  # and 2.38 still folds env_file into environment with it; --no-interpolate alone
+  # keeps env_file as written on 2.30 through 5.x and reads no env file.
+  raw=$(dc config --no-interpolate --format json 2>"$TMPERR") ||
+    invalid compose "docker compose config failed: $(head -1 "$TMPERR")"
+  line=$(jq -r '
+    [ paths(type == "string") as $p | select((getpath($p) | gsub("\\$\\$"; "") | test("\\$(\\{|[A-Za-z_])")))
+      | ($p | map(tostring) | join(".")) ] | .[0] // empty' <<<"$raw") ||
+    invalid compose "could not read the Compose model"
+  [ -z "$line" ] || invalid interpolation "$line interpolates a variable; write every value literally"
+  # env_file is judged on the uninterpolated model, the one source that carries
+  # it on every Compose version, and before the pass below, which reads the
+  # env file and fails on a missing one.
+  line=$(jq -r '[ .services // {} | to_entries[] | select(.value.env_file) | .key ] | .[0] // empty' <<<"$raw") ||
+    invalid compose "could not read the Compose model"
+  [ -z "$line" ] || invalid env-file "service $line names an env_file; write values in environment instead"
+  cfg=$(dc config --format json 2>"$TMPERR") ||
+    invalid compose "docker compose config failed: $(head -1 "$TMPERR")"
+  broken=$(jq -r --arg nb "${CCM_HARNESS_NO_BIND_MOUNTS:-}" '
+    def svc: .services | to_entries[];
+    [ (svc | . as $s | (.value.environment // {}) | to_entries[] | select(.value == null)
+        | "environment-passthrough\tservice \($s.key) takes \(.key) from the caller'"'"'s environment; give it a literal value"),
+      (svc | . as $s | ("privileged", "cap_add", "devices", "restart") as $k
+        | select(($s.value[$k] // false) != false and ($s.value[$k] // []) != [])
+        | "forbidden-key\tservice \($s.key) sets \($k)"),
+      (svc | select(.value.network_mode == "host") | "forbidden-key\tservice \(.key) sets network_mode: host"),
+      (svc | select(.value.pid == "host") | "forbidden-key\tservice \(.key) sets pid: host"),
+      (svc | select((.value.ports // []) | length > 0)
+        | "published-port\tservice \(.key) publishes a port; the runner reaches services on the stack network"),
+      (svc | . as $s | (.value.volumes // [])[] | select($nb == "1" and .type == "bind")
+        | "bind-mount\tservice \($s.key) bind-mounts \(.source); the daemon cannot see this checkout, so build the files into the image"),
+      (if (.["x-ccm-harness"] | type) != "object" then "declaration\tthe file has no top-level x-ccm-harness mapping" else empty end)
+    ] | .[0] // empty' <<<"$cfg") ||
+    invalid compose "could not evaluate the Compose model"
+  [ -z "$broken" ] || invalid "${broken%%$'\t'*}" "${broken#*$'\t'}"
+  decl=$(jq -c '.["x-ccm-harness"]' <<<"$cfg")
+  broken=$(jq -r --argjson svcs "$(jq -c '.services | keys' <<<"$cfg")" '
+    if (.app | type) != "object" then "app must be a mapping"
+    elif (.runner | type) != "object" then "runner must be a mapping"
+    elif .seed != null and (.seed | type) != "object" then "seed must be a mapping"
+    elif .env != null and (.env | type) != "object" then "env must be a mapping"
+    else
+    [ (if .version != 1 then "version must be 1" else empty end),
+      (if (.app.service | type) != "string" or ([.app.service] | inside($svcs) | not) then "app.service must name a service in the file" else empty end),
+      (if (.app.port | type) != "number" then "app.port must be a number" else empty end),
+      (if (.app.health | type) != "string" or (.app.health | startswith("/") | not) then "app.health must be a path starting with /" else empty end),
+      (if (.runner.image | type) != "string" then "runner.image is required" else empty end),
+      (if (.runner.workdir | type) != "string" then "runner.workdir is required" else empty end),
+      (if .evidence != null and ([.evidence] | inside(["auto", "push", "off"]) | not) then "evidence must be auto, push, or off" else empty end)
+    ] | .[0] // empty
+    end' <<<"$decl") ||
+    invalid declaration "x-ccm-harness could not be read"
+  [ -z "$broken" ] || invalid declaration "x-ccm-harness: $broken"
+  workdir=$(jq -r '.runner.workdir' <<<"$decl")
+  image=$(jq -r '.runner.image' <<<"$decl")
+  if [ -f "$ROOT/$workdir/package.json" ] &&
+    jq -e '((.dependencies // {}) + (.devDependencies // {}))["@playwright/test"]' "$ROOT/$workdir/package.json" >/dev/null; then
+    lock=$workdir/package-lock.json
+    git -C "$ROOT" ls-files --error-unmatch "$lock" >/dev/null 2>&1 ||
+      invalid playwright-lockfile "$workdir/package.json uses @playwright/test, and $lock is not committed; the runner image must match the locked version"
+    locked=$(jq -r '.packages["node_modules/@playwright/test"].version // empty' "$ROOT/$lock")
+    tag=$(sed -nE 's#^mcr\.microsoft\.com/playwright:v([0-9]+\.[0-9]+\.[0-9]+).*#\1#p' <<<"$image")
+    if [ -z "$locked" ] || [ "$tag" != "$locked" ]; then
+      invalid playwright-version "runner image $image does not match @playwright/test ${locked:-(not in the lockfile)} in $lock; its browsers work only with their own version"
+    fi
+  fi
+  jq -n --arg f "$HARNESS_REL" --arg p "${ticket:+$(project_for "$ticket")}" --argjson d "$decl" \
+    '{status: "ok", file: $f, project: (if $p == "" then null else $p end), declaration: $d}'
+}
+
+# Set DECL and its fields from a passing check, or print the check's result
+# and exit with its code.
+load_decl() {
+  local out rc
+  out=$(cmd_check) && rc=0 || rc=$?
+  if [ "$rc" -ne 0 ]; then
+    printf '%s\n' "$out"
+    exit "$rc"
+  fi
+  DECL=$(jq -c '.declaration' <<<"$out")
+  SERVICE=$(jq -r '.app.service' <<<"$DECL")
+  PORT=$(jq -r '.app.port' <<<"$DECL")
+  HEALTH=$(jq -r '.app.health' <<<"$DECL")
+  TIMEOUT=$(jq -r '.app.health_timeout_seconds // 600' <<<"$DECL")
+  IMAGE=$(jq -r '.runner.image' <<<"$DECL")
+  WORKDIR=$(jq -r '.runner.workdir' <<<"$DECL")
+}
+
+state_dir() {
+  STATE=$(ccm_state_dir)/harness/$PROJECT
+  mkdir -p "$STATE"
+}
+
+# Remove everything labeled with project P: containers (the runner carries
+# ccm.project), networks, volumes, and images. Needs no compose file.
+remove_project() {
+  local p=$1 f ids
+  for f in "label=ccm.project=$p" "label=com.docker.compose.project=$p"; do
+    ids=$(dk ps -aq --filter "$f")
+    # shellcheck disable=SC2086
+    [ -z "$ids" ] || dk rm -f $ids >/dev/null 2>&1
+  done
+  ids=$(dk network ls -q --filter "label=com.docker.compose.project=$p")
+  # shellcheck disable=SC2086
+  [ -z "$ids" ] || dk network rm $ids >/dev/null 2>&1
+  ids=$(dk volume ls -q --filter "label=com.docker.compose.project=$p")
+  # shellcheck disable=SC2086
+  [ -z "$ids" ] || dk volume rm -f $ids >/dev/null 2>&1
+  ids=$(dk image ls -q --filter "label=com.docker.compose.project=$p")
+  # shellcheck disable=SC2086
+  [ -z "$ids" ] || dk image rm -f $ids >/dev/null 2>&1
+  return 0
+}
+
+cmd_down_quiet() {
+  dk rm -f "$RUNNER" >/dev/null 2>&1
+  # compose down needs a usable file; remove_project below needs none.
+  if [ -f "$HARNESS" ] && (cmd_check >/dev/null 2>&1); then
+    dc down -v --rmi local --remove-orphans >/dev/null 2>&1
+  fi
+  remove_project "$PROJECT"
+}
+
+cmd_down() {
+  cmd_down_quiet
+  jq -n --arg p "$PROJECT" '{status: "down", project: $p}'
+}
+
+# Each ccm-* project with the creation time of its newest container.
+projects_with_age() {
+  local ids
+  ids=$({ dk ps -aq --filter label=ccm.project; dk ps -aq --filter label=com.docker.compose.project; } | sort -u)
+  [ -n "$ids" ] || return 0
+  # shellcheck disable=SC2086
+  dk inspect $ids | jq -r '.[]
+    | [(.Config.Labels["ccm.project"] // .Config.Labels["com.docker.compose.project"]),
+       (.Created | sub("\\.[0-9]+"; "") | fromdateiso8601)] | @tsv' |
+    sort -t "$(printf '\t')" -k1,1 -k2,2nr | awk -F '\t' '!seen[$1]++'
+}
+
+cmd_sweep() {
+  local hours=${1:-6} cutoff p created removed=()
+  case $hours in '' | *[!0-9]*) usage ;; esac
+  cutoff=$(($(date +%s) - hours * 3600))
+  while IFS="$(printf '\t')" read -r p created; do
+    case $p in ccm-*) ;; *) continue ;; esac
+    [ "$created" -le "$cutoff" ] || continue
+    remove_project "$p"
+    removed+=("$p")
+  done < <(projects_with_age)
+  jq -n '{status: "swept", removed: $ARGS.positional}' --args ${removed[@]+"${removed[@]}"}
+}
+
+runner_get() {
+  dk exec "$RUNNER" node -e \
+    'fetch(process.argv[1], { signal: AbortSignal.timeout(5000) }).then(r => process.exit(r.status === 200 ? 0 : 1), () => process.exit(1))' "$1" \
+    >/dev/null 2>&1
+}
+
+start_runner() {
+  local cid net kv env=()
+  cid=$(dc ps -q "$SERVICE" 2>/dev/null | head -1)
+  [ -n "$cid" ] || return 1
+  net=$(dk inspect "$cid" | jq -r '.[0].NetworkSettings.Networks | keys[0]')
+  while IFS= read -r kv; do
+    [ -n "$kv" ] && env+=(-e "$kv")
+  done < <(jq -r '.env // {} | to_entries[] | "\(.key)=\(.value)"' <<<"$DECL")
+  dk run -d --name "$RUNNER" --label "ccm.project=$PROJECT" --network "$net" -w /work \
+    -e "APP_BASE_URL=$APP_URL" -e OUT_DIR=/out ${env[@]+"${env[@]}"} \
+    --entrypoint sleep "$IMAGE" infinity >/dev/null
+}
+
+# After a failed up, take the stack down. Under --attach (UP_RUN set) only
+# while up.json, read under the lock, still names that run with no result: a
+# run --wait declared dead may have been replaced, and the newer run's stack
+# has the same names. A foreground up always cleans up.
+UP_RUN=
+fail_down() {
+  local owned
+  if [ -n "$UP_RUN" ]; then
+    lock
+    owned=$(jq -r --arg r "$UP_RUN" 'select(.run == $r and .final == null) | "yes"' "$STATE/up.json" 2>/dev/null || true)
+    unlock
+    [ "$owned" = yes ] || return 0
+  fi
+  cmd_down_quiet
+}
+
+# Bring the stack up from nothing and wait for the app's health URL, as seen
+# from the runner on the stack's network. Prints the result JSON.
+do_up() {
+  local started hstart log published=
+  started=$(date +%s)
+  log=$STATE/up.log
+  : >"$log"
+  cmd_sweep 6 >/dev/null
+  cmd_down_quiet
+  if [ "${CCM_HARNESS_PUBLISH:-}" = 1 ]; then
+    OVERRIDE=$STATE/publish.yml
+    printf 'services:\n  %s:\n    ports: ["127.0.0.1::%s"]\n' "$SERVICE" "$PORT" >"$OVERRIDE"
+  fi
+  if ! dc up -d --build >>"$log" 2>&1; then
+    jq -n --arg t "$(tail -40 "$log")" '{status: "build-failed", tail: $t}'
+    fail_down
+    return 1
+  fi
+  if ! start_runner >>"$log" 2>&1; then
+    jq -n --arg t "$(tail -40 "$log")" '{status: "runner-failed", tail: $t}'
+    fail_down
+    return 1
+  fi
+  hstart=$(date +%s)
+  until runner_get "http://$SERVICE:$PORT$HEALTH"; do
+    if [ $(($(date +%s) - hstart)) -ge "$TIMEOUT" ]; then
+      dc logs --no-color --tail 200 >>"$log" 2>&1
+      jq -n --arg t "$(tail -200 "$log")" --argjson s "$TIMEOUT" '{status: "unhealthy", timeout_seconds: $s, logs: $t}'
+      fail_down
+      return 1
+    fi
+    sleep 5
+  done
+  [ -n "$OVERRIDE" ] && published="http://$(dc port "$SERVICE" "$PORT" | head -1)"
+  jq -n --arg p "$PROJECT" --arg r "$RUNNER" --arg u "$APP_URL" --arg pub "$published" \
+    --argjson d $(($(date +%s) - started)) \
+    '{status: "up", project: $p, runner: $r, app_url: $u, published_url: (if $pub == "" then null else $pub end), duration_s: $d}'
+}
+
+# PROJECT, RUNNER, and STATE for a ticket, without reading the harness file.
+ticket_names() {
+  [ -n "${1:-}" ] || usage
+  PROJECT=$(project_for "$1")
+  RUNNER=$PROJECT-runner
+  state_dir
+}
+
+lock() {
+  local i=0
+  until mkdir "$STATE/lock" 2>/dev/null; do
+    i=$((i + 1))
+    # A writer killed while holding the lock leaves it behind; after 5 s it is stale.
+    [ "$i" -lt 50 ] || { rmdir "$STATE/lock" 2>/dev/null; i=0; }
+    sleep 0.1
+  done
+}
+unlock() { rmdir "$STATE/lock" 2>/dev/null || true; }
+
+# upj_update JQ_ARGS... FILTER: rewrite up.json under the lock.
+upj_update() {
+  lock
+  jq "$@" "$STATE/up.json" >|"$STATE/up.json.tmp" && command mv -f "$STATE/up.json.tmp" "$STATE/up.json"
+  unlock
+}
+
+stale_seconds() { printf '%s' "${CCM_HARNESS_STALE_SECONDS:-90}"; }
+
+cmd_up_prepare() {
+  local run live stale
+  run=$(date +%s)-$$
+  stale=$(stale_seconds)
+  lock
+  # A live run is never replaced: a second up on the project would tear down
+  # the stack the first is building.
+  live=$(jq -r --argjson now "$(date +%s)" --argjson st "$stale" '
+    select(.final == null and
+      (if .heartbeat_at != null then $now - .heartbeat_at <= $st
+       else $now - .prepared_at <= ($st * 2 / 3 | floor) end)) | .run' "$STATE/up.json" 2>/dev/null || true)
+  if [ -n "$live" ]; then
+    unlock
+    jq -n --arg r "$live" '{status: "running", run: $r}'
+    exit 6
+  fi
+  jq -n --arg r "$run" --argjson t "$(date +%s)" \
+    '{run: $r, prepared_at: $t, claimed_at: null, heartbeat_at: null, final: null, exit_code: null}' >|"$STATE/up.json"
+  unlock
+  jq -n --arg r "$run" '{status: "prepared", run: $r}'
+}
+
+cmd_up_attach() {
+  local run=$1 ok out rc hb interval up_pid res
+  lock
+  ok=$(jq -r --arg r "$run" 'select(.run == $r and .final == null and .claimed_at == null) | "yes"' "$STATE/up.json" 2>/dev/null || true)
+  if [ "$ok" = yes ]; then
+    jq --argjson t "$(date +%s)" '.claimed_at = $t | .heartbeat_at = $t' "$STATE/up.json" >|"$STATE/up.json.tmp" &&
+      command mv -f "$STATE/up.json.tmp" "$STATE/up.json"
+  fi
+  unlock
+  if [ "$ok" != yes ]; then
+    jq -n --arg r "$run" '{status: "refused", run: $r, reason: "not the prepared run, or already attached or finished"}'
+    exit 4
+  fi
+  interval=$(($(stale_seconds) / 3))
+  [ "$interval" -le 10 ] || interval=10
+  [ "$interval" -ge 1 ] || interval=1
+  # do_up runs as a child of this call and writes its result to a file, so
+  # that a SIGKILLed attach leaves it running, not half-owned: the heartbeat
+  # follows do_up itself, the run stays live until the stack work is done, and
+  # no second do_up can start on the project meanwhile.
+  res=$STATE/up.result.$run
+  command rm -f "$res" "$res.rc"
+  (
+    UP_RUN=$run
+    do_up >|"$res"
+    echo "$?" >|"$res.rc"
+  ) </dev/null &
+  UP_PID=$!
+  up_pid=$UP_PID
+  # Beat while do_up lives and up.json still names this run with no result.
+  (
+    last=0
+    while :; do
+      kill -0 "$up_pid" 2>/dev/null || exit 0
+      jq -e --arg r "$run" 'select(.run == $r and .final == null)' "$STATE/up.json" >/dev/null 2>&1 || exit 0
+      now=$(date +%s)
+      if [ $((now - last)) -ge "$interval" ]; then
+        # shellcheck disable=SC2016  # jq variables
+        upj_update --arg r "$run" --argjson t "$now" \
+          'if .run == $r and .final == null then .heartbeat_at = $t else . end'
+        last=$now
+      fi
+      sleep 1
+    done
+  ) </dev/null &
+  hb=$!
+  HB_PID=$hb
+  trap 'stop_beat "$HB_PID"; stop_beat "$UP_PID"; exit 1' TERM INT HUP
+  wait "$up_pid" 2>/dev/null
+  stop_beat "$hb"
+  trap - TERM INT HUP
+  out=$(cat "$res" 2>/dev/null)
+  rc=$(cat "$res.rc" 2>/dev/null)
+  if ! jq -e type <<<"$out" >/dev/null 2>&1; then
+    out='{"status":"error","reason":"do_up produced no result"}'
+    rc=1
+  fi
+  case $rc in '' | *[!0-9]*) rc=1 ;; esac
+  command rm -f "$res" "$res.rc"
+  # shellcheck disable=SC2016  # jq variables
+  upj_update --arg r "$run" --argjson f "$out" --argjson c "$rc" --argjson t "$(date +%s)" \
+    'if .run == $r then .final = $f | .exit_code = $c | .heartbeat_at = $t else . end'
+  printf '%s\n' "$out"
+  exit "$rc"
+}
+
+# End the heartbeat loop, its sleep, and reap it.
+stop_beat() {
+  pkill -P "$1" 2>/dev/null
+  kill "$1" 2>/dev/null
+  wait "$1" 2>/dev/null
+  return 0
+}
+
+# Record RUN as dead under the lock, so it can no longer be attached, then
+# print the dead object and exit 1. A run that finished meanwhile keeps its
+# result.
+mark_dead() {
+  local dead
+  dead=$(jq -nc --arg r "$1" --arg why "$2" '{status: "dead", run: $r, reason: $why}')
+  # shellcheck disable=SC2016  # jq variables
+  upj_update --arg r "$1" --argjson d "$dead" \
+    'if .run == $r and .final == null then .final = $d | .exit_code = 1 | .abandoned = true else . end'
+  printf '%s\n' "$dead"
+  exit 1
+}
+
+cmd_up_wait() {
+  local secs=${1:-480} deadline now run final hb prep stale
+  case $secs in '' | *[!0-9]*) usage ;; esac
+  [ "$secs" -le 570 ] || secs=570
+  deadline=$(($(date +%s) + secs))
+  stale=$(stale_seconds)
+  while :; do
+    [ -f "$STATE/up.json" ] || { jq -n '{status: "dead", run: null, reason: "no run was prepared"}'; exit 1; }
+    run=$(jq -r '.run' "$STATE/up.json")
+    final=$(jq -c '.final' "$STATE/up.json")
+    if [ "$final" != null ]; then
+      printf '%s\n' "$final"
+      exit "$(jq -r '.exit_code' "$STATE/up.json")"
+    fi
+    now=$(date +%s)
+    hb=$(jq -r '.heartbeat_at // empty' "$STATE/up.json")
+    prep=$(jq -r '.prepared_at' "$STATE/up.json")
+    if [ -n "$hb" ] && [ $((now - hb)) -gt "$stale" ]; then
+      mark_dead "$run" "the attached run stopped sending heartbeats"
+    fi
+    if [ -z "$hb" ] && [ $((now - prep)) -gt $((stale * 2 / 3)) ]; then
+      mark_dead "$run" "the prepared run was never attached"
+    fi
+    if [ "$now" -ge "$deadline" ]; then
+      jq -n --arg r "$run" '{status: "running", run: $r}'
+      exit 6
+    fi
+    sleep 2
+  done
+}
+
+require_runner() {
+  [ "$(dk inspect -f '{{.State.Running}}' "$RUNNER" 2>/dev/null)" = true ] || {
+    jq -n --arg p "$PROJECT" '{status: "not-up", project: $p}'
+    exit 1
+  }
+}
+
+# step NAME CMD...: run CMD, appending to seed.log; on failure print the
+# failure and exit 1. Records successful steps in STEPS.
+STEPS='[]'
+step() {
+  local name=$1 rc
+  shift
+  "$@" >>"$STATE/seed.log" 2>&1 && rc=0 || rc=$?
+  if [ "$rc" -ne 0 ]; then
+    jq -n --arg n "$name" --argjson c "$rc" --arg t "$(tail -40 "$STATE/seed.log")" \
+      '{status: "seed-failed", step: $n, exit_code: $c, tail: $t}'
+    exit 1
+  fi
+  STEPS=$(jq -c --arg n "$name" '. + [{name: $n, exit_code: 0}]' <<<"$STEPS")
+}
+
+# Copy the workdir's regular files into the runner. Only regular files go:
+# the Cyrus sandbox masks some dotfiles with /dev/null, which a copy of the
+# whole directory would carry in as device nodes.
+copy_workdir() {
+  local list f
+  list=$(mktemp "${TMPDIR:-/tmp}/ccm-harness-files.XXXXXX")
+  (cd "$ROOT/$WORKDIR" && git ls-files -z --cached --others --exclude-standard) |
+    while IFS= read -r -d '' f; do
+      [ -f "$ROOT/$WORKDIR/$f" ] && printf '%s\0' "$f"
+    done >"$list"
+  # macOS files carry xattrs (com.apple.provenance), which the daemon cannot
+  # set in the container; GNU and BSD tar both accept --no-xattrs when new
+  # enough, and an older tar has none to drop on Linux.
+  local opts=()
+  if tar --no-xattrs -cf /dev/null --files-from /dev/null 2>/dev/null; then opts=(--no-xattrs); fi
+  COPYFILE_DISABLE=1 tar -C "$ROOT/$WORKDIR" ${opts[@]+"${opts[@]}"} --null -T "$list" -cf - | dk cp - "$RUNNER:/work"
+  local rc=$?
+  rm -f "$list"
+  return "$rc"
+}
+
+# decl_words JQ_PATH: the command array at JQ_PATH in DECL, one word per line.
+decl_words() { jq -r "$1 // [] | .[]" <<<"$DECL"; }
+
+in_runner() {
+  local words=() w
+  while IFS= read -r w; do words+=("$w"); done < <(decl_words "$1")
+  [ ${#words[@]} -gt 0 ] || return 0
+  dk exec -w /work "$RUNNER" "${words[@]}"
+}
+
+seed_sql() {
+  local svc file user db
+  svc=$(jq -r '.seed.sql.service' <<<"$DECL")
+  file=$(jq -r '.seed.sql.file' <<<"$DECL")
+  user=$(jq -r '.seed.sql.user // "postgres"' <<<"$DECL")
+  db=$(jq -r '.seed.sql.database // .seed.sql.user // "postgres"' <<<"$DECL")
+  # up waits only for the app, so the database may not be ready yet.
+  dc up -d --wait "$svc" || return 1
+  local i=0
+  until dc exec -T "$svc" pg_isready -U "$user" -d "$db" >/dev/null 2>&1; do
+    i=$((i + 1))
+    [ "$i" -lt 30 ] || { echo "seed-sql: $svc did not accept connections within 30 s"; return 1; }
+    sleep 1
+  done
+  dc exec -T "$svc" psql -U "$user" -d "$db" -v ON_ERROR_STOP=1 <"$ROOT/$file"
+}
+
+cmd_seed() {
+  require_runner
+  : >"$STATE/seed.log"
+  if [ "$(jq -r '.seed.sql.file // empty' <<<"$DECL")" != "" ]; then step seed-sql seed_sql; fi
+  step copy-workdir copy_workdir
+  if [ "$(jq -r '.runner.setup // [] | length' <<<"$DECL")" -gt 0 ]; then step setup in_runner .runner.setup; fi
+  if [ "$(jq -r '.seed.command // [] | length' <<<"$DECL")" -gt 0 ]; then step seed-command in_runner .seed.command; fi
+  jq -n --argjson s "$STEPS" '{status: "seeded", steps: $s}'
+}
+
+cmd_shoot() {
+  local script=$1 name out rc files
+  [ -f "$script" ] || { jq -n --arg s "$script" '{status: "error", error: ("no such script: " + $s)}'; exit 4; }
+  require_runner
+  name=$(basename "$script")
+  dk exec "$RUNNER" sh -c 'rm -rf /out && mkdir -p /out /work/.ccm-shoot' >/dev/null
+  dk cp "$script" "$RUNNER:/work/.ccm-shoot/$name" >/dev/null
+  dk exec -w /work "$RUNNER" node ".ccm-shoot/$name" >"$STATE/shoot.log" 2>&1 && rc=0 || rc=$?
+  if [ "$rc" -ne 0 ]; then
+    jq -n --argjson c "$rc" --arg t "$(tail -40 "$STATE/shoot.log")" '{status: "shoot-failed", exit_code: $c, tail: $t}'
+    exit 1
+  fi
+  out=${TMPDIR:-/tmp}/ccm-harness/$PROJECT/shots-$(date +%s)
+  mkdir -p "$out"
+  dk cp "$RUNNER:/out/." "$out" >/dev/null
+  files=$(find "$out" -type f -name '*.png' | LC_ALL=C sort | jq -R . | jq -sc .)
+  [ "$files" != "[]" ] || { jq -n --arg d "$out" '{status: "no-screenshots", dir: $d}'; exit 1; }
+  jq -n --arg d "$out" --argjson f "$files" '{status: "shot", dir: $d, files: $f}'
+}
+
+cmd_evidence() {
+  local ticket=$1 head=$2 policy view slug vis idx f blob tree commit name email ref err urls='[]'
+  shift 2
+  [ $# -gt 0 ] || usage
+  policy=$(jq -r '.evidence // "auto"' <<<"$DECL")
+  [ "$policy" != off ] || { jq -n '{status: "skipped", reason: "evidence: off"}'; return 0; }
+  view=$(gh repo view --json nameWithOwner,visibility 2>/dev/null || true)
+  [ -n "$view" ] || view='{}'
+  slug=$(jq -r '.nameWithOwner // empty' <<<"$view" 2>/dev/null || true)
+  vis=$(jq -r '.visibility // empty' <<<"$view" 2>/dev/null || true)
+  [ -n "$slug" ] || slug=$(ccm_repo_slug)
+  if [ "$policy" = auto ] && [ "$vis" != PRIVATE ] && [ "$vis" != INTERNAL ]; then
+    jq -n --arg v "${vis:-unknown}" '{status: "skipped", reason: ("repository visibility is " + $v + "; set evidence: push to push anyway")}'
+    return 0
+  fi
+  if ! [[ $head =~ ^([0-9a-fA-F]{40}|[0-9a-fA-F]{64})$ ]]; then
+    jq -n '{status: "failed", error: "HEAD_SHA must be a full commit SHA"}'
+    exit 1
+  fi
+  ref=refs/heads/ccmagic-evidence/$ticket
+  if ! git check-ref-format "$ref"; then
+    jq -n --arg t "$ticket" '{status: "failed", error: ("ticket " + $t + " is not a valid git ref name")}'
+    exit 1
+  fi
+  for f in "$@"; do
+    [ -f "$f" ] || { jq -n --arg f "$f" '{status: "failed", error: ("no such file: " + $f)}'; exit 1; }
+  done
+  idx=$(mktemp -d "${TMPDIR:-/tmp}/ccm-evidence.XXXXXX")
+  for f in "$@"; do
+    blob=$(git hash-object -w -- "$f") || { rm -rf "$idx"; jq -n --arg f "$f" '{status: "failed", error: ("cannot store " + $f)}'; exit 1; }
+    GIT_INDEX_FILE=$idx/index git update-index --add --cacheinfo "100644,$blob,$head/$(basename "$f")" || { rm -rf "$idx"; jq -n --arg f "$f" '{status: "failed", error: ("cannot stage " + $f)}'; exit 1; }
+    urls=$(jq -c --arg n "$(basename "$f")" '. + [{file: $n}]' <<<"$urls")
+  done
+  tree=$(GIT_INDEX_FILE=$idx/index git write-tree) || { rm -rf "$idx"; jq -n '{status: "failed", error: "cannot write tree"}'; exit 1; }
+  rm -rf "$idx"
+  name=$(git config user.name || echo ccmagic)
+  email=$(git config user.email || echo ccmagic@localhost)
+  commit=$(GIT_AUTHOR_NAME=$name GIT_AUTHOR_EMAIL=$email GIT_COMMITTER_NAME=$name GIT_COMMITTER_EMAIL=$email \
+    git commit-tree "$tree" -m "ccmagic evidence: $ticket at $head") || { jq -n '{status: "failed", error: "cannot create commit"}'; exit 1; }
+  if ! err=$(git push --force --quiet origin "$commit:$ref" 2>&1); then
+    jq -n --arg e "$(head -1 <<<"$err")" '{status: "failed", error: $e}'
+    exit 1
+  fi
+  jq -n --arg r "$ref" --arg c "$commit" --arg s "$slug" --arg h "$head" --argjson u "$urls" \
+    '{status: "pushed", ref: $r, commit: $c,
+      urls: [$u[] | .url = "https://github.com/\($s)/blob/\($c)/\($h)/\(.file | @uri)?raw=true"]}'
+}
+
+ticket_setup() {
+  [ -n "${1:-}" ] || usage
+  load_decl
+  ticket_names "$1"
+  APP_URL=http://$SERVICE:$PORT
+}
+
+cmd=${1:-}
+[ $# -gt 0 ] && shift
+case $cmd in
+  check) [ $# -le 1 ] || usage; cmd_check "$@" ;;
+  up)
+    t=${1:-}
+    [ $# -gt 0 ] && shift
+    case ${1:-} in
+      --prepare) ticket_names "$t"; cmd_up_prepare ;;
+      --wait) ticket_names "$t"; cmd_up_wait "${2:-480}" ;;
+      --attach) [ -n "${2:-}" ] || usage; ticket_setup "$t"; cmd_up_attach "$2" ;;
+      '')
+        ticket_setup "$t"
+        out=$(do_up) && rc=0 || rc=$?
+        printf '%s\n' "$out"
+        exit "$rc"
+        ;;
+      *) usage ;;
+    esac
+    ;;
+  down) [ $# -eq 1 ] || usage; ticket_names "$1"; cmd_down ;;
+  seed) [ $# -eq 1 ] || usage; ticket_setup "$1"; cmd_seed ;;
+  shoot) [ $# -eq 2 ] || usage; ticket_setup "$1"; cmd_shoot "$2" ;;
+  evidence) [ $# -ge 3 ] || usage; ticket_setup "$1"; cmd_evidence "$@" ;;
+  sweep) [ $# -le 1 ] || usage; cmd_sweep "${1:-6}" ;;
+  *) usage ;;
+esac

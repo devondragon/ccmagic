@@ -2,7 +2,7 @@
 name: auto-ticket
 description: Autonomous end-to-end ticket driver. Runs the full work → review → PR-feedback → finish cycle unattended, merging when the work is clean and CI is green, or parking the ticket (needs-human) with a clear note when a decision genuinely requires a human. Detects the tracker (Linear, GitHub Issues, JIRA) and ticket from the argument or current branch.
 user-invocable: true
-allowed-tools: Read(*), Bash(git:*, gh:*), Bash(rm -f .ccmagic-ticket.md), Bash(${CLAUDE_PLUGIN_ROOT}/bin/ccm-context *), Bash(ccm-context *), Bash(${CLAUDE_PLUGIN_ROOT}/bin/ccm-ci-status *), Bash(ccm-ci-status *), Bash(${CLAUDE_PLUGIN_ROOT}/bin/ccm-pr-threads *), Bash(ccm-pr-threads *), Bash(${CLAUDE_PLUGIN_ROOT}/bin/ccm-spec-block *), Bash(ccm-spec-block *), Glob(*), Grep(*), Task(*), TodoWrite(*), Skill(*)
+allowed-tools: Read(*), Bash(git:*, gh:*), Bash(rm -f .ccmagic-ticket.md), Bash(${CLAUDE_PLUGIN_ROOT}/bin/ccm-context *), Bash(ccm-context *), Bash(${CLAUDE_PLUGIN_ROOT}/bin/ccm-ci-status *), Bash(ccm-ci-status *), Bash(${CLAUDE_PLUGIN_ROOT}/bin/ccm-pr-threads *), Bash(ccm-pr-threads *), Bash(${CLAUDE_PLUGIN_ROOT}/bin/ccm-spec-block *), Bash(ccm-spec-block *), Bash(${CLAUDE_PLUGIN_ROOT}/bin/ccm-harness *), Bash(ccm-harness *), Glob(*), Grep(*), Task(*), TodoWrite(*), Skill(*)
 argument-hint: "[TICKET-ID] (detects from the current branch if omitted)"
 model: sonnet
 context: fork
@@ -40,20 +40,21 @@ Call `Task` with `run_in_background: false` for every step, and keep every Bash 
 
 There is no inline mode: a forked orchestrator cannot invoke a `context: fork` skill, and the steps reach forked skills (`validate` itself, and `analyze-impact` from `work-ticket`), so running steps inline in this orchestrator's own context is not achievable. (`review` also ran forked until 3.13.2; it now runs inline.) Per-step isolation and per-step models are the whole point of this skill.
 
-**Every step below runs through `run_step`**, including the `/ccmagic:push` commit-and-push call sites and the fix passes in the Step 3 review-fix loop and Step 4b validate-fix. **This skill never edits code.** Every change to the repository in a run is made by a step agent: the work itself, review fixes, and validate fixes by `auto-work` (a fix pass, contract §2), and PR-feedback fixes by `auto-feedback`. This skill parses reports, builds the grounding for each step, and counts passes.
+**Every step below runs through `run_step`**, including the `/ccmagic:push` commit-and-push call sites and the fix passes in the Step 2b visual-fix loop, the Step 3 review-fix loop, and Step 4b validate-fix. **This skill never edits code.** Every change to the repository in a run is made by a step agent: the work itself, review fixes, and validate fixes by `auto-work` (a fix pass, contract §2), and PR-feedback fixes by `auto-feedback`. This skill parses reports, builds the grounding for each step, and counts passes.
 
 ### Per-step agent registry
 
 | Step | Agent | Default model | Config override |
 |------|-------|---------------|-----------------|
-| work-ticket, and the fix passes in Steps 3 and 4b | `auto-work` | `opus` | `model_work_ticket` |
+| work-ticket, and the fix passes in Steps 2b, 3, and 4b | `auto-work` | `opus` | `model_work_ticket` |
 | review-ticket | `auto-review` | `opus` | `model_review_ticket` |
+| visual | `auto-visual` | `opus` | `model_visual` |
 | pr-feedback | `auto-feedback` | `sonnet` | `model_pr_feedback` |
 | validate | `auto-validate` | `sonnet` | `model_validate` |
 | finish-ticket | `auto-finish` | `sonnet` | `model_finish_ticket` |
 | push | `auto-push` | `haiku` | `model_push` |
 
-Model resolution per step: the agent's frontmatter `model:` is the authoritative default; if a `model_<step>` config value is set, pass it as the `Task` per-invocation model override (best-effort). All six steps route through `run_step`, always forked.
+Model resolution per step: the agent's frontmatter `model:` is the authoritative default; if a `model_<step>` config value is set, pass it as the `Task` per-invocation model override (best-effort). All seven steps route through `run_step`, always forked.
 
 A step agent may deliver its report through a `SubagentHandback` tool call, in which case that call's message is the report you receive. Parse the handshake from it the same way. If a step's report has no handshake, apply the contract §3 missing-handshake rule; do not reconstruct one from its prose.
 
@@ -80,7 +81,7 @@ Step agents cannot reach tracker MCP tools, so in this run **only this skill rea
    "${CLAUDE_PLUGIN_ROOT}/bin/ccm-context"               # no argument: parse the current branch
    ```
    Call it by this path, not by the bare name `ccm-context`, which is not on `PATH` in every harness; fall back to the bare name only when the path form is not found. Run it, and every other `ccm-*` call in this skill, as its own Bash call with nothing chained to it: a session with narrow Bash grants refuses a compound command as a whole when any other part of it is refused. Read `ticket_id` from its JSON: the argument (a leading `#` stripped), or the segment after the branch prefix (`feature/ENG-123-slug` gives `ENG-123`, `bugfix/42-slug` gives `42`), the same parse `/ccmagic:finish-ticket` Step 1 uses. Do not re-parse the branch yourself. If `ticket_id` is null, **exit cleanly** with a one-line message asking the caller to pass one (`/ccmagic:auto-ticket {TICKET-ID}`); this is a setup error, not a parkable ticket, so do not wait for input. The same JSON's `tracker_hint`, `gh_available`, and `config.tracker` feed item 1's cascade (settings and arg/branch shape); the MCP probe, CLI probe, and transport detection stay in item 1.
-3. **Load config** from the same output's `config` object, which already applies the precedence project `.claude/ccmagic.local.md` over user `~/.claude/ccmagic.local.md` over the built-in defaults (see contract §5). An explicit arg still beats `config`. Do not re-read the config files. Keys: `needs_human_state`, `needs_human_label` (default `needs-human`), `merge_owner` (default `self`), `merge_handoff_state` (default `Awaiting Merge`), `max_feedback_passes` (default `3`), `max_review_fix_passes` (default `3`), `max_validate_attempts` (default `2`), `ci_timeout_minutes` (default `30`), `ci_poll_interval_seconds` (default `60`), `visual_checklist` (default `on`), plus the usual `tracker` / `ticket_url_base` / `github_repo`, and the per-step model overrides `model_work_ticket`, `model_review_ticket`, `model_pr_feedback`, `model_finish_ticket`, `model_validate`, `model_push`. The model keys have no built-in default in `ccm-context`, so they appear in `config` only when set; when absent, use the registry value.
+3. **Load config** from the same output's `config` object, which already applies the precedence project `.claude/ccmagic.local.md` over user `~/.claude/ccmagic.local.md` over the built-in defaults (see contract §5). An explicit arg still beats `config`. Do not re-read the config files. Keys: `needs_human_state`, `needs_human_label` (default `needs-human`), `merge_owner` (default `self`), `merge_handoff_state` (default `Awaiting Merge`), `max_feedback_passes` (default `3`), `max_review_fix_passes` (default `3`), `max_validate_attempts` (default `2`), `ci_timeout_minutes` (default `30`), `ci_poll_interval_seconds` (default `60`), `visual_checklist` (default `on`), plus the usual `tracker` / `ticket_url_base` / `github_repo`, and the per-step model overrides `model_work_ticket`, `model_review_ticket`, `model_pr_feedback`, `model_finish_ticket`, `model_validate`, `model_push`, `model_visual`. The model keys have no built-in default in `ccm-context`, so they appear in `config` only when set; when absent, use the registry value.
 4. **Fetch the ticket** to confirm it exists (per the tracker's lookup in `work-ticket`/`review-ticket`), and keep its title, description, and acceptance criteria (a separate AC field too, if the tracker has one) exactly as written: the grounding block carries them to every step, and no step fetches the ticket again. If not found, stop (Sacred Rule). Then, on the **mcp** transport, assign the ticket to yourself and move it to In Progress, as `work-ticket` Step 2 describes for each tracker (the step agents no longer do this); if that fails, note it for the summary and continue. Under **prompt-relay** there is no MCP to fetch from, so instead confirm the ticket content (title + description) is present in the invocation arguments / grounding block, **or in a `.ccmagic-ticket.md` handoff file in the working directory**, read here in item 4 after `ccm-context` has run, never as the run's first call. The file is a fork-safe content source for harnesses (like Cyrus) that inject the ticket into a *parent* prompt the forked skill can't see. If you read it from the handoff file, delete it afterward with exactly `rm -f .ccmagic-ticket.md` as its own Bash call from the working directory, without a `cd` or other commands chained to it (the only `rm` this skill is granted, and a chained form doesn't match the grant) so it is never committed. If it's absent from all of these, stop with a setup-error message: this is the Sacred Rule made explicit, since the caller should have injected the content, so a missing body is a setup error, never a guess and never a park.
 <!-- ccmagic:spec-only -->
    **Only when the fetched description has a line that is exactly `<!-- reeve:spec v1 -->`** (a ticket Reeve generated from an OpenSpec change). Every other ticket skips this paragraph, gets no `spec:` section, and runs exactly as before. Pass the description, as fetched, to the detector on stdin, as its own Bash call:
@@ -125,6 +126,21 @@ gh pr view --json number,url,title,baseRefName,headRefName --jq '{number,url,tit
 
 Store `{PR_NUMBER}`, `{PR_URL}`, `{BASE_BRANCH}`. Add `pr:` to the grounding block for the remaining steps. If no PR exists after a `done` from `work-ticket`, that's an inconsistency → **route-and-stop** (reason: "work-ticket reported done but no PR is present").
 
+## Step 2b: Visual check
+
+Runs only when Step 0 listed visual criteria (contract §4); otherwise go to Step 3.
+
+1. Run `"${CLAUDE_PLUGIN_ROOT}/bin/ccm-harness" check {TICKET-ID}` as its own Bash call. `absent`: the criteria stay on the UAT checklist with the note `no harness`; go to Step 3. `invalid`: the note becomes `harness invalid: {rule}`; go to Step 3. Any other outcome (an `error` status, exit 4, or the script not found or denied): the note becomes `harness could not start: check {status}`; go to Step 3.
+2. `ok`: run the visual step via `run_step` with the grounding block plus `visual_round: 1` and a `visual_criteria:` section (`- V1: {criterion, verbatim}`, one line each). Parse the report's `harness:`, `judged_head:`, `visual_results:`, and `evidence:` lines above its handshake. A report that is missing or unparseable, or that lacks `harness:` or `visual_results:`, is never a park (contract §3): treat it as `harness: could-not-start: visual step returned no report`, then take the harness down yourself: run `"${CLAUDE_PLUGIN_ROOT}/bin/ccm-harness" up {TICKET-ID} --wait 60` once (any result, final, `running`, or `dead`, is fine; it only gives an `--attach` the visual step left building a chance to finish or be seen), then `"${CLAUDE_PLUGIN_ROOT}/bin/ccm-harness" down {TICKET-ID}`, each as its own Bash call, falling back to the bare name `ccm-harness` only when the path form is not found or is denied. Put the criteria on the UAT checklist with that note, and go to Step 3. The visual keys go only to the visual step, and its `steps` entry in the run record is `visual`.
+3. Decide:
+   - `harness: ran` and every criterion `met`: take the criteria off the UAT checklist, keep the results for Step 6, and go to Step 3.
+   - `harness: ran` with a `not-met`, or `harness: failed-in-change: ...`, and `visual_round` below 3: run a fix pass on the work step via `run_step`, as in Step 3 items 1 and 2 (including the fix-pass git check), with `fix_source: visual`, the run-wide `fix_pass` counter, and a `findings_to_fix:` section with one item per `not-met` line (`V{n}: {criterion} | {why} | {screenshot path}`, the path so the work step can Read the image) or one item `harness: {reason}` for a `failed-in-change`, so `applied_findings:` can name it by the id `harness`. Then commit and push via `/ccmagic:push` (`run_step`), and run the visual step again with `visual_round` one higher. Visual fix passes take their numbers from the run-wide `fix_pass` counter but do not count against `max_review_fix_passes`; `visual_round` (at most 3) is their bound. A fix pass or push that returns `needs-human`: **route-and-stop** (stage = `visual`).
+   - `not-met` or `failed-in-change` still at `visual_round` 3: **route-and-stop** (stage = `visual`, reason: `visual criteria not met after 3 rounds: {V ids and why}`); the parked note carries the last `visual_results:` lines with their screenshot links.
+   - `harness: could-not-start: ...` or `harness: timed-out`: the criteria stay on the UAT checklist with that reason as the note; go to Step 3. A harness that cannot start never blocks a merge.
+4. Keep the last report's `judged_head` for Step 6.
+
+Visual rounds and their fix passes come before the first review, so the review reads the code the screenshots came from. Step 4b validates the visual fix commits with every other push.
+
 ---
 
 ## Step 3: Ticket-grounded review
@@ -140,11 +156,11 @@ Run the review-ticket step via `run_step` — `/ccmagic:review-ticket {TICKET-ID
   4. **Re-review.** Re-invoke the review-ticket step via `run_step`, adding `review_pass: {review_pass}` to the grounding block (the run-wide review counter below, so 2 on the run's first re-review) so the reviewer produces a delta report (contract §2), and a `previous_findings:` section that copies the fix pass's `applied_findings:` list as reported, including the invariant test named for each finding fixed under contract §9, so the fresh review subagent knows what to verify.
   5. `clean` → record its `head:` as `reviewed_head` and continue to Step 4. `fixable-findings` again and passes remain → repeat from item 1 with the new report's findings. Passes exhausted still not clean, or `needs-human` → **route-and-stop** (reason: the outstanding findings).
 
-`fix_pass` and `review_pass` count across the whole run. `review_pass` goes up by one on every review-ticket call: the first Step 3 review is pass 1 (sent without the key), each re-review here and each 4f re-review takes the next number. When 4f sends a late-push re-review's findings back to this loop, it continues from the passes already used, so `max_review_fix_passes` bounds every review fix pass in the run, not each entry to the loop.
+`fix_pass` and `review_pass` count across the whole run. `review_pass` goes up by one on every review-ticket call: the first Step 3 review is pass 1 (sent without the key), each re-review here and each 4f re-review takes the next number. When 4f sends a late-push re-review's findings back to this loop, it continues from the passes already used, so `max_review_fix_passes` bounds every review fix pass in the run, not each entry to the loop. Step 2b's visual fix passes are numbered by `fix_pass` too but do not count against it.
 
 The fix-pass keys (`fix_pass:`, `fix_source:`, `findings_to_fix:`) go only to the work step's fix pass, `previous_findings:` only to the re-review, and `commit_notes:` only to the push step; leave them out of every other step's grounding block.
 
-**Fix-pass git check.** A fix pass must change files and leave them uncommitted on the PR's branch. Before each fix pass (here and in Step 4b), record `git rev-parse HEAD`, `git branch --show-current`, and the tree state `git status --porcelain` plus `git diff HEAD | git hash-object --stdin`. After a `done`, **route-and-stop** (reason names the fix pass and what went wrong) when:
+**Fix-pass git check.** A fix pass must change files and leave them uncommitted on the PR's branch. Before each fix pass (here and in Steps 2b and 4b), record `git rev-parse HEAD`, `git branch --show-current`, and the tree state `git status --porcelain` plus `git diff HEAD | git hash-object --stdin`. After a `done`, **route-and-stop** (reason names the fix pass and what went wrong) when:
 - the HEAD or the branch changed: "fix pass {n} ({fix_source}) committed or switched branch; it must leave changes uncommitted";
 - the tree state is unchanged: "fix pass {n} ({fix_source}) reported done but changed no files".
 
@@ -266,6 +282,11 @@ Under prompt-relay there is no create API, so list every item under "to file" fo
 - To file (prompt-relay): {item} (from {step})
 - {or "none" when no step reported a follow-up}
 
+### Visual check
+- {V1}: {met | not met}: {why} ([screenshot]({url}))
+- {or "not run: {no visual criteria | no harness | harness invalid: {rule} | harness could not start: {reason} | timed out}"}
+Judged head: {judged_head}
+
 ### UAT checklist
 - [ ] {visual criterion, verbatim} ({why it is here: no harness | harness invalid: {rule} | harness could not start: {reason} | timed out | changed after the visual check})
 - {or "none"}
@@ -280,6 +301,8 @@ Under prompt-relay there is no create API, so list every item under "to file" fo
 ````
 
 **UAT checklist.** In Step 0, after fetching the ticket, list its visual criteria (contract §4): each acceptance criterion that asks for a screenshot or names a visible UI state, copied verbatim. Until a check runs them, each goes on the UAT checklist with the note `no harness`. With `visual_checklist: off`, the section reads "none" and the criteria are dropped. The checklist is part of the summary, so it reaches the PR and the ticket wherever the summary does, the parked note included.
+
+**Head drift.** Only when the visual step's last report was `harness: ran` (otherwise `judged_head` is `none`), compare its `judged_head` with the PR head read for the run record: `git diff --name-only {judged_head} {head_sha}`. If any changed path is outside tests and docs (a test or doc path has a segment `test`, `tests`, `__tests__`, or `spec`, or a file name containing `.test.`, `.spec.`, or `_test.`, or lies under `docs/`, or ends in `.md`), say so under Visual check (`the PR head is now {sha}; {n} files changed since the check`) and put every visual criterion on the UAT checklist with the note `changed after the visual check`. The check is not run again.
 
 `steps` lists every sub-skill invocation of this run in order, one entry each, with the handshake `status` it returned; include `reason` whenever the sub-skill emitted one. Repeated review passes are separate entries, and each fix pass is a `work-ticket` entry whose `reason` starts with `fix pass {n} ({fix_source})`. `review_passes` is the total number of review-ticket calls in the run, 4f re-reviews included: the final `review_pass`, or 1 when there was no re-review. `follow_ups` has one entry per item on the run's follow-up list (empty array when there were none): `ticket` is the filed ID or null, and `reason` says why it wasn't filed (null when filed). The block is emitted on every outcome and under every transport. It is the machine-readable record an external gate reads, so its keys are fixed and must not be renamed; `follow_ups` was added in 3.13.0 as an additive key, and readers that don't know it ignore it.
 
@@ -350,7 +373,9 @@ There is no stalled outcome. Never hang waiting for input.
 | A sub-skill emits no handshake (crash/tool error) | Treat as `needs-human` → route-and-stop with reason "{skill} produced no handshake". |
 | `work-ticket` → `needs-human` | route-and-stop (stage `work-ticket`). |
 | `review-ticket` → `needs-human`, or `fixable-findings` unresolved after the bounded loop | route-and-stop (stage `review-ticket`). |
-| A fix pass on the work step (Step 3 or 4b) returns `needs-human`, does not report an item it was sent, commits or switches branch, or changes no files | route-and-stop (stage `review-ticket` or `validate`); nothing from that pass is pushed, and the parked comment lists the uncommitted files it left. |
+| visual step → `needs-human`, or a visual fix pass fails | route-and-stop (stage `visual`). |
+| visual step returns no report, or one without `harness:` or `visual_results:` | Not a park: `harness: could-not-start: visual step returned no report`; take the harness down (Step 2b item 2), put the criteria on the UAT checklist, continue to Step 3. |
+| A fix pass on the work step (Step 2b, 3, or 4b) returns `needs-human`, does not report an item it was sent, commits or switches branch, or changes no files | route-and-stop (stage `visual`, `review-ticket`, or `validate`); nothing from that pass is pushed, and the parked comment lists the uncommitted files it left. |
 | `validate` → `needs-human` whose reason starts with `environment:` (missing Node dependencies that `ccm-validate` could not install), or does not start with `failed:` (a crash, no handshake) | route-and-stop (stage `validate`) without a fix pass. |
 | `validate` → `needs-human` whose reason starts with `failed:`, however environmental the failure looks | Step 4b's fix passes, then route-and-stop if validation still fails. Never go on to finish. |
 | `ccm-finish-guard` refuses the finish step (the hook denies the `auto-finish` call, or the finish step returns `finish guard (...)`) | route-and-stop (stage `validate` or `review-ticket`, as the denial names); nothing is merged or handed off. |

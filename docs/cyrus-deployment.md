@@ -91,11 +91,13 @@ Granting one without the other still strands the run (a fork hits `File is in a 
    "Bash(ccm-context *)", "Bash(ccm-ci-status *)", "Bash(ccm-doctor *)",
    "Bash(ccm-external-review *)", "Bash(ccm-merge-gate *)", "Bash(ccm-post-review *)",
    "Bash(ccm-pr-reply *)", "Bash(ccm-pr-threads *)", "Bash(ccm-review-route *)",
-   "Bash(ccm-validate *)", "Bash(ccm-openspec-scope *)", "Bash(ccm-openspec-version *)", "Bash(ccm-spec-block *)",
+   "Bash(ccm-validate *)", "Bash(ccm-openspec-scope *)", "Bash(ccm-openspec-version *)", "Bash(ccm-spec-block *)", "Bash(ccm-harness *)",
    "Bash(ccm-finish-guard *)", "Bash(openspec:*)"
    ```
 
    Without the `ccm-*` rules a run stalls on its first script call. `tests/relay-smoke.sh --narrow-bash` runs with exactly this set.
+
+   `ccm-harness` needs the Docker CLI with Compose and Buildx and a `DOCKER_HOST` the session can reach; in Cyrus also set `CCM_HARNESS_NO_BIND_MOUNTS=1` and `DOCKER_CONFIG` under the session's writable temp directory (reeve `docs/superpowers/specs/2026-10-11-session-ui-harness-design.md`).
 
 4. **`gh` authenticated — and mind the token type.** Verified on a live instance: `gh` is present and logged in via the `GH_TOKEN` environment variable. The entire PR/git/CI half of the cycle — branch, push, PR, review comments, merge — runs through `gh` exactly as on a laptop; only the Linear side changes transport.
 

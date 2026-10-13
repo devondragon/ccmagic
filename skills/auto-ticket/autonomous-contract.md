@@ -35,8 +35,9 @@ merge_owner: {self | reeve}
 merge_handoff_state: {value}
 max_feedback_passes: {n}
 review_pass: {n, only on re-reviews (Step 3 fix loop, Step 4f late push); absent on the first review pass}
-fix_pass: {n, only on a fix pass of the work step (Step 3 or 4b); absent otherwise}
-fix_source: {review | validate, only with fix_pass}
+fix_pass: {n, only on a fix pass of the work step (Step 2b, 3, or 4b); absent otherwise}
+fix_source: {review | validate | visual, only with fix_pass}
+visual_round: {n, only to the visual step (Step 2b): 1 on the first round, up to 3}
 ```
 
 `merge_owner` and `merge_handoff_state` come from config (§5) with defaults `self` and `Awaiting Merge`; only `finish-ticket` acts on them.
@@ -82,7 +83,19 @@ previous_findings:
 
 The `invariant test:` suffix appears only for a security or invariant finding fixed under §9; the reviewer checks that the test states the invariant and passes, and does not re-derive the invariant from scratch. The list is the `applied_findings:` section the work step's fix pass reported (below), copied as reported.
 
-**Fix passes.** The orchestrator never edits code. When a review returns `fixable-findings` (its Step 3) or local validation fails (its Step 4b), it runs the work step (`auto-work`) again as a **fix pass**: the grounding block carries `fix_pass:` and `fix_source:` and a `findings_to_fix:` section, and no `review_pass:` or `previous_findings:`:
+**Visual check.** When the ticket has visual criteria (§4) and the repository has a harness, the orchestrator's Step 2b runs the visual step (`auto-visual`) with `visual_round:` and a `visual_criteria:` section, one line per criterion, copied verbatim. Only the visual step receives either:
+
+```
+visual_criteria:
+~~~
+- V1: {criterion, verbatim}
+- V2: {criterion, verbatim}
+~~~
+```
+
+A visual fix pass carries `fix_source: visual` and a `findings_to_fix:` section with one item per unmet criterion (`V{n}: {criterion} | {why} | {screenshot path}`) or, for the harness's `failed-in-change`, one item `harness: {reason}`, whose id in `applied_findings:` is `harness`.
+
+**Fix passes.** The orchestrator never edits code. When a review returns `fixable-findings` (its Step 3), the visual check finds an unmet criterion (its Step 2b), or local validation fails (its Step 4b), it runs the work step (`auto-work`) again as a **fix pass**: the grounding block carries `fix_pass:` and `fix_source:` and a `findings_to_fix:` section, and no `review_pass:` or `previous_findings:`:
 
 ```
 findings_to_fix:
@@ -139,6 +152,7 @@ Which values each sub-skill can emit:
 | `pr-feedback` | `done` \| `needs-human` |
 | `validate` | `done` \| `needs-human` |
 | `push` | `done` \| `needs-human` |
+| `visual` (agent `auto-visual`) | `done` \| `needs-human` (`done` whatever the judgments; `needs-human` only with no `visual_criteria:` section or no PR) |
 | `finish-ticket` | `done` \| `needs-human` (with `merge_owner: reeve`, `done` carries `reason: handed off to reeve; ...` and the PR is not merged) |
 
 On a fix pass (§2) the work step's report carries an `applied_findings:` section and, when there is something to note, a `commit_notes:` section, both fenced and just **before** the handshake block, so the handshake stays last:
@@ -156,6 +170,19 @@ commit_notes:
 ```
 
 `applied_findings:` lists every item from `findings_to_fix:`, one line each, in the `previous_findings:` format; for a validate fix the id/title is the check name. The orchestrator copies it into the re-review's `previous_findings:` and treats a missing section, or a missing item, as a failed pass. `commit_notes:` is omitted when there is nothing to note. Each line starts with the repository file it concerns (for a §9 note, the invariant test). The orchestrator appends the section to the push step's grounding block, and `push` writes each line into the body of the commit that holds that file, or into the first commit's body when no commit holds it, so no note is dropped. The fix pass's handshake is `status: done | needs-human`, `reason: fix pass {n} ({fix_source}): applied {k} items` (or on `needs-human`, the item it could not fix; for a §9 fix that still fails, the finding and the first failing input), and `follow_ups:`, with no `requested_state:`.
+
+The visual step's report carries these sections just **before** its handshake, so the handshake stays last:
+
+```
+harness: ran | could-not-start: <reason> | failed-in-change: <reason> | timed-out
+judged_head: <40-char sha>
+visual_results:
+- V1: met | <why, one line> | <screenshot url or local path>
+- V2: not-met | <why> | <url or path>
+evidence: pushed | skipped: <reason> | failed: <reason>
+```
+
+`judged_head` is the PR head the screenshots were taken from (`none` when the harness never ran). `visual_results:` has one line per criterion it was sent; it is empty unless `harness: ran`. A visual report that is missing, unparseable, or lacks `harness:` or `visual_results:` is the one exception to the missing-handshake rule below: the orchestrator treats it as `harness: could-not-start: visual step returned no report`, takes the harness down, lists the criteria on the UAT checklist, and continues, since a visual criterion is never a reason to park (§4). An evidence failure never changes a judgment.
 
 A validate `needs-human` has one of two reasons. `environment:` means `ccm-validate` found the root `package.json`'s dependencies missing and could not install them (no lockfile, the lockfile's tool missing, or the install failing or timing out), so no check ran; there is no `failures:` section, and the orchestrator parks without a fix pass. `failed:` means a check ran and failed. When a check fails, the validate step's report carries a `failures:` section just before its handshake, and its `reason` starts with `failed:`. The orchestrator copies the section into a validate fix pass's `findings_to_fix:`:
 
@@ -249,7 +276,7 @@ When the run is on the **prompt-relay transport** (§7), the park routine change
 | `merge_owner` | string | `self` | Who owns merging the PR: `self` merges here, `reeve` hands off to an external merge gate instead of merging. |
 | `merge_handoff_state` | string | `Awaiting Merge` | Tracker state a handed-off ticket moves to when `merge_owner: reeve`. |
 | `max_feedback_passes` | int | `3` | Cap on the `pr-feedback` loop (orchestrator Step 4) before parking. |
-| `max_review_fix_passes` | int | `3` | Cap on the ticket-review fix loop (orchestrator Step 3) before parking. |
+| `max_review_fix_passes` | int | `3` | Cap on the ticket-review fix loop (orchestrator Step 3) before parking. Visual fix passes (Step 2b) do not count against it; `visual_round`, at most 3, bounds them. |
 | `max_validate_attempts` | int | `2` | Cap on local `/ccmagic:validate` fix attempts (orchestrator Step 4b) before parking. |
 | `ci_timeout_minutes` | int | `30` | Max minutes to wait for CI to settle (orchestrator Step 4c) before parking on timeout; quantized up to whole 10-minute watch cycles (`CYCLES = ceil(minutes / 10)`). |
 | `ci_poll_interval_seconds` | int | `60` | Interval passed to `gh pr checks --watch` during the CI wait (orchestrator Step 4c); when the Checks API is unreadable (fine-grained PAT 403), the wait falls back to the Actions/Status APIs (Step 4c item 5) and this interval no longer applies. |
@@ -260,6 +287,7 @@ When the run is on the **prompt-relay transport** (§7), the park routine change
 | `model_finish_ticket` | string | `sonnet` | Model for the finish step's agent (`auto-finish`). |
 | `model_validate` | string | `sonnet` | Model for the validate step's agent (`auto-validate`). |
 | `model_push` | string | `haiku` | Model for the push step's agent (`auto-push`). |
+| `model_visual` | string | `opus` | Model for the visual step's agent (`auto-visual`). |
 
 **Where keys are read — precedence (highest first):**
 

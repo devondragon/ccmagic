@@ -88,6 +88,31 @@ hook() {
   OUT=$(printf '%s' "$input" | "${HOOK_BASH:-bash}" "$HOOKS/pre-tool-use-guard.sh" 2>"$T/stderr") && RC=0 || RC=$?
 }
 
+need_compose() { docker compose version >/dev/null 2>&1 || { echo "    skipped: no docker compose"; return 1; }; }
+# shellcheck disable=SC2015  # the || arm must run when either check fails
+need_docker() { need_compose && docker info >/dev/null 2>&1 || { echo "    skipped: no Docker daemon"; return 1; }; }
+
+# harness_file [EXTRA_SERVICE_YAML] [DECL_EXTRA_YAML]: a minimal harness. The
+# app is nginx serving index.html; the runner is node:22-alpine with workdir w/.
+harness_file() {
+  mkdir -p .ccmagic/app w
+  printf 'FROM nginx:1.27-alpine\nCOPY index.html /usr/share/nginx/html/index.html\n' >.ccmagic/app/Dockerfile
+  echo '<h1>harness ok</h1>' >.ccmagic/app/index.html
+  cat >.ccmagic/harness.compose.yml <<EOF
+services:
+  app:
+    build: { context: app }
+${1:-}
+x-ccm-harness:
+  version: 1
+  app: { service: app, port: 80, health: /, health_timeout_seconds: 120 }
+  runner: { image: "node:22-alpine", workdir: w }
+${2:-}
+EOF
+  echo '{"name":"w","private":true}' >w/package.json
+  git add -A && git -c user.email=t@t -c user.name=t commit -qm harness
+}
+
 check() {
   if [ "$1" != "$2" ]; then
     echo "    expected: $2"
@@ -606,6 +631,56 @@ stop_valid_handshake_passes() {
 
 stop_review_verdict_values() {
   run_stop_hook $'# Ticket-Grounded Review: ENG-1\n...\nstatus: fixable-findings\nreason: 1 CRITICAL\nfollow_ups:\n  - ENG-9\n' ccmagic:auto-review
+  check "$(blocked)" "allow"
+}
+
+# Task 8 review fixes: the visual step routes runner-failed, the work step
+# knows a visual fix pass and the harness item, and head drift matches test
+# and doc paths by segment and suffix, not by substring.
+# shellcheck disable=SC2016 # literal backticks in the markdown being matched
+skills_visual_fix_round_wired() {
+  local missing=''
+  grep -qF '`runner-failed`' "$ROOT/agents/auto-visual.md" || missing+=" agent-runner-failed"
+  grep -qF '{status: runner-failed, tail}' "$ROOT/bin/ccm-harness" || missing+=" header-runner-failed"
+  grep -qF '(`fix_source: visual`), Read the screenshot' "$ROOT/skills/work-ticket/SKILL.md" || missing+=" work-ticket"
+  grep -qF '(`fix_source: visual`), Read the screenshot' "$ROOT/agents/auto-work.md" || missing+=" auto-work"
+  grep -qF 'one item `harness: {reason}`' "$ROOT/skills/auto-ticket/SKILL.md" || missing+=" step-2b-harness-id"
+  grep -qF 'one item `harness: {reason}`' "$ROOT/skills/auto-ticket/autonomous-contract.md" || missing+=" contract-harness-id"
+  grep -qF 'a segment `test`, `tests`, `__tests__`, or `spec`' "$ROOT/skills/auto-ticket/SKILL.md" || missing+=" head-drift-segments"
+  grep -qF 'a path containing `test` or `spec`' "$ROOT/skills/auto-ticket/SKILL.md" && missing+=" head-drift-substring"
+  check "${missing# }" ""
+}
+
+# Final review fixes: a missing visual report never parks (the orchestrator
+# waits once, then takes the harness down with the bare-name fallback), seed and shoot
+# carry a long Bash timeout, head drift needs harness: ran, the agent routes
+# every harness status, and visual fix passes do not use the review budget.
+# shellcheck disable=SC2016 # literal backticks and ${...} in the markdown being matched
+skills_visual_final_review_fixes() {
+  local missing='' f="$ROOT/skills/auto-ticket/SKILL.md" c="$ROOT/skills/auto-ticket/autonomous-contract.md" a="$ROOT/agents/auto-visual.md"
+  grep -qF 'treat it as `harness: could-not-start: visual step returned no report`, then take the harness down yourself' "$f" || missing+=" no-report-step-2b"
+  grep -qF 'run `"${CLAUDE_PLUGIN_ROOT}/bin/ccm-harness" up {TICKET-ID} --wait 60` once' "$f" || missing+=" no-report-wait-first"
+  grep -qF 'then `"${CLAUDE_PLUGIN_ROOT}/bin/ccm-harness" down {TICKET-ID}`, each as its own Bash call, falling back to the bare name `ccm-harness` only when the path form is not found or is denied' "$f" || missing+=" no-report-bare-fallback"
+  grep -qF 'A report missing `harness:` or `visual_results:` is a missing handshake' "$f" && missing+=" no-report-still-parks"
+  grep -qF 'visual step returns no report' "$f" || missing+=" no-report-error-row"
+  grep -qF 'is the one exception to the missing-handshake rule below' "$c" || missing+=" no-report-contract"
+  [ "$(grep -cF 'with `timeout: 600000` on the Bash call' "$a")" = 2 ] || missing+=" seed-shoot-timeout"
+  grep -qF 'seed timed out' "$a" && grep -qF 'shoot timed out' "$a" || missing+=" timed-out-routing"
+  grep -qF 'seed not-up' "$a" && grep -qF 'shoot error: {error}' "$a" && grep -qF 'do_up produced no result' "$a" || missing+=" status-routing"
+  grep -qF 'harness check {status} {rule}` and go to step 7' "$a" || missing+=" check-to-step-7"
+  grep -qF 'harness could not start: check {status}' "$f" || missing+=" step-2b-check-other"
+  grep -qF "Only when the visual step's last report was \`harness: ran\`" "$f" || missing+=" head-drift-ran"
+  grep -qF 'do not count against `max_review_fix_passes`' "$f" || missing+=" budget-step-2b"
+  grep -qF 'Visual fix passes (Step 2b) do not count against it' "$c" || missing+=" budget-contract"
+  check "${missing# }" ""
+}
+
+# The SubagentStop hook checks the visual step's handshake like the other
+# done | needs-human steps.
+guard_stop_hook_checks_auto_visual() {
+  run_stop_hook $'status: clean\nreason: ok\nfollow_ups: []' ccmagic:auto-visual
+  check "$(blocked)" "block"
+  run_stop_hook $'harness: ran\njudged_head: abc\nvisual_results:\n- V1: met | ok | x.png\nevidence: pushed\n\nstatus: done\nreason: 1 of 1 met\nfollow_ups: []' ccmagic:auto-visual
   check "$(blocked)" "allow"
 }
 
@@ -2682,6 +2757,20 @@ context_visual_checklist_default_on() {
   check "$(jqval .config.visual_checklist)" "on"
 }
 
+# The visual step is wired into auto-ticket (UI harness design, rollout step 3).
+# shellcheck disable=SC2016 # literal backticks and ${...} in the markdown being matched
+skills_auto_visual_wired() {
+  local missing='' f="$ROOT/skills/auto-ticket/SKILL.md"
+  [ -f "$ROOT/agents/auto-visual.md" ] || missing+=" agent"
+  grep -qF '## Step 2b: Visual check' "$f" || missing+=" step-2b"
+  grep -qF '| visual | `auto-visual` | `opus` | `model_visual` |' "$f" || missing+=" registry"
+  grep -qF 'Bash(${CLAUDE_PLUGIN_ROOT}/bin/ccm-harness *), Bash(ccm-harness *)' "$f" || missing+=" allowed-tools"
+  grep -qF '### Visual check' "$f" || missing+=" summary-section"
+  grep -qF 'visual_criteria:' "$ROOT/skills/auto-ticket/autonomous-contract.md" || missing+=" contract-grounding"
+  grep -qF '"Bash(ccm-harness *)"' "$ROOT/docs/cyrus-deployment.md" || missing+=" cyrus-grant"
+  check "${missing# }" ""
+}
+
 # A parent spec ticket's parked record carries no openspec key, which Reeve's
 # schema would reject along with the whole record (RV-82).
 # shellcheck disable=SC2016 # literal backticks in the markdown and descriptions
@@ -3694,13 +3783,18 @@ strip_spec_only() {
 STANDALONE_SKILLS_SINCE_BASELINE=(spec-baseline)
 # Their scripts, which docs/cyrus-deployment.md need not grant.
 STANDALONE_SCRIPTS_SINCE_BASELINE=(ccm-baseline-check)
+# Step agents added since $SPEC_BASELINE. They are new files, so the every-ticket
+# comparison has no baseline for them; auto-ticket's changes that run them are in
+# $EVERY_TICKET_DIFF.
+ADDED_AGENTS_SINCE_BASELINE=(agents/auto-visual.md)
 
 spec_prompt_files() {
   { git -C "$ROOT" ls-tree -r --name-only "$SPEC_BASELINE" -- skills agents
     git -C "$ROOT" ls-files -- skills agents; } | LC_ALL=C sort -u |
-    awk -v skip="${STANDALONE_SKILLS_SINCE_BASELINE[*]}" '
-      BEGIN { n = split(skip, s, " ") }
-      { for (i = 1; i <= n; i++) if (index($0, "skills/" s[i] "/") == 1) next; print }'
+    awk -v skip="${STANDALONE_SKILLS_SINCE_BASELINE[*]}" -v added="${ADDED_AGENTS_SINCE_BASELINE[*]}" '
+      BEGIN { n = split(skip, s, " "); m = split(added, a, " ") }
+      { for (i = 1; i <= m; i++) if ($0 == a[i]) next
+        for (i = 1; i <= n; i++) if (index($0, "skills/" s[i] "/") == 1) next; print }'
 }
 
 skills_spec_only_blocks_well_formed() {
@@ -3759,14 +3853,18 @@ skills_auto_ticket_follow_up_dedupe() {
 }
 
 # The hooks change only to accept the work step's tasks_done: line (these two
-# added lines in hooks/lib-handshake.sh) and, for every ticket, by the RV-86
-# finish guard: its own hook file and one PreToolUse entry in hooks.json.
+# added lines in hooks/lib-handshake.sh), to check the visual step's handshake
+# (the changed case arm in hooks/subagent-stop-handshake.sh, spec decision 4 of
+# the UI harness design), and, for every ticket, by the RV-86 finish guard: its
+# own hook file and one PreToolUse entry in hooks.json.
 skills_hooks_only_accept_tasks_done() {
   local changed
   changed=$(git -C "$ROOT" diff "$SPEC_BASELINE" -- hooks ':(exclude)hooks/hooks.json' ':(exclude)hooks/pre-tool-use-finish-guard.sh' |
     grep -E '^[-+]' | grep -vE '^(\+\+\+|---) ' || true)
   check "$changed" "+#   tasks_done: [ids]            (optional: work step on a Reeve spec ticket only)
-+        if (l ~ /^[[:space:]]*tasks_done:/) continue"
++        if (l ~ /^[[:space:]]*tasks_done:/) continue
+-  ccmagic:auto-work|ccmagic:auto-feedback|ccmagic:auto-validate|ccmagic:auto-finish|ccmagic:auto-push) allowed=\"done needs-human\" ;;
++  ccmagic:auto-work|ccmagic:auto-feedback|ccmagic:auto-validate|ccmagic:auto-finish|ccmagic:auto-push|ccmagic:auto-visual) allowed=\"done needs-human\" ;;"
   git -C "$ROOT" show "$SPEC_BASELINE:hooks/hooks.json" | jq -S . >"$T/hooks-base"
   jq -S 'del(.hooks.PreToolUse[] | select(.matcher == "Agent|Task" and .hooks == [{type: "command",
     command: "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/pre-tool-use-finish-guard.sh\"", timeout: 10}]))' \
@@ -4218,12 +4316,643 @@ openspecver_version_in_one_place() {
   check "$hits" ""
 }
 
+# ---- ccm-harness -----------------------------------------------------------
+
+harness_check_absent() {
+  run "$BIN/ccm-harness" check
+  check "$RC,$(jqval .status)" "2,absent"
+}
+
+harness_check_ok() {
+  need_compose || return 0
+  harness_file
+  run "$BIN/ccm-harness" check
+  check "$RC,$(jqval .status),$(jqval .declaration.app.port),$(jqval .declaration.runner.workdir)" "0,ok,80,w"
+}
+
+harness_check_rejects_interpolation() {
+  need_compose || return 0
+  # shellcheck disable=SC2016  # literal $ is the point of this test
+  harness_file '    environment: [ "TOKEN=${GH_TOKEN}" ]'
+  run "$BIN/ccm-harness" check
+  check "$RC,$(jqval .rule)" "1,interpolation"
+}
+
+harness_check_allows_escaped_dollar() {
+  need_compose || return 0
+  # shellcheck disable=SC2016  # literal $ is the point of this test
+  harness_file '    command: [ "sh", "-c", "echo $$HOME" ]'
+  run "$BIN/ccm-harness" check
+  check "$(jqval .status)" "ok"
+}
+
+harness_check_rejects_env_file() {
+  need_compose || return 0
+  mkdir -p .ccmagic && echo 'A=1' >.ccmagic/app.env
+  harness_file '    env_file: [ app.env ]'
+  run "$BIN/ccm-harness" check
+  check "$RC,$(jqval .rule)" "1,env-file"
+}
+
+# A missing env file is still the env-file rule, not a Compose failure.
+harness_check_rejects_missing_env_file() {
+  need_compose || return 0
+  harness_file '    env_file: [ missing.env ]'
+  run "$BIN/ccm-harness" check
+  check "$RC,$(jqval .rule)" "1,env-file"
+}
+
+# Review focus 2: a bare key would take the caller's value.
+harness_check_rejects_environment_passthrough() {
+  need_compose || return 0
+  harness_file '    environment: [ GH_TOKEN ]'
+  GH_TOKEN=leak run "$BIN/ccm-harness" check
+  check "$RC,$(jqval .rule)" "1,environment-passthrough"
+  [[ $OUT != *leak* ]] || { echo "    the token reached the output"; return 1; }
+}
+
+harness_check_rejects_published_port() {
+  need_compose || return 0
+  harness_file '    ports: [ "8080:80" ]'
+  run "$BIN/ccm-harness" check
+  check "$RC,$(jqval .rule)" "1,published-port"
+}
+
+harness_check_rejects_privileged() {
+  need_compose || return 0
+  harness_file '    privileged: true'
+  run "$BIN/ccm-harness" check
+  check "$RC,$(jqval .rule)" "1,forbidden-key"
+}
+
+harness_check_rejects_network_mode_host() {
+  need_compose || return 0
+  harness_file '    network_mode: host'
+  run "$BIN/ccm-harness" check
+  check "$RC,$(jqval .rule)" "1,forbidden-key"
+}
+
+harness_check_bind_mount_only_under_flag() {
+  need_compose || return 0
+  harness_file '    volumes: [ "./app:/srv" ]'
+  run "$BIN/ccm-harness" check
+  check "$(jqval .status)" "ok"
+  CCM_HARNESS_NO_BIND_MOUNTS=1 run "$BIN/ccm-harness" check
+  check "$RC,$(jqval .rule)" "1,bind-mount"
+}
+
+harness_check_missing_declaration() {
+  need_compose || return 0
+  mkdir -p .ccmagic && printf 'services:\n  app:\n    image: nginx:1.27-alpine\n' >.ccmagic/harness.compose.yml
+  run "$BIN/ccm-harness" check
+  check "$RC,$(jqval .rule)" "1,declaration"
+}
+
+harness_check_playwright_needs_lockfile() {
+  need_compose || return 0
+  harness_file
+  echo '{"name":"w","devDependencies":{"@playwright/test":"^1.48.0"}}' >w/package.json
+  run "$BIN/ccm-harness" check
+  check "$RC,$(jqval .rule)" "1,playwright-lockfile"
+}
+
+harness_check_playwright_version_must_match() {
+  need_compose || return 0
+  harness_file
+  sed -i.bak 's#node:22-alpine#mcr.microsoft.com/playwright:v1.48.0-noble#' .ccmagic/harness.compose.yml && rm -f .ccmagic/harness.compose.yml.bak
+  echo '{"name":"w","devDependencies":{"@playwright/test":"^1.48.0"}}' >w/package.json
+  echo '{"lockfileVersion":3,"packages":{"node_modules/@playwright/test":{"version":"1.61.1"}}}' >w/package-lock.json
+  git add -A && git -c user.email=t@t -c user.name=t commit -qm lock
+  run "$BIN/ccm-harness" check
+  check "$RC,$(jqval .rule)" "1,playwright-version"
+  sed -i.bak 's#v1.48.0#v1.61.1#' .ccmagic/harness.compose.yml && rm -f .ccmagic/harness.compose.yml.bak
+  run "$BIN/ccm-harness" check
+  check "$(jqval .status)" "ok"
+}
+
+harness_check_rejects_interpolation_in_include() {
+  need_compose || return 0
+  mkdir -p .ccmagic
+  # shellcheck disable=SC2016  # literal ${...} is the point of this test
+  printf 'services:\n  other:\n    image: nginx:1.27-alpine\n    environment: [ "TOKEN=${GH_TOKEN}" ]\n' >.ccmagic/inc.yml
+  harness_file
+  { echo 'include: [ inc.yml ]'; cat .ccmagic/harness.compose.yml; } >.ccmagic/h2.yml && mv -f .ccmagic/h2.yml .ccmagic/harness.compose.yml
+  GH_TOKEN=leak run "$BIN/ccm-harness" check
+  check "$RC,$(jqval .rule)" "1,interpolation"
+  [[ $OUT != *leak* ]] || { echo "    the token reached the output"; return 1; }
+}
+
+harness_check_rejects_yaml_escaped_interpolation() {
+  need_compose || return 0
+  harness_file '    environment: [ "TOKEN=\x24{GH_TOKEN}" ]'
+  run "$BIN/ccm-harness" check
+  check "$RC,$(jqval .rule)" "1,interpolation"
+}
+
+harness_check_allows_dollar_in_comment() {
+  need_compose || return 0
+  # shellcheck disable=SC2016  # literal $ is the point of this test
+  harness_file '    # set $HOME later'
+  run "$BIN/ccm-harness" check
+  check "$(jqval .status)" "ok"
+}
+
+harness_check_rejects_app_not_a_mapping() {
+  need_compose || return 0
+  harness_file
+  sed -i.bak 's#^  app: {.*#  app: nope#' .ccmagic/harness.compose.yml && rm -f .ccmagic/harness.compose.yml.bak
+  run "$BIN/ccm-harness" check
+  check "$RC,$(jqval .rule)" "1,declaration"
+}
+
+harness_check_rejects_runner_not_a_mapping() {
+  need_compose || return 0
+  harness_file
+  sed -i.bak 's#^  runner: {.*#  runner: [ x ]#' .ccmagic/harness.compose.yml && rm -f .ccmagic/harness.compose.yml.bak
+  run "$BIN/ccm-harness" check
+  check "$RC,$(jqval .rule)" "1,declaration"
+}
+
+# Review focus 1: Compose refuses uppercase project names.
+harness_project_name_is_lowercase() {
+  need_compose || return 0
+  harness_file
+  run "$BIN/ccm-harness" check AIE-317
+  check "$(jqval .project)" "ccm-aie-317"
+  run "$BIN/ccm-harness" check '#42'
+  check "$(jqval .project)" "ccm--42"
+}
+
+harness_up_down_round_trip() {
+  need_docker || return 0
+  harness_file
+  run "$BIN/ccm-harness" up ENG-9
+  check "$RC,$(jqval .status),$(jqval .app_url),$(jqval .published_url)" "0,up,http://app:80,null"
+  docker exec ccm-eng-9-runner node -e 'fetch(process.env.APP_BASE_URL).then(r => r.text()).then(t => process.exit(t.includes("harness ok") ? 0 : 1))'
+  run "$BIN/ccm-harness" down ENG-9
+  check "$(jqval .status)" "down"
+  check "$(docker ps -aq --filter label=com.docker.compose.project=ccm-eng-9 | wc -l | tr -d ' ')" "0"
+  check "$(docker ps -aq --filter label=ccm.project=ccm-eng-9 | wc -l | tr -d ' ')" "0"
+}
+
+# A failed up takes its stack down: no container with either label remains.
+no_stack_left() {
+  check "$(docker ps -aq --filter "label=com.docker.compose.project=$1" | wc -l | tr -d ' ')" "0"
+  check "$(docker ps -aq --filter "label=ccm.project=$1" | wc -l | tr -d ' ')" "0"
+}
+
+harness_up_reports_unhealthy_with_logs() {
+  need_docker || return 0
+  harness_file
+  sed -i.bak 's#health: /,#health: /missing,#; s#health_timeout_seconds: 120#health_timeout_seconds: 10#' .ccmagic/harness.compose.yml && rm -f .ccmagic/harness.compose.yml.bak
+  git -c user.email=t@t -c user.name=t commit -qam unhealthy
+  local t0 t1
+  t0=$(date +%s)
+  run "$BIN/ccm-harness" up ENG-10
+  t1=$(date +%s)
+  check "$RC,$(jqval .status)" "1,unhealthy"
+  # The health clock starts after the build, so the whole call is the build
+  # plus 10 seconds plus one probe and slack.
+  [ $((t1 - t0)) -lt 120 ] || { echo "    up took $((t1 - t0))s"; return 1; }
+  [[ $(jqval .logs) == *nginx* ]] || { echo "    no service logs in the result"; return 1; }
+  no_stack_left ccm-eng-10
+}
+
+harness_up_reports_build_failure() {
+  need_docker || return 0
+  harness_file
+  echo 'RUN false' >>.ccmagic/app/Dockerfile
+  git -c user.email=t@t -c user.name=t commit -qam broken
+  run "$BIN/ccm-harness" up ENG-11
+  check "$RC,$(jqval .status)" "1,build-failed"
+  no_stack_left ccm-eng-11
+}
+
+harness_up_reports_runner_failure() {
+  need_docker || return 0
+  harness_file
+  sed -i.bak 's#image: "node:22-alpine"#image: "ccm-harness-test-no-such-image:0"#' .ccmagic/harness.compose.yml && rm -f .ccmagic/harness.compose.yml.bak
+  git -c user.email=t@t -c user.name=t commit -qam no-runner
+  run "$BIN/ccm-harness" up ENG-19
+  check "$RC,$(jqval .status)" "1,runner-failed"
+  no_stack_left ccm-eng-19
+}
+
+harness_up_publishes_only_on_request() {
+  need_docker || return 0
+  harness_file
+  CCM_HARNESS_PUBLISH=1 run "$BIN/ccm-harness" up ENG-12
+  [[ $(jqval .published_url) == http://127.0.0.1:* ]] || { echo "    published_url: $(jqval .published_url)"; return 1; }
+  curl -fsS "$(jqval .published_url)/" | grep -q 'harness ok'
+  "$BIN/ccm-harness" down ENG-12 >/dev/null
+}
+
+harness_up_twice_starts_fresh() {
+  need_docker || return 0
+  harness_file
+  "$BIN/ccm-harness" up ENG-13 >/dev/null
+  docker exec ccm-eng-13-runner sh -c 'echo stale > /work/marker'
+  run "$BIN/ccm-harness" up ENG-13
+  check "$(jqval .status)" "up"
+  docker exec ccm-eng-13-runner test ! -e /work/marker
+  "$BIN/ccm-harness" down ENG-13 >/dev/null
+}
+
+harness_seed_and_shoot() {
+  need_docker || return 0
+  harness_file '' '  seed: { command: [ node, seed.js ] }
+  env: { GREETING: hello }'
+  echo 'require("fs").writeFileSync("/work/seeded", process.env.GREETING)' >w/seed.js
+  git add -A && git -c user.email=t@t -c user.name=t commit -qm seed
+  "$BIN/ccm-harness" up ENG-30 >/dev/null
+  run "$BIN/ccm-harness" seed ENG-30
+  check "$RC,$(jqval .status)" "0,seeded"
+  check "$(docker exec ccm-eng-30-runner cat /work/seeded)" "hello"
+  cat >"$T/shoot.js" <<'EOS'
+const fs = require('fs');
+fetch(process.env.APP_BASE_URL).then(r => r.text()).then(t => {
+  fs.writeFileSync(process.env.OUT_DIR + '/home.png', t);
+  fs.writeFileSync(process.env.OUT_DIR + '/notes.txt', 'not a png');
+});
+EOS
+  TMPDIR=$T run "$BIN/ccm-harness" shoot ENG-30 "$T/shoot.js"
+  check "$RC,$(jqval .status),$(jqval '.files | length')" "0,shot,1"
+  grep -q 'harness ok' "$(jqval '.files[0]')"
+  "$BIN/ccm-harness" down ENG-30 >/dev/null
+}
+
+# Review focus 4: the sandbox masks some tracked dotfiles with /dev/null; a
+# FIFO replacing a committed file stands in for that device node here.
+harness_seed_skips_non_regular_files() {
+  need_docker || return 0
+  harness_file
+  echo real >w/.masked
+  git add -A && git -c user.email=t@t -c user.name=t commit -qm masked
+  command rm -f w/.masked
+  mkfifo w/.masked
+  "$BIN/ccm-harness" up ENG-31 >/dev/null
+  run "$BIN/ccm-harness" seed ENG-31
+  check "$RC,$(jqval .status)" "0,seeded"
+  docker exec ccm-eng-31-runner test -f /work/package.json
+  docker exec ccm-eng-31-runner test ! -e /work/.masked
+  "$BIN/ccm-harness" down ENG-31 >/dev/null
+}
+
+harness_seed_reports_failing_step() {
+  need_docker || return 0
+  harness_file '' '  seed: { command: [ node, -e, "process.exit(3)" ] }'
+  "$BIN/ccm-harness" up ENG-32 >/dev/null
+  run "$BIN/ccm-harness" seed ENG-32
+  check "$RC,$(jqval .status),$(jqval .step),$(jqval .exit_code)" "1,seed-failed,seed-command,3"
+  "$BIN/ccm-harness" down ENG-32 >/dev/null
+}
+
+harness_seed_needs_up() {
+  need_compose || return 0
+  harness_file
+  run "$BIN/ccm-harness" seed ENG-33
+  check "$RC,$(jqval .status)" "1,not-up"
+}
+
+harness_seed_sql_runs_in_the_database_service() {
+  need_docker || return 0
+  harness_file '  db:
+    image: postgres:16-alpine
+    environment: [ "POSTGRES_PASSWORD=pw" ]
+    healthcheck: { test: [ "CMD-SHELL", "pg_isready -U postgres" ], interval: 2s, timeout: 3s, retries: 30 }' '  seed: { sql: { service: db, file: seed.sql } }'
+  echo "create table t (n int); insert into t values (42);" >seed.sql
+  git add -A && git -c user.email=t@t -c user.name=t commit -qm sql
+  "$BIN/ccm-harness" up ENG-34 >/dev/null
+  run "$BIN/ccm-harness" seed ENG-34
+  check "$RC,$(jqval .status),$(jqval '.steps[0].name')" "0,seeded,seed-sql"
+  check "$(docker exec "$(docker ps -q --filter label=com.docker.compose.project=ccm-eng-34 --filter label=com.docker.compose.service=db)" psql -U postgres -tAc 'select n from t')" "42"
+  "$BIN/ccm-harness" down ENG-34 >/dev/null
+}
+
+harness_down_works_without_a_valid_harness_file() {
+  need_docker || return 0
+  harness_file
+  "$BIN/ccm-harness" up ENG-14 >/dev/null
+  rm -f .ccmagic/harness.compose.yml
+  run "$BIN/ccm-harness" down ENG-14
+  check "$RC,$(jqval .status)" "0,down"
+  check "$(docker ps -aq --filter label=com.docker.compose.project=ccm-eng-14 | wc -l | tr -d ' ')" "0"
+  check "$(docker ps -aq --filter label=ccm.project=ccm-eng-14 | wc -l | tr -d ' ')" "0"
+}
+
+harness_sweep_removes_old_stacks_only() {
+  need_docker || return 0
+  docker run -d --name ccm-sweep-old --label com.docker.compose.project=ccm-sweep-old alpine:3.20 sleep 600 >/dev/null
+  docker run -d --name other-sweep --label com.docker.compose.project=other-sweep alpine:3.20 sleep 600 >/dev/null
+  run "$BIN/ccm-harness" sweep 0
+  [[ $(jqval '.removed | join(",")') == *ccm-sweep-old* ]] || { echo "    removed: $(jqval .removed)"; return 1; }
+  check "$(docker ps -aq --filter name=ccm-sweep-old | wc -l | tr -d ' ')" "0"
+  check "$(docker ps -aq --filter name=other-sweep | wc -l | tr -d ' ')" "1"
+  docker rm -f other-sweep >/dev/null
+  run "$BIN/ccm-harness" sweep 6
+  check "$(jqval '.removed | length')" "0"
+}
+
+# Review focus 3: a prepare replaces any earlier result before --wait reads.
+harness_wait_never_reads_previous_result() {
+  need_compose || return 0
+  harness_file
+  local s
+  s="$(git rev-parse --path-format=absolute --git-dir)/ccmagic/harness/ccm-eng-20"
+  mkdir -p "$s"
+  echo '{"run":"old","prepared_at":1,"claimed_at":1,"heartbeat_at":1,"final":{"status":"up"},"exit_code":0}' >"$s/up.json"
+  run "$BIN/ccm-harness" up ENG-20 --prepare
+  check "$(jqval .status)" "prepared"
+  CCM_HARNESS_STALE_SECONDS=30 run "$BIN/ccm-harness" up ENG-20 --wait 1
+  check "$RC,$(jqval .status)" "6,running"
+}
+
+harness_wait_reports_unattached_run_dead() {
+  need_compose || return 0
+  harness_file
+  "$BIN/ccm-harness" up ENG-21 --prepare >/dev/null
+  sleep 3
+  CCM_HARNESS_STALE_SECONDS=3 run "$BIN/ccm-harness" up ENG-21 --wait 1
+  check "$RC,$(jqval .status)" "1,dead"
+}
+
+harness_attach_refuses_wrong_or_claimed_run() {
+  need_compose || return 0
+  harness_file
+  "$BIN/ccm-harness" up ENG-22 --prepare >/dev/null
+  run "$BIN/ccm-harness" up ENG-22 --attach not-the-run
+  check "$RC,$(jqval .status)" "4,refused"
+}
+
+harness_prepare_attach_wait_round_trip() {
+  need_docker || return 0
+  harness_file
+  local run_id
+  run "$BIN/ccm-harness" up ENG-23 --prepare
+  run_id=$(jqval .run)
+  "$BIN/ccm-harness" up ENG-23 --attach "$run_id" >/dev/null 2>&1 &
+  run "$BIN/ccm-harness" up ENG-23 --wait 300
+  check "$RC,$(jqval .status)" "0,up"
+  wait
+  run "$BIN/ccm-harness" up ENG-23 --attach "$run_id"
+  check "$RC,$(jqval .status)" "4,refused"
+  "$BIN/ccm-harness" down ENG-23 >/dev/null
+}
+
+# A lock holder killed mid-write leaves its lock directory; later calls break it.
+harness_prepare_survives_a_stale_lock() {
+  need_compose || return 0
+  harness_file
+  local s
+  s="$(git rev-parse --path-format=absolute --git-dir)/ccmagic/harness/ccm-eng-24"
+  mkdir -p "$s/lock"
+  run "$BIN/ccm-harness" up ENG-24 --prepare
+  check "$RC,$(jqval .status)" "0,prepared"
+}
+
+# A harness whose health never passes, so an attached up stays running.
+hx_slow_health() {
+  harness_file
+  sed -i.bak -e 's#health: /,#health: /missing,#' -e "s#health_timeout_seconds: 120#health_timeout_seconds: ${1:-600}#" .ccmagic/harness.compose.yml
+  command rm -f .ccmagic/harness.compose.yml.bak
+  git add -A && git -c user.email=t@t -c user.name=t commit -qm slow
+}
+
+# Wait until up.json of PROJECT has a claim, up to 30 s.
+hx_wait_claimed() {
+  local f i
+  f="$(git rev-parse --path-format=absolute --git-dir)/ccmagic/harness/$1/up.json"
+  for i in $(seq 1 60); do
+    [ "$(jq -r '.claimed_at // empty' "$f" 2>/dev/null)" != "" ] && return 0
+    sleep 0.5
+  done
+  return 1
+}
+
+# Review fix 1: a SIGKILLed attach leaves do_up running; the run stays live
+# until it ends, then goes dead.
+harness_wait_reports_killed_attach_dead() {
+  need_docker || return 0
+  hx_slow_health 25
+  local run_id pid kids k t0 elapsed
+  run "$BIN/ccm-harness" up ENG-25 --prepare
+  run_id=$(jqval .run)
+  CCM_HARNESS_STALE_SECONDS=6 "$BIN/ccm-harness" up ENG-25 --attach "$run_id" >/dev/null 2>&1 &
+  pid=$!
+  hx_wait_claimed ccm-eng-25 || { kill -9 "$pid"; return 1; }
+  kids=$(pgrep -P "$pid" || true)
+  t0=$(date +%s)
+  kill -9 "$pid"
+  wait "$pid" 2>/dev/null || true
+  sleep 9
+  CCM_HARNESS_STALE_SECONDS=6 run "$BIN/ccm-harness" up ENG-25 --prepare
+  check "$RC,$(jqval .status)" "6,running"
+  CCM_HARNESS_STALE_SECONDS=6 run "$BIN/ccm-harness" up ENG-25 --wait 90
+  elapsed=$(($(date +%s) - t0))
+  for k in $kids; do pkill -9 -P "$k" 2>/dev/null || true; kill -9 "$k" 2>/dev/null || true; done
+  "$BIN/ccm-harness" down ENG-25 >/dev/null
+  check "$RC,$(jqval .status)" "1,dead"
+  # do_up's health wait (25 s) had to finish first.
+  [ "$elapsed" -ge 25 ] || { echo "    dead after only ${elapsed}s"; return 1; }
+}
+
+# Review fix 2: a live run is never replaced.
+harness_prepare_refuses_while_run_is_live() {
+  need_docker || return 0
+  hx_slow_health
+  local run_id pid kids k s before
+  s="$(git rev-parse --path-format=absolute --git-dir)/ccmagic/harness/ccm-eng-26/up.json"
+  run "$BIN/ccm-harness" up ENG-26 --prepare
+  run_id=$(jqval .run)
+  "$BIN/ccm-harness" up ENG-26 --attach "$run_id" >/dev/null 2>&1 &
+  pid=$!
+  hx_wait_claimed ccm-eng-26 || { kill -9 "$pid"; return 1; }
+  kids=$(pgrep -P "$pid" || true)
+  before=$(jq -S -c 'del(.heartbeat_at)' "$s")
+  run "$BIN/ccm-harness" up ENG-26 --prepare
+  local rc_status
+  rc_status="$RC,$(jqval .status),$(jqval .run)"
+  local after
+  after=$(jq -S -c 'del(.heartbeat_at)' "$s")
+  kill "$pid" 2>/dev/null
+  for k in $kids; do pkill -9 -P "$k" 2>/dev/null || true; kill -9 "$k" 2>/dev/null || true; done
+  wait "$pid" 2>/dev/null || true
+  "$BIN/ccm-harness" down ENG-26 >/dev/null
+  check "$rc_status" "6,running,$run_id"
+  check "$after" "$before"
+}
+
+# Review fix 2: a run declared dead cannot be attached late, and can be replaced.
+harness_dead_run_cannot_be_attached() {
+  need_compose || return 0
+  harness_file
+  local run_id
+  run "$BIN/ccm-harness" up ENG-27 --prepare
+  run_id=$(jqval .run)
+  sleep 3
+  CCM_HARNESS_STALE_SECONDS=3 run "$BIN/ccm-harness" up ENG-27 --wait 1
+  check "$RC,$(jqval .status)" "1,dead"
+  run "$BIN/ccm-harness" up ENG-27 --attach "$run_id"
+  check "$RC,$(jqval .status)" "4,refused"
+  run "$BIN/ccm-harness" up ENG-27 --prepare
+  check "$RC,$(jqval .status)" "0,prepared"
+}
+
+# A late failure of a run --wait declared dead leaves the newer run's stack up:
+# do_up's cleanup takes the stack down only while up.json still names its run.
+harness_dead_run_failure_spares_newer_stack() {
+  need_docker || return 0
+  hx_slow_health 40
+  local s a b pid_a pid_b i b_status runner up_a=
+  s="$(git rev-parse --path-format=absolute --git-dir)/ccmagic/harness/ccm-eng-28"
+  run "$BIN/ccm-harness" up ENG-28 --prepare
+  a=$(jqval .run)
+  "$BIN/ccm-harness" up ENG-28 --attach "$a" >/dev/null 2>&1 &
+  pid_a=$!
+  # Wait until A's runner is up, so A is in its health wait.
+  for i in $(seq 1 120); do
+    [ "$(docker inspect -f '{{.State.Running}}' ccm-eng-28-runner 2>/dev/null)" = true ] && { up_a=1; break; }
+    sleep 0.5
+  done
+  # Mark A dead the way mark_dead does, then make the health check pass for B.
+  jq --arg r "$a" '.final = {status: "dead", run: $r, reason: "test"} | .exit_code = 1 | .abandoned = true' \
+    "$s/up.json" >|"$s/up.json.tmp" && command mv -f "$s/up.json.tmp" "$s/up.json"
+  sed -i.bak 's#health: /missing,#health: /,#' .ccmagic/harness.compose.yml && command rm -f .ccmagic/harness.compose.yml.bak
+  git -c user.email=t@t -c user.name=t commit -qam healthy
+  run "$BIN/ccm-harness" up ENG-28 --prepare
+  b=$(jqval .run)
+  "$BIN/ccm-harness" up ENG-28 --attach "$b" >/dev/null 2>&1 &
+  pid_b=$!
+  run "$BIN/ccm-harness" up ENG-28 --wait 120
+  b_status="$RC,$(jqval .status)"
+  wait "$pid_b" 2>/dev/null || true
+  # A's health wait (40 s from its runner start) ends in unhealthy and cleanup.
+  wait "$pid_a" 2>/dev/null || true
+  runner=$(docker inspect -f '{{.State.Running}}' ccm-eng-28-runner 2>/dev/null || echo missing)
+  "$BIN/ccm-harness" down ENG-28 >/dev/null
+  check "$up_a" "1"
+  check "$b_status" "0,up"
+  check "$runner" "true"
+}
+
+evidence_setup() {
+  git init -q --bare "$T/remote.git"
+  git remote add origin "$T/remote.git"
+  printf 'png-1' >"$T/a.png"
+  printf 'png-2' >"$T/b.png"
+}
+
+harness_evidence_parentless_commit() {
+  need_compose || return 0
+  harness_file
+  evidence_setup
+  fx repo-view '{"nameWithOwner":"acme/app","visibility":"PRIVATE","defaultBranchRef":{"name":"main"}}'
+  local head before
+  head=$(git rev-parse HEAD)
+  before=$(git status --porcelain; git rev-parse HEAD; git branch --show-current)
+  run "$BIN/ccm-harness" evidence ENG-40 "$head" "$T/a.png" "$T/b.png"
+  check "$RC,$(jqval .status),$(jqval .ref)" "0,pushed,refs/heads/ccmagic-evidence/ENG-40"
+  check "$(git -C "$T/remote.git" rev-list --parents -n1 refs/heads/ccmagic-evidence/ENG-40 | wc -w | tr -d ' ')" "1"
+  check "$(git -C "$T/remote.git" ls-tree -r --name-only refs/heads/ccmagic-evidence/ENG-40 | tr '\n' ' ')" "$head/a.png $head/b.png "
+  check "$(jqval '.urls[0].url')" "https://github.com/acme/app/blob/$(jqval .commit)/$head/a.png?raw=true"
+  check "$(git status --porcelain; git rev-parse HEAD; git branch --show-current)" "$before"
+}
+
+harness_evidence_replaces_previous_round() {
+  need_compose || return 0
+  harness_file
+  evidence_setup
+  fx repo-view '{"nameWithOwner":"acme/app","visibility":"PRIVATE","defaultBranchRef":{"name":"main"}}'
+  "$BIN/ccm-harness" evidence ENG-41 "$(git rev-parse HEAD)" "$T/a.png" >/dev/null
+  run "$BIN/ccm-harness" evidence ENG-41 "$(git rev-parse HEAD)" "$T/b.png"
+  check "$(git -C "$T/remote.git" ls-tree -r --name-only refs/heads/ccmagic-evidence/ENG-41 | sed 's#.*/##')" "b.png"
+}
+
+# Review focus 5.
+harness_evidence_skipped_on_public_repo() {
+  need_compose || return 0
+  harness_file
+  evidence_setup
+  fx repo-view '{"nameWithOwner":"acme/app","visibility":"PUBLIC","defaultBranchRef":{"name":"main"}}'
+  run "$BIN/ccm-harness" evidence ENG-42 "$(git rev-parse HEAD)" "$T/a.png"
+  check "$RC,$(jqval .status)" "0,skipped"
+  check "$(git -C "$T/remote.git" for-each-ref | wc -l | tr -d ' ')" "0"
+}
+
+harness_evidence_push_failure_is_reported() {
+  need_compose || return 0
+  harness_file
+  git remote add origin "$T/missing.git"
+  printf 'png' >"$T/a.png"
+  fx repo-view '{"nameWithOwner":"acme/app","visibility":"PRIVATE","defaultBranchRef":{"name":"main"}}'
+  run "$BIN/ccm-harness" evidence ENG-43 "$(git rev-parse HEAD)" "$T/a.png"
+  check "$RC,$(jqval .status)" "1,failed"
+}
+
+harness_evidence_temp_index_removed_on_every_path() {
+  need_compose || return 0
+  harness_file
+  evidence_setup
+  fx repo-view '{"nameWithOwner":"acme/app","visibility":"PRIVATE","defaultBranchRef":{"name":"main"}}'
+  local head tmp
+  head=$(git rev-parse HEAD)
+  tmp=$(mktemp -d)
+  TMPDIR=$tmp run "$BIN/ccm-harness" evidence ENG-44 "$head" "$T/a.png" "$T/missing.png"
+  check "$RC,$(jqval .status)" "1,failed"
+  check "$(find "$tmp" -mindepth 1 | wc -l | tr -d ' ')" "0"
+  TMPDIR=$tmp run "$BIN/ccm-harness" evidence ENG-44 "$head" "$T/a.png"
+  check "$RC,$(jqval .status)" "0,pushed"
+  check "$(find "$tmp" -mindepth 1 | wc -l | tr -d ' ')" "0"
+  rm -rf "$tmp"
+}
+
+harness_evidence_png_name_with_spaces() {
+  need_compose || return 0
+  harness_file
+  evidence_setup
+  fx repo-view '{"nameWithOwner":"acme/app","visibility":"PRIVATE","defaultBranchRef":{"name":"main"}}'
+  local head
+  head=$(git rev-parse HEAD)
+  printf 'png-3' >"$T/my shot.png"
+  run "$BIN/ccm-harness" evidence ENG-45 "$head" "$T/my shot.png"
+  check "$RC,$(jqval .status)" "0,pushed"
+  check "$(git -C "$T/remote.git" ls-tree -r --name-only refs/heads/ccmagic-evidence/ENG-45)" "$head/my shot.png"
+  check "$(jqval '.urls[0].url')" "https://github.com/acme/app/blob/$(jqval .commit)/$head/my%20shot.png?raw=true"
+}
+
+harness_evidence_rejects_invalid_ref_name() {
+  need_compose || return 0
+  harness_file
+  evidence_setup
+  fx repo-view '{"nameWithOwner":"acme/app","visibility":"PRIVATE","defaultBranchRef":{"name":"main"}}'
+  local head t
+  head=$(git rev-parse HEAD)
+  for t in "ENG 46" "ENG..46" 'ENG~46'; do
+    run "$BIN/ccm-harness" evidence "$t" "$head" "$T/a.png"
+    check "$RC,$(jqval .status),$(jqval .error | grep -c 'not a valid git ref')" "1,failed,1"
+  done
+  check "$(git -C "$T/remote.git" for-each-ref | wc -l | tr -d ' ')" "0"
+}
+
+harness_evidence_rejects_bad_head_sha() {
+  need_compose || return 0
+  harness_file
+  evidence_setup
+  fx repo-view '{"nameWithOwner":"acme/app","visibility":"PRIVATE","defaultBranchRef":{"name":"main"}}'
+  local h
+  for h in "abc/def" "a b" "abc123"; do
+    run "$BIN/ccm-harness" evidence ENG-47 "$h" "$T/a.png"
+    check "$RC,$(jqval .status),$(jqval .error)" "1,failed,HEAD_SHA must be a full commit SHA"
+  done
+  check "$(git -C "$T/remote.git" for-each-ref | wc -l | tr -d ' ')" "0"
+}
+
 # ---- run -------------------------------------------------------------------
 
 MIRRORS=$(mktemp -d)
 trap 'rm -rf "$MIRRORS"' EXIT
 
-for fn in $(declare -F | awk '{print $3}' | grep -E '^(context|ci|merge_gate|guard|post|postreview|stop|threads|reply|validate|route|doctor|extreview|skills|spec_block|scope|finish|baseline|openspecver)_'); do
+for fn in $(declare -F | awk '{print $3}' | grep -E '^(context|ci|merge_gate|guard|post|postreview|stop|threads|reply|validate|route|doctor|extreview|skills|spec_block|scope|finish|baseline|openspecver|harness)_'); do
   t "$fn" "$fn"
 done
 

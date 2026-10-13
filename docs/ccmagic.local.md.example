@@ -78,6 +78,11 @@ max_feedback_passes: 3
 # ci_timeout_minutes: 30
 # ci_poll_interval_seconds: 60
 
+# Visual criteria (acceptance criteria that ask for a screenshot or a visible UI
+# state) that the run could not check go on the run summary's UAT checklist.
+# off drops them instead of listing them.
+# visual_checklist: on
+
 # --- Validation (/ccmagic:validate, /ccmagic:test, and the autonomous validate step) ---
 # bin/ccm-validate runs format, lint, types, test, and build checks, one command
 # each, and the command's exit code is the verdict. A validate_<check> key sets
@@ -112,6 +117,7 @@ max_feedback_passes: 3
 # model_finish_ticket: sonnet
 # model_validate:      sonnet
 # model_push:          haiku
+# model_visual:        opus
 # The agent frontmatter (agents/auto-<step>.md) is the authoritative model; edit it to change a step's model with certainty.
 ---
 
@@ -139,9 +145,10 @@ Copy this file to **`.claude/ccmagic.local.md`** in your project root and edit t
 | `max_validate_attempts` | Cap on local `/ccmagic:validate` fix attempts in an autonomous run before parking. | `2` |
 | `ci_timeout_minutes` | Max minutes to wait for CI to settle before parking on timeout. | `30` |
 | `ci_poll_interval_seconds` | Interval for the `gh pr checks --watch` CI wait in an autonomous run. | `60` |
+| `visual_checklist` | `on` lists the visual criteria an autonomous run could not check on the run summary's UAT checklist; `off` drops them instead. | `on` |
 | `validate_format`, `validate_lint`, `validate_types`, `validate_test`, `validate_build` | Command for that `ccm-validate` check; `none` disables it. | detected from the project manifest |
 | `validate_timeout_seconds` | Per-check time limit for `ccm-validate`, at most 7200; a check that hits it fails as "timed out". It also bounds the install of missing Node dependencies, where hitting it is an `environment` result. Above 540, `/ccmagic:validate` runs the checks detached (`--start`, then `--wait`). | `540` |
-| `model_<step>` | Per-step model override (`model_work_ticket` … `model_push`). | Balanced mapping |
+| `model_<step>` | Per-step model override (`model_work_ticket` … `model_push`, `model_visual`). | Balanced mapping |
 
 Every key above also has effect from a **user-level** `~/.claude/ccmagic.local.md` — the project file (this one) takes precedence over the user file, and both override the built-in defaults. Put personal defaults you want in every project (e.g. a longer `ci_timeout_minutes`) in the user file; override them per-repo here.
 
