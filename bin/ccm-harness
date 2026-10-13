@@ -16,8 +16,12 @@
 # is committed, and every value in it is literal.
 #
 # Docker and Compose always run with an emptied environment: only PATH, HOME,
-# DOCKER_HOST, DOCKER_CONFIG, and TMPDIR pass through, and Compose reads no
-# .env file. A session's GH_TOKEN, CLAUDE_CODE_OAUTH_TOKEN, and tracker
+# DOCKER_HOST, DOCKER_CONFIG, TMPDIR, the proxy settings (HTTP_PROXY,
+# HTTPS_PROXY, NO_PROXY, ALL_PROXY, and lowercase forms), and the CA bundle
+# paths (SSL_CERT_FILE, SSL_CERT_DIR) pass through, and Compose reads no
+# .env file. The proxy and CA variables hold no secrets; a sandboxed session
+# reaches the network only through its proxy, and image builds fail without
+# them. A session's GH_TOKEN, CLAUDE_CODE_OAUTH_TOKEN, and tracker
 # secrets therefore cannot reach a container by interpolation or by a bare
 # `environment: [KEY]`. These rules catch mistakes; they are not a security
 # boundary, since a session can drive the Docker API directly.
@@ -134,7 +138,9 @@ project_for() {
 
 clean_env() {
   local v args=()
-  for v in PATH HOME DOCKER_HOST DOCKER_CONFIG TMPDIR; do
+  for v in PATH HOME DOCKER_HOST DOCKER_CONFIG TMPDIR \
+    HTTP_PROXY HTTPS_PROXY NO_PROXY ALL_PROXY http_proxy https_proxy no_proxy all_proxy \
+    SSL_CERT_FILE SSL_CERT_DIR; do
     [ -n "${!v:-}" ] && args+=("$v=${!v}")
   done
   env -i ${args[@]+"${args[@]}"} "$@"

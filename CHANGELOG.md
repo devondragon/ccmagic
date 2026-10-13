@@ -2,6 +2,12 @@
 
 All notable changes to ccmagic are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.20.1] - 2026-10
+
+### Fixed
+
+- `ccm-harness` now passes the proxy variables (`HTTP_PROXY`, `HTTPS_PROXY`, `NO_PROXY`, `ALL_PROXY`, and their lowercase forms) and the CA bundle paths (`SSL_CERT_FILE`, `SSL_CERT_DIR`) through to Docker and Compose. Inside the Claude Code sandbox, where outbound traffic goes through a proxy and direct DNS is refused, `ccm-harness up` failed fetching the registry's anonymous pull token. None of these variables hold secrets.
+
 ## [3.20.0] - 2026-10
 
 ### Added

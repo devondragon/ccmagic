@@ -4947,6 +4947,19 @@ harness_evidence_rejects_bad_head_sha() {
   check "$(git -C "$T/remote.git" for-each-ref | wc -l | tr -d ' ')" "0"
 }
 
+harness_docker_env_passes_proxy_not_secrets() {
+  local bin=$T/fakebin
+  mkdir -p "$bin"
+  printf '#!/bin/sh\nenv >>"%s/docker-env.txt"\nexit 0\n' "$T" >"$bin/docker"
+  chmod +x "$bin/docker"
+  PATH="$bin:$PATH" HTTPS_PROXY=http://proxy.example:3128 SSL_CERT_FILE=/x.pem GH_TOKEN=secret \
+    run "$BIN/ccm-harness" sweep 0
+  check "$RC" "0"
+  check "$(sort -u "$T/docker-env.txt" | grep -cx 'HTTPS_PROXY=http://proxy.example:3128')" "1"
+  check "$(sort -u "$T/docker-env.txt" | grep -cx 'SSL_CERT_FILE=/x.pem')" "1"
+  check "$(grep -c 'GH_TOKEN' "$T/docker-env.txt" || true)" "0"
+}
+
 # ---- run -------------------------------------------------------------------
 
 MIRRORS=$(mktemp -d)
