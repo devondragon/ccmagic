@@ -111,6 +111,8 @@
 #   on exit 3, {clean: false, unreadable: "<why>"}.
 
 set -euo pipefail
+# shellcheck source=bin/ccm-lib.sh
+. "$(dirname "${BASH_SOURCE[0]}")/ccm-lib.sh"
 
 usage() { echo "ccm-baseline-check: $1" >&2; exit 4; }
 
@@ -165,13 +167,10 @@ done
 
 # ---- personal identifiers ----------------------------------------------------
 # An email address, written out or spelled. The skill says to name the constant
-# or config key instead. The pattern is ERE for grep -i; the message omits the
-# match so the finding does not carry the address either.
-tld='com|net|org|edu|gov|io|co|us|uk|de|fr|ca|au|info|biz|dev|app|me'
-email_re='[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}'
-spelled_re="(^|[^A-Za-z0-9._@-])[A-Za-z][A-Za-z0-9._-]*[ ]+at[ ]+[A-Za-z0-9-]+(\\.[A-Za-z0-9-]+)*\\.($tld)([^A-Za-z0-9-]|\$)"
+# or config key instead. The patterns (ERE for grep -i) are in ccm-lib.sh; the
+# message omits the match so the finding does not carry the address either.
 for f in "${specs[@]}" "$EV"; do
-  { grep -n -i -E -e "$email_re" -e "$spelled_re" "$f" || true; } | cut -d: -f1 |
+  { grep -n -i -E -e "$CCM_EMAIL_RE" -e "$CCM_SPELLED_EMAIL_RE" "$f" || true; } | cut -d: -f1 |
     while read -r n; do finding personal-identifier "$f" "$n" "an email address is written out; name the constant or config key, or write \"a hard-coded personal address\""; done
 done
 
@@ -418,18 +417,7 @@ if [ -n "$base_arg" ]; then
   base_ref=$base_arg
   base=$(git rev-parse -q --verify "$base_arg^{commit}") || unreadable "--base $base_arg is not a commit"
 else
-  base_ref="" base=""
-  def=$(git symbolic-ref -q --short refs/remotes/origin/HEAD 2>/dev/null || true)
-  for cand in $def origin/main origin/master main master; do
-    if git rev-parse -q --verify "$cand^{commit}" >/dev/null; then
-      base=$(git merge-base HEAD "$cand" 2>/dev/null || true)
-      if [ -n "$base" ]; then base_ref="merge-base of HEAD and $cand"; break; fi
-    fi
-  done
-  if [ -z "$base" ]; then
-    base=$(git rev-parse -q --verify 'HEAD^{commit}' || true)
-    base_ref=HEAD
-  fi
+  line=$(ccm_default_diff_base); base=${line%%$'\t'*}; base_ref=${line#*$'\t'}
 fi
 # Skipped under --stale: code commits after the baseline are expected there.
 if ! $stale; then
