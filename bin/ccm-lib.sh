@@ -11,6 +11,8 @@ CCM_CONFIG_DEFAULTS='{
   "ticket_url_base": "",
   "ticket_id_regex": "[A-Z][A-Z0-9]+-[0-9]+",
   "github_repo": "",
+  "linear_team": "",
+  "linear_project": "",
   "default_qa_workflow": "false",
   "qa_label": "",
   "autonomous": "false",
