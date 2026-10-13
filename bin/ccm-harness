@@ -36,7 +36,9 @@
 # logs}, or the check's invalid or absent object (exit 1 or 2). On
 # build-failed, runner-failed, and unhealthy, up captures the tail or logs and
 # then takes the stack down (as down does), so a failed up leaves nothing
-# running. published_url is null
+# running. An attached up does so only while up.json still names its run with
+# no result: a run --wait declared dead may have been replaced by a newer run
+# whose stack has the same names. published_url is null
 # unless CCM_HARNESS_PUBLISH=1, which publishes the app on 127.0.0.1 only.
 # health_timeout_seconds (default 600) measures app health only: its clock
 # starts when the runner is up, after the build. Each probe times out after 5
@@ -332,6 +334,22 @@ start_runner() {
     --entrypoint sleep "$IMAGE" infinity >/dev/null
 }
 
+# After a failed up, take the stack down. Under --attach (UP_RUN set) only
+# while up.json, read under the lock, still names that run with no result: a
+# run --wait declared dead may have been replaced, and the newer run's stack
+# has the same names. A foreground up always cleans up.
+UP_RUN=
+fail_down() {
+  local owned
+  if [ -n "$UP_RUN" ]; then
+    lock
+    owned=$(jq -r --arg r "$UP_RUN" 'select(.run == $r and .final == null) | "yes"' "$STATE/up.json" 2>/dev/null || true)
+    unlock
+    [ "$owned" = yes ] || return 0
+  fi
+  cmd_down_quiet
+}
+
 # Bring the stack up from nothing and wait for the app's health URL, as seen
 # from the runner on the stack's network. Prints the result JSON.
 do_up() {
@@ -347,12 +365,12 @@ do_up() {
   fi
   if ! dc up -d --build >>"$log" 2>&1; then
     jq -n --arg t "$(tail -40 "$log")" '{status: "build-failed", tail: $t}'
-    cmd_down_quiet
+    fail_down
     return 1
   fi
   if ! start_runner >>"$log" 2>&1; then
     jq -n --arg t "$(tail -40 "$log")" '{status: "runner-failed", tail: $t}'
-    cmd_down_quiet
+    fail_down
     return 1
   fi
   hstart=$(date +%s)
@@ -360,7 +378,7 @@ do_up() {
     if [ $(($(date +%s) - hstart)) -ge "$TIMEOUT" ]; then
       dc logs --no-color --tail 200 >>"$log" 2>&1
       jq -n --arg t "$(tail -200 "$log")" --argjson s "$TIMEOUT" '{status: "unhealthy", timeout_seconds: $s, logs: $t}'
-      cmd_down_quiet
+      fail_down
       return 1
     fi
     sleep 5
@@ -444,6 +462,7 @@ cmd_up_attach() {
   res=$STATE/up.result.$run
   command rm -f "$res" "$res.rc"
   (
+    UP_RUN=$run
     do_up >|"$res"
     echo "$?" >|"$res.rc"
   ) </dev/null &

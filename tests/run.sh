@@ -651,13 +651,16 @@ skills_visual_fix_round_wired() {
   check "${missing# }" ""
 }
 
-# Final review fixes: a missing visual report never parks, seed and shoot
+# Final review fixes: a missing visual report never parks (the orchestrator
+# waits once, then takes the harness down with the bare-name fallback), seed and shoot
 # carry a long Bash timeout, head drift needs harness: ran, the agent routes
 # every harness status, and visual fix passes do not use the review budget.
 # shellcheck disable=SC2016 # literal backticks and ${...} in the markdown being matched
 skills_visual_final_review_fixes() {
   local missing='' f="$ROOT/skills/auto-ticket/SKILL.md" c="$ROOT/skills/auto-ticket/autonomous-contract.md" a="$ROOT/agents/auto-visual.md"
-  grep -qF 'treat it as `harness: could-not-start: visual step returned no report`, run `"${CLAUDE_PLUGIN_ROOT}/bin/ccm-harness" down {TICKET-ID}` yourself' "$f" || missing+=" no-report-step-2b"
+  grep -qF 'treat it as `harness: could-not-start: visual step returned no report`, then take the harness down yourself' "$f" || missing+=" no-report-step-2b"
+  grep -qF 'run `"${CLAUDE_PLUGIN_ROOT}/bin/ccm-harness" up {TICKET-ID} --wait 60` once' "$f" || missing+=" no-report-wait-first"
+  grep -qF 'then `"${CLAUDE_PLUGIN_ROOT}/bin/ccm-harness" down {TICKET-ID}`, each as its own Bash call, falling back to the bare name `ccm-harness` only when the path form is not found or is denied' "$f" || missing+=" no-report-bare-fallback"
   grep -qF 'A report missing `harness:` or `visual_results:` is a missing handshake' "$f" && missing+=" no-report-still-parks"
   grep -qF 'visual step returns no report' "$f" || missing+=" no-report-error-row"
   grep -qF 'is the one exception to the missing-handshake rule below' "$c" || missing+=" no-report-contract"
@@ -4793,6 +4796,43 @@ harness_dead_run_cannot_be_attached() {
   check "$RC,$(jqval .status)" "4,refused"
   run "$BIN/ccm-harness" up ENG-27 --prepare
   check "$RC,$(jqval .status)" "0,prepared"
+}
+
+# A late failure of a run --wait declared dead leaves the newer run's stack up:
+# do_up's cleanup takes the stack down only while up.json still names its run.
+harness_dead_run_failure_spares_newer_stack() {
+  need_docker || return 0
+  hx_slow_health 40
+  local s a b pid_a pid_b i b_status runner up_a=
+  s="$(git rev-parse --path-format=absolute --git-dir)/ccmagic/harness/ccm-eng-28"
+  run "$BIN/ccm-harness" up ENG-28 --prepare
+  a=$(jqval .run)
+  "$BIN/ccm-harness" up ENG-28 --attach "$a" >/dev/null 2>&1 &
+  pid_a=$!
+  # Wait until A's runner is up, so A is in its health wait.
+  for i in $(seq 1 120); do
+    [ "$(docker inspect -f '{{.State.Running}}' ccm-eng-28-runner 2>/dev/null)" = true ] && { up_a=1; break; }
+    sleep 0.5
+  done
+  # Mark A dead the way mark_dead does, then make the health check pass for B.
+  jq --arg r "$a" '.final = {status: "dead", run: $r, reason: "test"} | .exit_code = 1 | .abandoned = true' \
+    "$s/up.json" >|"$s/up.json.tmp" && command mv -f "$s/up.json.tmp" "$s/up.json"
+  sed -i.bak 's#health: /missing,#health: /,#' .ccmagic/harness.compose.yml && command rm -f .ccmagic/harness.compose.yml.bak
+  git -c user.email=t@t -c user.name=t commit -qam healthy
+  run "$BIN/ccm-harness" up ENG-28 --prepare
+  b=$(jqval .run)
+  "$BIN/ccm-harness" up ENG-28 --attach "$b" >/dev/null 2>&1 &
+  pid_b=$!
+  run "$BIN/ccm-harness" up ENG-28 --wait 120
+  b_status="$RC,$(jqval .status)"
+  wait "$pid_b" 2>/dev/null || true
+  # A's health wait (40 s from its runner start) ends in unhealthy and cleanup.
+  wait "$pid_a" 2>/dev/null || true
+  runner=$(docker inspect -f '{{.State.Running}}' ccm-eng-28-runner 2>/dev/null || echo missing)
+  "$BIN/ccm-harness" down ENG-28 >/dev/null
+  check "$up_a" "1"
+  check "$b_status" "0,up"
+  check "$runner" "true"
 }
 
 evidence_setup() {
