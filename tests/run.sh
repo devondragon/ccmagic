@@ -100,12 +100,12 @@ harness_file() {
   echo '<h1>harness ok</h1>' >.ccmagic/app/index.html
   cat >.ccmagic/harness.compose.yml <<EOF
 services:
-  app:
+  web:
     build: { context: app }
 ${1:-}
 x-ccm-harness:
   version: 1
-  app: { service: app, port: 80, health: /, health_timeout_seconds: 120 }
+  app: { service: web, port: 80, health: /, health_timeout_seconds: 120 }
   runner: { image: "node:22-alpine", workdir: w }
 ${2:-}
 EOF
@@ -4403,7 +4403,7 @@ harness_check_bind_mount_only_under_flag() {
 
 harness_check_missing_declaration() {
   need_compose || return 0
-  mkdir -p .ccmagic && printf 'services:\n  app:\n    image: nginx:1.27-alpine\n' >.ccmagic/harness.compose.yml
+  mkdir -p .ccmagic && printf 'services:\n  web:\n    image: nginx:1.27-alpine\n' >.ccmagic/harness.compose.yml
   run "$BIN/ccm-harness" check
   check "$RC,$(jqval .rule)" "1,declaration"
 }
@@ -4457,6 +4457,22 @@ harness_check_allows_dollar_in_comment() {
   check "$(jqval .status)" "ok"
 }
 
+harness_check_rejects_hsts_tld_service_name() {
+  need_compose || return 0
+  local name
+  for name in app dev; do
+    harness_file
+    sed -i.bak -e "s#^  web:#  $name:#" -e "s#service: web#service: $name#" .ccmagic/harness.compose.yml && rm -f .ccmagic/harness.compose.yml.bak
+    run "$BIN/ccm-harness" check
+    check "$RC,$(jqval .rule)" "1,service-name" || return 1
+    git checkout -q -- . 2>/dev/null
+    git reset -q --hard HEAD~1
+  done
+  harness_file
+  run "$BIN/ccm-harness" check
+  check "$RC,$(jqval .status)" "0,ok"
+}
+
 harness_check_rejects_app_not_a_mapping() {
   need_compose || return 0
   harness_file
@@ -4487,7 +4503,7 @@ harness_up_down_round_trip() {
   need_docker || return 0
   harness_file
   run "$BIN/ccm-harness" up ENG-9
-  check "$RC,$(jqval .status),$(jqval .app_url),$(jqval .published_url)" "0,up,http://app:80,null"
+  check "$RC,$(jqval .status),$(jqval .app_url),$(jqval .published_url)" "0,up,http://web:80,null"
   docker exec ccm-eng-9-runner node -e 'fetch(process.env.APP_BASE_URL).then(r => r.text()).then(t => process.exit(t.includes("harness ok") ? 0 : 1))'
   run "$BIN/ccm-harness" down ENG-9
   check "$(jqval .status)" "down"

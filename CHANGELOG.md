@@ -2,6 +2,12 @@
 
 All notable changes to ccmagic are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.20.2] - 2026-10
+
+### Fixed
+
+- `ccm-harness check` refuses (rule `service-name`) an `app.service` named like a top-level domain on Chromium's HSTS preload list, such as `app` or `dev`. A bare name like `http://app:9030` is upgraded to HTTPS by Chromium, so every navigation failed with `ERR_SSL_PROTOCOL_ERROR` and the screenshots were blank (AIE-354). Rename the service, for example to `web`. The docs example and test fixtures now use `web`.
+
 ## [3.20.1] - 2026-10
 
 ### Fixed
