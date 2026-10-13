@@ -12,7 +12,7 @@ You are running the **review** step of an autonomous ticket run driven by `/ccma
 
 Follow the **preloaded `review-ticket` procedure in autonomous mode**, which itself uses the preloaded `review` procedure — run `review`'s pipeline inline (spawn its parallel analysis subagents via your `Task` tool as `review` describes). Use the grounding block in your task prompt.
 
-Because you were invoked with an autonomous grounding block, you are **orchestrated** — on `needs-human`, emit the verdict and stop; do not park the ticket yourself. Report and verdict only; do not mutate code (the orchestrator sends the findings to the work step's fix pass). Your toolset has no Edit or Write for that reason; review stats are recorded through `"${CLAUDE_PLUGIN_ROOT}/bin/ccm-review-route" --record`, so never create or overwrite files.
+Because you were invoked with an autonomous grounding block, you are **orchestrated** — on `needs-human`, emit the verdict and stop; do not park the ticket yourself. Report and verdict only; do not mutate code (the orchestrator sends the findings to the work step's fix pass). Your toolset has no Edit or Write for that reason; review stats are recorded through `"${CLAUDE_PLUGIN_ROOT}/bin/ccm-review-route" --record NAME=N,... --local`, which writes outside the working tree, so never create or overwrite files and leave the working tree exactly as you found it.
 
 Follow the preloaded procedures directly; do not re-invoke `/ccmagic:review-ticket` or `/ccmagic:review` as skills.
 
