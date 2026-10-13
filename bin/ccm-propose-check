@@ -90,14 +90,15 @@ while [ $# -gt 0 ]; do
     --base) [ $# -ge 2 ] || usage "--base needs a ref"; base_arg=$2; shift ;;
     --base=*) base_arg=${1#--base=} ;;
     -*) usage "unexpected flag $1" ;;
-    *) [[ $1 =~ ^[A-Za-z0-9._-]+$ ]] && [ "$1" != . ] && [ "$1" != .. ] ||
+    *) if ! [[ $1 =~ ^[A-Za-z0-9._-]+$ ]] || [ "$1" = . ] || [ "$1" = .. ]; then
          usage "change $(printf %q "$1") is not a plain folder name"
+       fi
        names+=("$1") ;;
   esac
   shift
 done
 if $probe; then
-  [ -z "$base_arg" ] && [ "${#names[@]}" -eq 0 ] || usage "--probe-reeve takes no other argument"
+  if [ -n "$base_arg" ] || [ "${#names[@]}" -gt 0 ]; then usage "--probe-reeve takes no other argument"; fi
 else
   [ "${#names[@]}" -gt 0 ] || usage "name at least one change"
 fi
