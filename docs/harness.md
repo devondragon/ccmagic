@@ -3,11 +3,11 @@
 A repository opts in by committing `.ccmagic/harness.compose.yml`: a Compose file for the app and what it needs, plus a top-level `x-ccm-harness` key that tells ccmagic how to use it. Without the file, auto-ticket lists visual criteria on the run summary's UAT checklist.
 
     services:
-      app: { build: { context: .., dockerfile: .ccmagic/harness.Dockerfile } }
+      web: { build: { context: .., dockerfile: .ccmagic/harness.Dockerfile } }
     x-ccm-harness:
       version: 1
       app:
-        service: app            # the service the runner talks to
+        service: web            # the service the runner talks to
         port: 9030              # its container port
         health: /actuator/health/readiness
         health_timeout_seconds: 900
@@ -21,6 +21,8 @@ A repository opts in by committing `.ccmagic/harness.compose.yml`: a Compose fil
       evidence: auto            # auto (push on a private repository) | push | off
       env:                      # literal values set in the runner
         DEV_TEST_EMAIL: seed@test.dev
+
+The `app.service` name becomes a bare hostname in the browser's URL (`http://web:9030`), and Chromium forces HTTPS for a bare name that is a preloaded top-level domain, such as `app` or `dev`. `ccm-harness check` refuses those names (rule `service-name`); name the service `web` or `<name>-web`.
 
 Paths in `x-ccm-harness` are relative to the repository root; paths in `services` follow Compose (relative to `.ccmagic/`). The runner image needs `node` (18 or newer). `ccm-harness` sets `APP_BASE_URL` (`http://<service>:<port>`) and `OUT_DIR` (`/out`) in the runner.
 

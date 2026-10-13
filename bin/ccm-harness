@@ -159,8 +159,14 @@ invalid() {
   exit 1
 }
 
+# Top-level domains on Chromium's HSTS preload list as whole TLDs (Google's
+# registry TLDs). A bare service name equal to one makes Chromium upgrade
+# http://<name>:<port> to HTTPS, so every navigation fails. Found on AIE-354,
+# where the service "app" gave blank screenshots (ERR_SSL_PROTOCOL_ERROR).
+HSTS_TLDS=" app dev page new day foo gle bank insurance mov zip esq prof phd nexus ing meme boo dad rsvp channel chrome google youtube android gmail eat fly how soy ads here "
+
 cmd_check() {
-  local ticket=${1:-} line raw cfg broken decl workdir image lock locked tag
+  local ticket=${1:-} line raw cfg broken decl workdir image lock locked tag svc
   [ -f "$HARNESS" ] || {
     jq -n --arg f "$HARNESS_REL" '{status: "absent", file: $f}'
     exit 2
@@ -221,6 +227,10 @@ cmd_check() {
     end' <<<"$decl") ||
     invalid declaration "x-ccm-harness could not be read"
   [ -z "$broken" ] || invalid declaration "x-ccm-harness: $broken"
+  svc=$(jq -r '.app.service | ascii_downcase' <<<"$decl")
+  case "$HSTS_TLDS" in
+    *" $svc "*) invalid service-name "app.service \"$svc\" is a top-level domain Chromium forces to HTTPS (HSTS preload), so http://$svc:$(jq -r '.app.port' <<<"$decl") fails in the browser; rename the service (for example $svc-web)" ;;
+  esac
   workdir=$(jq -r '.runner.workdir' <<<"$decl")
   image=$(jq -r '.runner.image' <<<"$decl")
   if [ -f "$ROOT/$workdir/package.json" ] &&
