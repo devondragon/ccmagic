@@ -299,6 +299,36 @@ ci_not_registered_when_required_checks_exist() {
   check "$(jqval .status)" "not-registered"
 }
 
+ci_conflicting_pr_is_not_waited_on() {
+  workflows
+  pr_open CONFLICTING
+  fx pr-checks '[]'
+  fx run-list '[]'
+  fx status '{"state":"pending","total_count":0,"statuses":[]}'
+  fx_err protection 'HTTP 404' 1
+  run "$BIN/ccm-ci-status" 7
+  check "$(jqval .status),$RC" "conflicting,6"
+}
+
+ci_watch_stops_on_conflicting_pr() {
+  workflows
+  pr_open CONFLICTING
+  fx pr-checks '[]'
+  fx run-list '[]'
+  fx status '{"state":"pending","total_count":0,"statuses":[]}'
+  fx_err protection 'HTTP 404' 1
+  run "$BIN/ccm-ci-status" 7 --watch --wait-key k --timeout-minutes 30 --interval 0
+  check "$(jqval .status),$RC" "conflicting,6"
+  check "$(find "$(git rev-parse --git-dir)/ccmagic" -type f | wc -l | tr -d ' ')" "0"
+}
+
+ci_conflicting_pr_with_checks_reports_checks() {
+  pr_open CONFLICTING
+  fx pr-checks '[{"name":"test","state":"SUCCESS","bucket":"pass"}]'
+  run "$BIN/ccm-ci-status" 7
+  check "$(jqval .status)" "green"
+}
+
 ci_watch_times_out_on_shared_deadline() {
   pr_open
   fx pr-checks '[{"name":"test","state":"IN_PROGRESS","bucket":"pending"}]' 8

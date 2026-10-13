@@ -2,6 +2,12 @@
 
 All notable changes to ccmagic are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.20.4] - 2026-10
+
+### Fixed
+
+- `ccm-ci-status` reports a new status, `conflicting` (exit 6), when nothing has registered for the head commit and the PR conflicts with its base. GitHub runs no `pull_request` workflows on a conflicting PR, so `--watch` used to wait out the whole `ci_timeout_minutes` and `auto-ticket` then parked with "CI never registered", which named the symptom and not the cause (AIE-351). `auto-ticket` now stops at once with the conflict as the reason, and `finish-ticket` and `merge` treat it as the conflict blocker the merge gate already reports.
+
 ## [3.20.3] - 2026-10
 
 ### Fixed

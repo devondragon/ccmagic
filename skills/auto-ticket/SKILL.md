@@ -196,6 +196,7 @@ Everything this pass pushes is measured against `H`, so bot reviews triggered *b
     - `green` or `no-ci` → CI is settled and green (record "no CI configured" in the run summary for `no-ci`).
     - `failed` → settled, not green. Carry `reason` and `checks` into 4d.
     - `timeout` → **route-and-stop** (reason: "CI did not complete within the timeout", plus the script's `reason`; a `not-registered` timeout means CI is configured but no run appeared for the head SHA).
+    - `conflicting` → **route-and-stop** (reason: "PR has merge conflicts with its base, so CI cannot run: {reason}"). GitHub runs no `pull_request` workflows on a conflicting PR, so there is nothing to wait for; the conflicts need resolving first.
     - `unreadable` → **route-and-stop** (reason: "cannot read CI status: {reason}").
 
     The script handles what this step used to spell out: the fine-grained-PAT 403 fallback to the Actions and commit-status APIs, the "no checks at all" case (no workflows and no required checks means `no-ci`; otherwise it keeps waiting for a run to register), and quick transient `gh` failures. Don't re-derive CI state from `gh pr checks` output.
