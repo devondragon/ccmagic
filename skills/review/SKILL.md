@@ -462,7 +462,7 @@ Create **TodoWrite** entries for all remaining (unfixed) findings, grouped by se
 
 ### 7d. Update review stats
 
-If conditional specialists were dispatched, record one entry per dispatched specialist with its finding count, for example `"${CLAUDE_PLUGIN_ROOT}/bin/ccm-review-route" --record testing=3,performance=0`. The script adds 1 dispatch and the findings to `context/review-stats.json`. Skip this when no specialist was dispatched.
+If conditional specialists were dispatched, record one entry per dispatched specialist with its finding count, for example `"${CLAUDE_PLUGIN_ROOT}/bin/ccm-review-route" --record testing=3,performance=0`. The script adds 1 dispatch and the findings to `context/review-stats.json`. In an autonomous run (the grounding block says `autonomous: true`), add `--local`: the counts then go to a file in the git common directory, outside the working tree, so nothing is left to commit after the review and the PR head stays on the commit the review names. The guard hook denies an autonomous `--record` without it. Skip this when no specialist was dispatched.
 
 ## Step 8: Handle Disputed Findings
 

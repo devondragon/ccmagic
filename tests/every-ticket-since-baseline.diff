@@ -59,7 +59,7 @@
  Follow the **preloaded `review-ticket` procedure in autonomous mode**, which itself uses the preloaded `review` procedure — run `review`'s pipeline inline (spawn its parallel analysis subagents via your `Task` tool as `review` describes). Use the grounding block in your task prompt.
  
 -Because you were invoked with an autonomous grounding block, you are **orchestrated** — on `needs-human`, emit the verdict and stop; do not park the ticket yourself. Report and verdict only; do not mutate code (the orchestrator sends the findings to the work step's fix pass). Your toolset has no Edit or Write for that reason; review stats are recorded through `ccm-review-route --record`, so never create or overwrite files.
-+Because you were invoked with an autonomous grounding block, you are **orchestrated** — on `needs-human`, emit the verdict and stop; do not park the ticket yourself. Report and verdict only; do not mutate code (the orchestrator sends the findings to the work step's fix pass). Your toolset has no Edit or Write for that reason; review stats are recorded through `"${CLAUDE_PLUGIN_ROOT}/bin/ccm-review-route" --record`, so never create or overwrite files.
++Because you were invoked with an autonomous grounding block, you are **orchestrated** — on `needs-human`, emit the verdict and stop; do not park the ticket yourself. Report and verdict only; do not mutate code (the orchestrator sends the findings to the work step's fix pass). Your toolset has no Edit or Write for that reason; review stats are recorded through `"${CLAUDE_PLUGIN_ROOT}/bin/ccm-review-route" --record NAME=N,... --local`, which writes outside the working tree, so never create or overwrite files and leave the working tree exactly as you found it.
  
  Follow the preloaded procedures directly; do not re-invoke `/ccmagic:review-ticket` or `/ccmagic:review` as skills.
  
@@ -599,6 +599,15 @@
 +In short: run `"${CLAUDE_PLUGIN_ROOT}/bin/ccm-external-review" --tools codex --dimensions adversarial` (fall back to the bare name `ccm-external-review` only when the path form is not found) in the background alongside the Step 3 agents in an interactive run, or in the foreground with a 600000 ms timeout when running autonomously. The script checks availability, bounds the pass with `timeout --kill-after=30 300`, and classifies it by exit status; act on its `status` rather than re-deriving it. Codex is additive and never blocking — every failure mode continues the review with Explore agent findings only.
  
  ---
+ 
+@@ -462,7 +462,7 @@ Create **TodoWrite** entries for all remaining (unfixed) findings, grouped by se
+ 
+ ### 7d. Update review stats
+ 
+-If conditional specialists were dispatched, record one entry per dispatched specialist with its finding count, for example `"${CLAUDE_PLUGIN_ROOT}/bin/ccm-review-route" --record testing=3,performance=0`. The script adds 1 dispatch and the findings to `context/review-stats.json`. Skip this when no specialist was dispatched.
++If conditional specialists were dispatched, record one entry per dispatched specialist with its finding count, for example `"${CLAUDE_PLUGIN_ROOT}/bin/ccm-review-route" --record testing=3,performance=0`. The script adds 1 dispatch and the findings to `context/review-stats.json`. In an autonomous run (the grounding block says `autonomous: true`), add `--local`: the counts then go to a file in the git common directory, outside the working tree, so nothing is left to commit after the review and the PR head stays on the commit the review names. The guard hook denies an autonomous `--record` without it. Skip this when no specialist was dispatched.
+ 
+ ## Step 8: Handle Disputed Findings
  
 ### skills/test/SKILL.md
 @@ -103,7 +103,7 @@ Run test suites in parallel when they are independent:

@@ -527,6 +527,24 @@ guard_normal_push_allowed_autonomously() {
   check "$(denied)" "allow"
 }
 
+guard_autonomous_review_stats_need_local() {
+  hook '"${CLAUDE_PLUGIN_ROOT}/bin/ccm-review-route" --record testing=3,performance=0' ccmagic:auto-review
+  check "$(denied)" "deny"
+  [[ $(jq -r .hookSpecificOutput.permissionDecisionReason <<<"$OUT") == *"--local"* ]]
+  hook '"${CLAUDE_PLUGIN_ROOT}/bin/ccm-review-route" --record testing=3 --local' ccmagic:auto-review
+  check "$(denied)" "allow"
+  config 'autonomous: true'
+  hook 'ccm-review-route --record testing=3'
+  check "$(denied)" "deny"
+}
+
+guard_interactive_review_stats_allowed() {
+  hook 'ccm-review-route --record testing=3'
+  check "$(denied)" "allow"
+  hook 'ccm-review-route main...HEAD' ccmagic:auto-review
+  check "$(denied)" "allow"
+}
+
 # ---- pre-tool-use-guard: sensitive files -----------------------------------
 
 guard_add_env_denied() {
@@ -2268,6 +2286,43 @@ route_record_creates_stats_file() {
   check "$RC,$(jq -c . context/review-stats.json)" '0,{"performance":{"dispatched":1,"findings":1}}'
 }
 
+route_record_local_leaves_the_tree_clean() {
+  mkdir -p context
+  echo '{"testing":{"dispatched":9,"findings":0}}' >context/review-stats.json
+  git add -A && git -c user.email=t@t -c user.name=t commit -q -m stats
+  run "$BIN/ccm-review-route" --record testing=0 --local
+  check "$RC,$(jqval '.gated | map(.specialist) | join(",")')" "0,testing"
+  check "$(git status --porcelain)" ""
+  check "$(jq -c . .git/ccmagic/review-stats.json)" '{"testing":{"dispatched":1,"findings":0}}'
+  check "$(jqval .tree_stats_file)" "$(pwd -P)/context/review-stats.json"
+  seed_branch a.ts 1
+  run "$BIN/ccm-review-route"
+  check "$(jq -c .gated <<<"$OUT"),$(jqval .local_stats_file)" "[{\"specialist\":\"testing\",\"dispatched\":10}],$(pwd -P)/.git/ccmagic/review-stats.json"
+}
+
+route_record_local_is_shared_by_worktrees() {
+  git worktree add -q "$T/wt" -b other
+  (cd "$T/wt" && "$BIN/ccm-review-route" --record migration=2 --local >/dev/null)
+  check "$(git -C "$T/wt" status --porcelain)" ""
+  check "$(jq -c . .git/ccmagic/review-stats.json)" '{"migration":{"dispatched":1,"findings":2}}'
+}
+
+route_local_needs_record() {
+  run "$BIN/ccm-review-route" --local
+  check "$RC" "4"
+}
+
+route_record_ignores_a_bad_local_file_when_routing() {
+  mkdir -p .git/ccmagic
+  echo '[1]' >.git/ccmagic/review-stats.json
+  run "$BIN/ccm-review-route" --record testing=1 --local
+  check "$RC" "3"
+  seed_branch a.ts 1
+  run "$BIN/ccm-review-route"
+  check "$RC,$(jqval '.gated | length')" "0,0"
+  [[ $(jqval .stats_error) == *"its counts are ignored"* ]]
+}
+
 route_record_leaves_bad_stats_file_alone() {
   mkdir -p context
   echo '[1,2]' >context/review-stats.json
@@ -3902,6 +3957,21 @@ skills_hooks_only_accept_tasks_done() {
     grep -E '^[-+]' | grep -vE '^(\+\+\+|---) ' || true)
   check "$changed" "+#   tasks_done: [ids]            (optional: work step on a Reeve spec ticket only)
 +        if (l ~ /^[[:space:]]*tasks_done:/) continue
++#   Review stats: \`ccm-review-route --record\` without \`--local\`.
++#     Autonomous: denied. The tracked context/review-stats.json it would modify
++#     gets committed after the review, moving the PR head off the reviewed
++#     commit, and a merge gate bound to that head parks the PR (AIE-321).
++#     Interactive: allowed.
++is_record=false
++has 'ccm-review-route[^;&|]*[[:space:]]--record([[:space:]=]|\$)' && is_record=true
+-if [ \"\$is_merge\$is_push\$is_add\$is_commit\" = falsefalsefalsefalse ]; then
++if [ \"\$is_merge\$is_push\$is_add\$is_commit\$is_record\" = falsefalsefalsefalsefalse ]; then
++# ---- review stats (autonomous only) ----------------------------------------
++
++if [ \"\$is_record\" = true ] && [ \"\$autonomous\" = true ] && ! has 'ccm-review-route[^;&|]*[[:space:]]--local([[:space:]]|\$)'; then
++  deny \"ccmagic: an autonomous run records review stats with --local (ccm-review-route --record NAME=N,... --local), so the tracked context/review-stats.json stays unmodified. A modified tracked file gets committed after the review and moves the PR head off the commit the review names.\"
++fi
++
 -      deny \"ccmagic: autonomous runs never force-push (target: \${target:-unknown}). If the branch has diverged, rebase onto the remote (git pull --rebase) and push normally; if that conflicts, return needs-human.\"
 +      deny \"ccmagic: autonomous runs never force-push (target: \${target:-unknown}). If the branch has diverged, rebase onto the remote (git pull --rebase origin \${target:-<branch>}) and push normally; if that conflicts, return needs-human.\"
 -  ccmagic:auto-work|ccmagic:auto-feedback|ccmagic:auto-validate|ccmagic:auto-finish|ccmagic:auto-push) allowed=\"done needs-human\" ;;

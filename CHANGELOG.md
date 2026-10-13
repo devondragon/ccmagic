@@ -2,6 +2,12 @@
 
 All notable changes to ccmagic are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.20.5] - 2026-10
+
+### Fixed
+
+- An autonomous review no longer leaves `context/review-stats.json` modified. The session then committed the file after the review, which moved the PR head off the commit the review names, so Reeve parked the PR (AIE-321 as `merge-conflict`, AIE-351 as `review-not-clean`). `ccm-review-route --record ... --local` writes the counts to `ccmagic/review-stats.json` in the git common directory, outside the working tree and shared by every worktree of the clone. Routing and `--record` sum both files. The review skill and the `auto-review` agent pass `--local` in autonomous runs, and the PreToolUse guard denies an autonomous `--record` without it.
+
 ## [3.20.4] - 2026-10
 
 ### Fixed

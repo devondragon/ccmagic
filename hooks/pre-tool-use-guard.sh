@@ -28,6 +28,11 @@
 #     conventional-commit pattern in hooks/lib-commit.sh.
 #     Autonomous: denied, with the expected format. Interactive: allowed (the
 #     PostToolUse hook prints a warning instead).
+#   Review stats: `ccm-review-route --record` without `--local`.
+#     Autonomous: denied. The tracked context/review-stats.json it would modify
+#     gets committed after the review, moving the PR head off the reviewed
+#     commit, and a merge gate bound to that head parks the PR (AIE-321).
+#     Interactive: allowed.
 #
 # Exit 0 with no output allows the command. A deny prints the PreToolUse
 # decision JSON and exits 0. If jq is missing, everything is allowed.
@@ -62,8 +67,10 @@ fi
 has "${seg}${envs}${gitcmd}push([[:space:]]|$)" && is_push=true
 has "${seg}${envs}${gitcmd}add([[:space:]]|$)" && is_add=true
 has "${seg}${envs}${gitcmd}commit([[:space:]]|$)" && is_commit=true
+is_record=false
+has 'ccm-review-route[^;&|]*[[:space:]]--record([[:space:]=]|$)' && is_record=true
 
-if [ "$is_merge$is_push$is_add$is_commit" = falsefalsefalsefalse ]; then
+if [ "$is_merge$is_push$is_add$is_commit$is_record" = falsefalsefalsefalsefalse ]; then
   exit 0
 fi
 
@@ -95,6 +102,12 @@ cfg=$(ccm_config_json 2>/dev/null || echo '{}')
 autonomous=false
 case $agent_type in ccmagic:auto-*) autonomous=true ;; esac
 [ "$(jq -r '.autonomous // "false"' <<<"$cfg")" = true ] && autonomous=true
+
+# ---- review stats (autonomous only) ----------------------------------------
+
+if [ "$is_record" = true ] && [ "$autonomous" = true ] && ! has 'ccm-review-route[^;&|]*[[:space:]]--local([[:space:]]|$)'; then
+  deny "ccmagic: an autonomous run records review stats with --local (ccm-review-route --record NAME=N,... --local), so the tracked context/review-stats.json stays unmodified. A modified tracked file gets committed after the review and moves the PR head off the commit the review names."
+fi
 
 # ---- merge gate ------------------------------------------------------------
 

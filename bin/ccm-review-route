@@ -4,7 +4,7 @@
 # Usage:
 #   ccm-review-route [RANGE | PR]           route a git diff range or a PR
 #   ccm-review-route --diff-file FILE|-     route a unified diff (- is stdin)
-#   ccm-review-route --record NAME=N[,NAME=N...]
+#   ccm-review-route --record NAME=N[,NAME=N...] [--local]
 #                                           add one review's specialist counts
 #
 # RANGE is anything `git diff` accepts. With no argument the range is
@@ -24,7 +24,8 @@
 #
 # Output: {route, reason, line, source, files, lines, additions, deletions,
 # file_list, risk_matches: [{path, patterns}], new_types: [{path, text}],
-# error_flow: [{path, text}], failed, stats_file, gated, stats_error?}.
+# error_flow: [{path, text}], failed, stats_file, local_stats_file?, gated,
+# stats_error?}.
 # `line` is the routing line the skill prints. `failed` names the conditions
 # that forced DEEP (files, lines, risk_path, new_types, error_flow).
 #
@@ -34,10 +35,19 @@
 # dispatches; security is never gated. --record adds 1 to `dispatched` and N
 # to `findings` for each NAME=N and prints {stats_file, stats, gated}.
 #
+# --record --local writes to ccmagic/review-stats.json in the git common
+# directory instead, which no commit can pick up and which every worktree of
+# the clone shares. Autonomous runs use it: a review that leaves a tracked file
+# modified gets that file committed after the review, which moves the PR head
+# off the commit the review names (AIE-321). Routing, and the `gated` list
+# --record prints, read the sum of both files; the output's `local_stats_file`
+# names the second one.
+#
 # Exit codes:
 #   0  route decided, or stats recorded
 #   3  couldn't read the diff (bad range, not a git repository, gh failed,
-#      missing file) or, with --record, the existing stats file
+#      missing file) or, with --record, the existing stats file, or --local
+#      ran outside a git repository
 #   4  usage error
 
 set -euo pipefail
@@ -56,12 +66,13 @@ GATE_MIN_DISPATCHES=10
 
 usage() { echo "ccm-review-route: $1" >&2; exit 4; }
 
-target="" diff_file="" record="" have_target=false
+target="" diff_file="" record="" have_target=false local=false
 while [ $# -gt 0 ]; do
   case $1 in
     --diff-file) [ -n "${2:-}" ] || usage "--diff-file needs a file or -"; diff_file=$2; shift ;;
     --record) [ -n "${2:-}" ] || usage "--record needs NAME=N[,NAME=N...]"; record=$2; shift ;;
-    -h|--help) sed -n '2,41p' "$0"; exit 0 ;;
+    --local) local=true ;;
+    -h|--help) sed -n '2,52p' "$0"; exit 0 ;;
     -) usage "use --diff-file - to read a diff from stdin" ;;
     -*) usage "unknown flag $1" ;;
     *) $have_target && usage "more than one range or PR given"; target=$1; have_target=true ;;
@@ -75,9 +86,34 @@ fi
 if $have_target && [ -n "$diff_file" ]; then
   usage "give a range or PR, or --diff-file, not both"
 fi
+if $local && [ -z "$record" ]; then
+  usage "--local goes with --record"
+fi
 
 root=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
 stats_file=$root/context/review-stats.json
+# The common directory is shared by every worktree of the clone; empty outside
+# a repository.
+local_stats_file=""
+if common=$(git rev-parse --git-common-dir 2>/dev/null); then
+  local_stats_file=$(cd "$common" && pwd -P)/ccmagic/review-stats.json
+fi
+
+# read_stats FILE: the file's JSON object on stdout, {} when it is absent;
+# exit 1 when it is not a JSON object.
+read_stats() {
+  [ -f "$1" ] || { echo '{}'; return 0; }
+  jq -c 'if type == "object" then . else error("not an object") end' "$1" 2>/dev/null
+}
+
+# sum_stats A B: both stats objects added up per specialist.
+sum_stats() {
+  jq -c -n --argjson a "$1" --argjson b "$2" '
+    reduce ($b | to_entries[] | select(.value | type == "object")) as $e
+      ($a | with_entries(select(.value | type == "object"));
+       .[$e.key].dispatched = ((.[$e.key].dispatched // 0) + ($e.value.dispatched // 0))
+       | .[$e.key].findings = ((.[$e.key].findings // 0) + ($e.value.findings // 0)))'
+}
 
 # gated STATS_JSON: specialists to skip, as a JSON array of {specialist, dispatched}.
 gated() {
@@ -101,24 +137,31 @@ if [ -n "$record" ]; then
     add=$(jq -c --arg k "$name" --argjson n "$n" '.[$k] = $n' <<<"$add")
   done
 
-  stats='{}'
-  if [ -f "$stats_file" ]; then
-    if ! stats=$(jq -c 'if type == "object" then . else error("not an object") end' "$stats_file" 2>/dev/null); then
-      jq -n --arg f "$stats_file" '{error: "stats file is not a JSON object; left unchanged", stats_file: $f}'
-      exit 3
-    fi
+  target_file=$stats_file other_file=$local_stats_file
+  if $local; then
+    [ -n "$local_stats_file" ] || { jq -n '{error: "--local needs a git repository"}'; exit 3; }
+    target_file=$local_stats_file other_file=$stats_file
+  fi
+  if ! stats=$(read_stats "$target_file"); then
+    jq -n --arg f "$target_file" '{error: "stats file is not a JSON object; left unchanged", stats_file: $f}'
+    exit 3
   fi
   stats=$(jq -c --argjson add "$add" '
     reduce ($add | to_entries[]) as $e (.;
       .[$e.key] = ((.[$e.key] // {}) | if type == "object" then . else {} end)
       | .[$e.key].dispatched = ((.[$e.key].dispatched // 0) + 1)
       | .[$e.key].findings = ((.[$e.key].findings // 0) + $e.value))' <<<"$stats")
-  mkdir -p "$(dirname "$stats_file")"
-  tmp=$(mktemp "$stats_file.XXXXXX")
+  mkdir -p "$(dirname "$target_file")"
+  tmp=$(mktemp "$target_file.XXXXXX")
   jq . <<<"$stats" >"$tmp"
-  mv -f "$tmp" "$stats_file"
-  jq -n --arg f "$stats_file" --argjson s "$stats" --argjson g "$(gated "$stats")" \
-    '{stats_file: $f, stats: $s, gated: $g}'
+  mv -f "$tmp" "$target_file"
+  # A bad other file gates nothing extra; routing reports it.
+  other='{}'
+  [ -n "$other_file" ] && { other=$(read_stats "$other_file") || other='{}'; }
+  jq -n --arg f "$target_file" --arg tree "$stats_file" --arg loc "$local_stats_file" --argjson s "$stats" \
+    --argjson g "$(gated "$(sum_stats "$stats" "$other")")" \
+    '{stats_file: $f, stats: $s, gated: $g} + (if $f == $tree then {} else {tree_stats_file: $tree} end)
+     + (if $loc == "" or $f == $loc then {} else {local_stats_file: $loc} end)'
   exit 0
 fi
 
@@ -223,18 +266,24 @@ parsed=$(printf '%s\n' "$diff" | awk '
 
 # ---- decide ------------------------------------------------------------------
 
-stats='{}' stats_error=""
-if [ -f "$stats_file" ]; then
-  stats=$(jq -c 'if type == "object" then . else error("not an object") end' "$stats_file" 2>/dev/null) || {
-    stats='{}' stats_error="context/review-stats.json is not a JSON object; nothing gated"
-  }
+stats_error=""
+stats=$(read_stats "$stats_file") || {
+  stats='{}' stats_error="context/review-stats.json is not a JSON object; its counts are ignored"
+}
+if [ -n "$local_stats_file" ]; then
+  if local_stats=$(read_stats "$local_stats_file"); then
+    stats=$(sum_stats "$stats" "$local_stats")
+  else
+    stats_error="${stats_error:+$stats_error; }$local_stats_file is not a JSON object; its counts are ignored"
+  fi
 fi
 
 printf '%s\n' "$parsed" | jq -R -s \
   --arg risk "$RISK_PATTERNS" \
   --argjson max_files "$MAX_FILES" --argjson max_lines "$MAX_LINES" \
   --arg kind "$source_kind" --arg value "$source_value" \
-  --arg stats_file "$stats_file" --argjson gated "$(gated "$stats")" --arg stats_error "$stats_error" '
+  --arg stats_file "$stats_file" --arg local_stats_file "$local_stats_file" \
+  --argjson gated "$(gated "$stats")" --arg stats_error "$stats_error" '
   def trunc: if length > 120 then .[0:117] + "..." else . end;
   def plural($n; $w): "\($n) \($w)\(if $n == 1 then "" else "s" end)";
   ($risk | split("\\s+"; null) | map(select(. != ""))) as $patterns
@@ -294,4 +343,5 @@ printf '%s\n' "$parsed" | jq -R -s \
      file_list: [$files[].path],
      risk_matches: $risk_matches, new_types: $new_types, error_flow: $error_flow,
      failed: $failed, stats_file: $stats_file, gated: $gated}
+  + (if $local_stats_file == "" then {} else {local_stats_file: $local_stats_file} end)
   + (if $stats_error == "" then {} else {stats_error: $stats_error} end)'
