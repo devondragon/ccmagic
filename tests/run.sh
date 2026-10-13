@@ -3816,9 +3816,9 @@ strip_spec_only() {
 # (RV-84). Their directories are left out of the comparison, and
 # skills_standalone_not_on_ticket_path checks that no ticket-path file names
 # them.
-STANDALONE_SKILLS_SINCE_BASELINE=(spec-baseline)
+STANDALONE_SKILLS_SINCE_BASELINE=(spec-baseline propose)
 # Their scripts, which docs/cyrus-deployment.md need not grant.
-STANDALONE_SCRIPTS_SINCE_BASELINE=(ccm-baseline-check)
+STANDALONE_SCRIPTS_SINCE_BASELINE=(ccm-baseline-check ccm-propose-check)
 # Step agents added since $SPEC_BASELINE. They are new files, so the every-ticket
 # comparison has no baseline for them; auto-ticket's changes that run them are in
 # $EVERY_TICKET_DIFF.
@@ -3935,7 +3935,7 @@ skills_run_record_openspec_key_only_for_spec_tickets() {
 # agent, hook, script, or the Cyrus deployment doc names them or the script
 # they bring, and none of them existed at the baseline (RV-84).
 skills_standalone_not_on_ticket_path() {
-  local name f hits=
+  local name f pat hits=
   local paths=(skills/auto-ticket skills/work-ticket skills/finish-ticket skills/review-ticket skills/pr-feedback
     skills/validate skills/review skills/push skills/pr agents hooks bin/ccm-openspec-scope bin/ccm-spec-block
     bin/ccm-finish-guard docs/cyrus-deployment.md)
@@ -3945,7 +3945,10 @@ skills_standalone_not_on_ticket_path() {
       git -C "$ROOT" cat-file -e "$SPEC_BASELINE:skills/$name" 2>/dev/null && hits+=" $name:at-baseline"
       [ -f "$ROOT/skills/$name/SKILL.md" ] || hits+=" $name:no-skill"
     fi
-    for f in $(git -C "$ROOT" grep -lF -e "$name" -- "${paths[@]}" || true); do hits+=" $name:$f"; done
+    # A skill is named as ccmagic:<name> or by its folder: "propose" is also
+    # an ordinary word in the ticket-path prose.
+    if [ -d "$ROOT/skills/$name" ]; then pat=(-e "ccmagic:$name" -e "skills/$name"); else pat=(-e "$name"); fi
+    for f in $(git -C "$ROOT" grep -lF "${pat[@]}" -- "${paths[@]}" || true); do hits+=" $name:$f"; done
   done
   check "${hits# }" ""
 }
@@ -4285,6 +4288,272 @@ skills_spec_baseline_workflow() {
   grep -qF '`/ccmagic:spec-baseline' "$ROOT/README.md" || missing+=" readme"
   grep -qF '/ccmagic:spec-baseline' "$ROOT/skills/help/SKILL.md" || missing+=" help"
   grep -qF 'RV-84' "$ROOT/CHANGELOG.md" || missing+=" changelog"
+  check "${missing# }" ""
+}
+
+# ---- ccm-propose-check and /ccmagic:propose (RV-99) ---------------------------
+
+PROPOSE_FIXTURE=$ROOT/tests/fixtures/propose
+PC=openspec/changes/add-reset
+
+# pr_repo: the fixture as a repository. The code, the current spec, and the
+# config are committed on main; the change add-reset is left uncommitted on a
+# branch, as the skill has it when it runs the check.
+pr_repo() {
+  cp -R "$PROPOSE_FIXTURE/." .
+  git add src openspec/specs openspec/config.yaml
+  git -c user.email=t@t -c user.name=t commit -q -m base
+  git checkout -q -b feat/add-reset
+}
+
+pcheck() { run "$BIN/ccm-propose-check" "$@"; }
+prules() { jq -r '[.findings[].rule] | unique | join(",")' <<<"$OUT"; }
+
+propose_fixture_is_clean() {
+  pr_repo
+  pcheck add-reset
+  check "$RC,$(jqval .clean),$(jq -c '.changes' <<<"$OUT"),$(jqval '.findings | length')" \
+    '0,true,[{"name":"add-reset","sections":2,"tasks":4,"deltas":2}],0'
+  check "$(jqval .base.ref),$(jqval .base.commit)" "merge-base of HEAD and main,$(git rev-parse main)"
+  # Committed on the branch, the change still passes.
+  gcommit 'docs(openspec): propose add-reset'
+  pcheck add-reset
+  check "$RC,$(prules)" "0,"
+}
+
+propose_fixture_passes_openspec_validate() {
+  if ! command -v openspec >/dev/null 2>&1; then
+    echo "    skipped: openspec CLI not on PATH (CI installs @fission-ai/openspec@1.14.1)"
+    return 0
+  fi
+  cp -R "$PROPOSE_FIXTURE/." .
+  OPENSPEC_TELEMETRY=0 DO_NOT_TRACK=1 openspec validate add-reset --strict --no-interactive >"$T/validate" 2>&1 || { sed 's/^/    /' "$T/validate"; return 1; }
+}
+
+propose_changed_path_outside_change() {
+  pr_repo
+  echo '// edited' >>src/counter.js
+  echo notes >notes.txt
+  mkdir -p openspec/changes/other && echo x >openspec/changes/other/proposal.md
+  echo extra >>openspec/specs/counting/spec.md
+  pcheck add-reset
+  check "$RC,$(prules),$(jqval '[.findings[].file] | join(" ")')" \
+    "1,outside-change,notes.txt openspec/changes/other/proposal.md openspec/specs/counting/spec.md src/counter.js"
+  # A second named change is inside the allowlist.
+  pcheck add-reset other
+  check "$(jqval '[.findings[] | select(.rule == "outside-change") | .file] | join(" ")')" "notes.txt openspec/specs/counting/spec.md src/counter.js"
+}
+
+propose_change_name() {
+  pr_repo
+  local n
+  for n in Add-Totals add_totals sync-linear add-as-refine-flag user-profiles; do
+    cp -R "$PC" "openspec/changes/$n"
+  done
+  command rm -rf "$PC"
+  pcheck Add-Totals add_totals sync-linear add-as-refine-flag user-profiles
+  check "$RC,$(prules),$(jqval '[.findings[] | select(.rule == "change-name")] | length')" "1,change-name,5"
+  check "$(jqval '.findings[] | select(.file | endswith("/sync-linear")) | .message')" "change sync-linear holds linear, which Reeve refuses in a change name"
+  # A name that is not a plain folder name is a usage error.
+  pcheck ../add-reset
+  check "$RC" "4"
+  pcheck
+  check "$RC" "4"
+}
+
+propose_name_collision() {
+  pr_repo
+  # An active change of that name on the default branch.
+  mkdir -p openspec/changes/add-reset-old && cp -R "$PC/." openspec/changes/add-reset-old/
+  mkdir -p openspec/changes/archive/2026-09-01-add-total && echo x >openspec/changes/archive/2026-09-01-add-total/tasks.md
+  git add openspec/changes/add-reset-old openspec/changes/archive && gcommit 'earlier changes' && git branch -f main HEAD
+  cp -R openspec/changes/add-reset-old openspec/changes/add-total
+  pcheck add-reset-old add-total
+  check "$RC,$(prules)" "1,name-collision"
+  check "$(jqval '[.findings[] | select(.rule == "name-collision") | .message] | join("|")')" \
+    "a change named add-reset-old already exists at the base|openspec/changes/archive/2026-09-01-add-total is already an archive of a change named add-total"
+  pcheck archive
+  check "$(jqval '[.findings[].rule] | index("name-collision") != null')" "true"
+}
+
+propose_missing_files_and_folder() {
+  pr_repo
+  rm "$PC/proposal.md" "$PC/.openspec.yaml"
+  pcheck add-reset no-such-change
+  check "$RC,$(prules)" "1,missing-file,no-change-folder"
+  check "$(jqval '[.findings[] | select(.rule == "missing-file") | .file] | join(" ")')" "$PC/.openspec.yaml $PC/proposal.md"
+  check "$(jq -c '[.changes[] | [.name, .sections]]' <<<"$OUT")" '[["add-reset",2],["no-such-change",0]]'
+}
+
+propose_meta() {
+  pr_repo
+  printf 'schema: spec-driven\nowner: me\nskip_specs: yes\n' >|"$PC/.openspec.yaml"
+  pcheck add-reset
+  check "$RC,$(prules),$(jqval '[.findings[].line] | join(" ")')" "1,meta,2 3"
+  printf 'created: 2026-10-12\nretire_capabilities: true\n' >|"$PC/.openspec.yaml"
+  pcheck add-reset
+  check "$RC,$(prules),$(jqval '.findings[0].message')" '1,meta,the file has no "schema: spec-driven" line'
+  printf 'schema: "spec-driven"  # the default\ncreated: 2026-10-12\ngoal: reset\nskip_specs: false\n' >|"$PC/.openspec.yaml"
+  pcheck add-reset
+  check "$RC,$(prules)" "0,"
+}
+
+propose_tasks_parse() {
+  pr_repo
+  printf '# Tasks\n\n- [ ] 1.1 Do it\n' >|"$PC/tasks.md"
+  pcheck add-reset
+  check "$RC,$(prules),$(jqval '.findings[0].line')" "1,task-outside-section,3"
+  printf '## 1. One\n\n- [ ] 2.1 Wrong section\n' >|"$PC/tasks.md"
+  pcheck add-reset
+  check "$RC,$(prules)" "1,task-prefix"
+  printf 'No sections here.\n' >|"$PC/tasks.md"
+  pcheck add-reset
+  check "$RC,$(prules),$(jqval '.findings[0].line')" "1,no-section,0"
+  printf '## 1. One\n\n- [ ] 1.1 Fine\n\n## 2. Two\n\nNo tasks.\n' >|"$PC/tasks.md"
+  pcheck add-reset
+  check "$RC,$(prules),$(jqval '.findings[0].line')" "1,empty-section,5"
+}
+
+propose_task_checked_and_section_count() {
+  pr_repo
+  bedit "$PC/tasks.md" 's/^- \[ \] 2\.1 /- [x] 2.1 /'
+  pcheck add-reset
+  check "$RC,$(prules),$(jqval '.findings[0].message')" "1,task-checked,task 2.1 is ticked; every box in a new change is empty"
+  printf '## 1. A\n\n- [ ] 1.1 a\n\n## 2. B\n\n- [ ] 2.1 b\n\n## 3. C\n\n- [ ] 3.1 c\n' >|"$PC/tasks.md"
+  pcheck add-reset
+  check "$RC,$(prules)" "0,"
+  printf '\n## 4. D\n\n- [ ] 4.1 d\n' >>"$PC/tasks.md"
+  pcheck add-reset
+  check "$RC,$(prules),$(jqval '.changes[0].sections')" "1,section-count,4"
+}
+
+propose_new_capability_purpose() {
+  pr_repo
+  bedit "$PC/specs/resetting/spec.md" '/^## Purpose$/d; /^Defines how a counter is set back/d'
+  pcheck add-reset
+  check "$RC,$(prules),$(jqval '.findings[0].file')" "1,new-capability-purpose,$PC/specs/resetting/spec.md"
+  # A Purpose heading with no text is no Purpose.
+  printf '## Purpose\n\n' | cat - "$PC/specs/resetting/spec.md" >"$T/spec" && cp "$T/spec" "$PC/specs/resetting/spec.md"
+  pcheck add-reset
+  check "$RC,$(prules)" "1,new-capability-purpose"
+  # A Purpose inside a code fence does not count either.
+  { printf '%s\n' '```' '## Purpose' '' 'Defines how a counter is set back to its starting value, quoted.' '```' ''
+    sed '1,3d' "$PROPOSE_FIXTURE/$PC/specs/resetting/spec.md"; } >"$PC/specs/resetting/spec.md"
+  pcheck add-reset
+  check "$RC,$(prules)" "1,new-capability-purpose"
+  # A capability with a current spec needs no Purpose in its delta.
+  cp "$PROPOSE_FIXTURE/$PC/specs/resetting/spec.md" "$PC/specs/resetting/spec.md"
+  pcheck add-reset
+  check "$RC,$(prules)" "0,"
+}
+
+# shellcheck disable=SC2016 # literal backticks in the delta markdown
+propose_requirement_not_found() {
+  pr_repo
+  bedit "$PC/specs/counting/spec.md" 's/^### Requirement: Increment$/### Requirement: Increments/'
+  printf '\n## REMOVED Requirements\n\n### Requirement: Count display\n\n### Requirement: Count text\n\n## RENAMED Requirements\n\n- FROM: `### Requirement: Counter start`\n- TO: `### Requirement: Counter creation`\n- FROM: `### Requirement: Counter begin`\n- TO: `### Requirement: Counter birth`\n' >>"$PC/specs/counting/spec.md"
+  pcheck add-reset
+  check "$RC,$(prules),$(jqval '[.findings[].line] | join(" ")')" "1,requirement-not-found,3 18 24"
+  check "$(jqval '.findings[0].message')" 'modified requirement "Increments" is not in openspec/specs/counting/spec.md at the base; copy the name exactly'
+  # MODIFIED for a capability with no spec.
+  pr_reset
+  mkdir -p "$PC/specs/totals" && sed 's/^## MODIFIED/## MODIFIED/' "$PC/specs/counting/spec.md" >"$PC/specs/totals/spec.md"
+  printf '## Purpose\n\nTotals across counters, a capability the code does not have yet.\n\n' | cat - "$PC/specs/totals/spec.md" >"$T/spec" && cp "$T/spec" "$PC/specs/totals/spec.md"
+  pcheck add-reset
+  check "$RC,$(prules),$(jqval '.findings[0].message')" '1,requirement-not-found,modified requirement "Increment": capability totals has no spec at the base'
+}
+
+pr_reset() { command rm -rf "$PC" && cp -R "$PROPOSE_FIXTURE/$PC" "$PC"; }
+
+propose_capability_name_and_skip_specs() {
+  pr_repo
+  mkdir -p "$PC/specs/re_setting" "$PC/specs/identity/user-auth"
+  cp "$PC/specs/resetting/spec.md" "$PC/specs/re_setting/spec.md"
+  cp "$PC/specs/resetting/spec.md" "$PC/specs/identity/user-auth/spec.md"
+  pcheck add-reset
+  check "$RC,$(prules),$(jqval '[.findings[].file] | join(" ")')" "1,capability-name,$PC/specs/identity/user-auth/spec.md $PC/specs/re_setting/spec.md"
+  pr_reset
+  printf 'schema: spec-driven\nskip_specs: true\n' >|"$PC/.openspec.yaml"
+  pcheck add-reset
+  check "$RC,$(prules)" "1,skip-specs-deltas"
+}
+
+propose_dash_and_personal_identifier() {
+  pr_repo
+  bedit "$PC/proposal.md" $'s/^- Add a reset operation/- Add a reset operation \xe2\x80\x94/'
+  bedit "$PC/tasks.md" $'s/^- \\[ \\] 1.2 Add tests/- [ ] 1.2 Add tests \xe2\x80\x93/'
+  bedit "$PC/specs/resetting/spec.md" 's/^Defines how a counter is set back/Ask jane at example.com; defines how a counter is set back/'
+  printf '\nContact: someone@example.org\n' >>"$PC/proposal.md"
+  pcheck add-reset
+  check "$RC,$(prules)" "1,dash,personal-identifier"
+  check "$(jqval '[.findings[] | "\(.rule):\(.file | sub(".*/add-reset/"; "")):\(.line)"] | join(" ")')" \
+    "dash:proposal.md:9 personal-identifier:proposal.md:35 personal-identifier:specs/resetting/spec.md:3 dash:tasks.md:4"
+  [[ $OUT != *example.* ]] || { echo "    the output repeats an address"; return 1; }
+}
+
+propose_unreadable_and_usage() {
+  pr_repo
+  pcheck --bogus add-reset
+  check "$RC" "4"
+  pcheck --base no-such-ref add-reset
+  check "$RC,$(jqval .unreadable)" "3,--base no-such-ref is not a commit"
+  pcheck --base HEAD add-reset
+  check "$RC,$(prules)" "0,"
+  cd "$T" && mkdir not-git && cd not-git
+  pcheck add-reset
+  check "$RC,$(jqval .unreadable)" "3,not inside a git repository"
+}
+
+propose_probe_reeve() {
+  pr_repo
+  local fake=$T/fakereeve
+  mkdir -p "$fake"
+  if ! command -v reeve >/dev/null 2>&1; then
+    env -u REEVE_CLI -u REEVE_CONFIG -u LINEAR_API_KEY -u ANTHROPIC_API_KEY "$BIN/ccm-propose-check" --probe-reeve >"$T/probe"
+    check "$(jq -c . "$T/probe")" '{"cli":null,"repo":"acme/app","grade":false,"missing":["reeve","REEVE_CONFIG","LINEAR_API_KEY","ANTHROPIC_API_KEY"]}'
+    OUT=$(env -u REEVE_CONFIG -u LINEAR_API_KEY -u ANTHROPIC_API_KEY REEVE_CLI="npx tsx /r/src/cli.ts" "$BIN/ccm-propose-check" --probe-reeve)
+    check "$(jqval .cli),$(jqval '.missing | join(" ")')" "npx tsx /r/src/cli.ts,REEVE_CONFIG LINEAR_API_KEY ANTHROPIC_API_KEY"
+  fi
+  printf '#!/bin/sh\nexit 0\n' >"$fake/reeve" && chmod +x "$fake/reeve"
+  echo 'linear: {}' >"$T/reeve.yml"
+  OUT=$(PATH="$fake:$PATH" REEVE_CONFIG=$T/reeve.yml LINEAR_API_KEY=k ANTHROPIC_API_KEY=k "$BIN/ccm-propose-check" --probe-reeve)
+  check "$(jq -c . <<<"$OUT")" '{"cli":"reeve","repo":"acme/app","grade":true,"missing":[]}'
+  [[ $OUT != *'"k"'* ]] || { echo "    a key value is printed"; return 1; }
+  # Without REEVE_CONFIG, reeve.yml at the repository root is the config.
+  echo 'linear: {}' >reeve.yml
+  OUT=$(env -u REEVE_CONFIG PATH="$fake:$PATH" LINEAR_API_KEY=k ANTHROPIC_API_KEY=k "$BIN/ccm-propose-check" --probe-reeve)
+  check "$(jqval .grade)" "true"
+  pcheck --probe-reeve add-reset
+  check "$RC" "4"
+}
+
+skills_propose_write_grants() {
+  local f=$ROOT/skills/propose/SKILL.md tools writes
+  tools=$(awk 'NR > 1 && /^---$/ { exit } /^allowed-tools:/ { sub(/^allowed-tools:[ ]*/, ""); print }' "$f")
+  writes=$(grep -oE '(Write|Edit|MultiEdit|NotebookEdit)(\([^)]*\))?' <<<"$tools" | LC_ALL=C sort | paste -sd' ' -)
+  check "$writes" "Edit(openspec/changes/**) Write(openspec/changes/**)"
+  if grep -qE '(^|, )Bash(\(\*\))?(,|$)' <<<"$tools"; then echo "    unrestricted Bash grant"; return 1; fi
+  [[ $tools != *"Agent(*)"* && $tools != *"Task(*)"* ]] || { echo "    agents not limited"; return 1; }
+  # Merging is never granted.
+  [[ $tools != *"gh pr merge"* && $tools != *"gh:*"* && $tools != *"git push --force"* ]] || { echo "    merge or force-push grant"; return 1; }
+}
+
+skills_propose_workflow() {
+  local d=$ROOT/skills/propose missing=
+  grep -qF '**Stop 1.**' "$d/SKILL.md" || missing+=" stop1"
+  grep -qF '**Stop 2.**' "$d/SKILL.md" || missing+=" stop2"
+  grep -qF 'openspec validate' "$d/SKILL.md" && grep -qF -- '--strict --no-interactive' "$d/SKILL.md" || missing+=" validate"
+  grep -qF 'openspec render --dir . --change' "$d/SKILL.md" || missing+=" render"
+  grep -qF 'REEVE_CLI' "$d/SKILL.md" || missing+=" reeve-cli"
+  grep -qF 'ccm-propose-check' "$d/SKILL.md" || missing+=" check"
+  grep -qF 'Never merge' "$d/SKILL.md" || missing+=" never-merge"
+  grep -qF '## Coverage' "$d/change-format.md" || missing+=" coverage"
+  grep -qF 'new-capability-purpose' "$d/change-format.md" || missing+=" purpose"
+  grep -qF 'actionability' "$d/ticket-format.md" || missing+=" rubric"
+  grep -qF '`/ccmagic:propose' "$ROOT/README.md" || missing+=" readme"
+  grep -qF 'ccm-propose-check' "$ROOT/README.md" || missing+=" readme-script"
+  grep -qF '/ccmagic:propose' "$ROOT/skills/help/SKILL.md" || missing+=" help"
+  grep -qF 'RV-99' "$ROOT/CHANGELOG.md" || missing+=" changelog"
   check "${missing# }" ""
 }
 
@@ -5022,7 +5291,7 @@ harness_docker_env_passes_proxy_not_secrets() {
 MIRRORS=$(mktemp -d)
 trap 'rm -rf "$MIRRORS"' EXIT
 
-for fn in $(declare -F | awk '{print $3}' | grep -E '^(context|ci|merge_gate|guard|post|postreview|stop|threads|reply|validate|route|doctor|extreview|skills|spec_block|scope|finish|baseline|openspecver|harness)_'); do
+for fn in $(declare -F | awk '{print $3}' | grep -E '^(context|ci|merge_gate|guard|post|postreview|stop|threads|reply|validate|route|doctor|extreview|skills|spec_block|scope|finish|baseline|propose|openspecver|harness)_'); do
   t "$fn" "$fn"
 done
 
