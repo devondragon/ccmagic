@@ -4351,6 +4351,14 @@ harness_check_rejects_env_file() {
   check "$RC,$(jqval .rule)" "1,env-file"
 }
 
+# A missing env file is still the env-file rule, not a Compose failure.
+harness_check_rejects_missing_env_file() {
+  need_compose || return 0
+  harness_file '    env_file: [ missing.env ]'
+  run "$BIN/ccm-harness" check
+  check "$RC,$(jqval .rule)" "1,env-file"
+}
+
 # Review focus 2: a bare key would take the caller's value.
 harness_check_rejects_environment_passthrough() {
   need_compose || return 0

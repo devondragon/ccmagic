@@ -160,19 +160,27 @@ cmd_check() {
   # Read the merged model before Compose interpolates it, so included and
   # extended files are covered, YAML escapes are decoded, and comments are
   # gone. $$ is Compose's escape for a literal $ and stays $$ here.
-  raw=$(dc config --no-interpolate --no-env-resolution --format json 2>"$TMPERR") ||
+  # --no-env-resolution is not used: Compose 2.30 and 2.33 have no such flag,
+  # and 2.38 still folds env_file into environment with it; --no-interpolate alone
+  # keeps env_file as written on 2.30 through 5.x and reads no env file.
+  raw=$(dc config --no-interpolate --format json 2>"$TMPERR") ||
     invalid compose "docker compose config failed: $(head -1 "$TMPERR")"
   line=$(jq -r '
     [ paths(type == "string") as $p | select((getpath($p) | gsub("\\$\\$"; "") | test("\\$(\\{|[A-Za-z_])")))
       | ($p | map(tostring) | join(".")) ] | .[0] // empty' <<<"$raw") ||
     invalid compose "could not read the Compose model"
   [ -z "$line" ] || invalid interpolation "$line interpolates a variable; write every value literally"
-  cfg=$(dc config --format json --no-env-resolution 2>"$TMPERR") ||
+  # env_file is judged on the uninterpolated model, the one source that carries
+  # it on every Compose version, and before the pass below, which reads the
+  # env file and fails on a missing one.
+  line=$(jq -r '[ .services // {} | to_entries[] | select(.value.env_file) | .key ] | .[0] // empty' <<<"$raw") ||
+    invalid compose "could not read the Compose model"
+  [ -z "$line" ] || invalid env-file "service $line names an env_file; write values in environment instead"
+  cfg=$(dc config --format json 2>"$TMPERR") ||
     invalid compose "docker compose config failed: $(head -1 "$TMPERR")"
   broken=$(jq -r --arg nb "${CCM_HARNESS_NO_BIND_MOUNTS:-}" '
     def svc: .services | to_entries[];
-    [ (svc | select(.value.env_file) | "env-file\tservice \(.key) names an env_file; write values in environment instead"),
-      (svc | . as $s | (.value.environment // {}) | to_entries[] | select(.value == null)
+    [ (svc | . as $s | (.value.environment // {}) | to_entries[] | select(.value == null)
         | "environment-passthrough\tservice \($s.key) takes \(.key) from the caller'"'"'s environment; give it a literal value"),
       (svc | . as $s | ("privileged", "cap_add", "devices", "restart") as $k
         | select(($s.value[$k] // false) != false and ($s.value[$k] // []) != [])

@@ -26,4 +26,6 @@ Paths in `x-ccm-harness` are relative to the repository root; paths in `services
 
 Rules (`ccm-harness check`): every value literal in the merged model, included and extended files too (no `${...}` or `$VAR`, however written; `$$` is a literal `$`; a comment is ignored), no `env_file`, no bare `environment` key, no `privileged`, `cap_add`, `devices`, `restart`, `network_mode: host`, `pid: host`, no published port, no bind mount when `CCM_HARNESS_NO_BIND_MOUNTS=1`, and a Playwright runner image equal to the workdir's committed lockfile.
 
+`ccm-harness` needs Docker Compose 2.30 or newer. Its `check` tests were run on Compose 2.30.0, 2.38.2, and 5.6.0; older versions are untested.
+
 Commands: `check`, `up` (with `--prepare`, `--attach RUN`, `--wait [SECONDS]` for runs longer than one tool call), `seed`, `shoot TICKET SCRIPT`, `down`, `sweep [HOURS]`, `evidence TICKET HEAD PNG...`. Each prints one JSON object; the script's header has the details.
