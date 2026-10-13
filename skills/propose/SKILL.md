@@ -128,7 +128,7 @@ Use `AskUserQuestion` to ask whether to proceed, change something first, or stop
 **OpenSpec mode, on yes,** for each change in order, each command as its own Bash call:
 
 1. Branch from `base_branch`: named by the repository's documented branch convention when it has one (`CLAUDE.md`, `CONTRIBUTING*`, `context/branching.md`), else `docs/propose-<name>`. `git checkout -b <branch> <base_branch>`.
-2. `"${CLAUDE_PLUGIN_ROOT}/bin/ccm-propose-check" <every change name in this run>` once more; it must be clean.
+2. `"${CLAUDE_PLUGIN_ROOT}/bin/ccm-propose-check" <this change> <each change not yet opened>` once more; it must be clean. Leave out the changes already opened: their folders were committed on their own branches and are not in this one, so naming them reports `no-change-folder`, and the folders still untracked must be named or they report `outside-change`.
 3. `git add openspec/changes/<name>/`, then one commit, `docs(openspec): propose <name>` (the repository's commit convention if it differs). No attribution lines.
 4. `git push -u origin <branch>`, then `gh pr create --base <base_branch> --head <branch> --title "docs(openspec): propose <name>" --body "<body>"`. The body: the change's Why, the sections with their tasks, the capabilities added or modified, the checker and validator results, the render and grade results or the note that they were skipped, and for a document input the coverage table. A section is planned into a Reeve ticket once this PR merges, so say that its sections are append-only after the merge.
 5. `git switch <base_branch>` before the next change; the next change's folder is still untracked and moves with you.
