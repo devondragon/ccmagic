@@ -214,8 +214,9 @@ cmd_check() {
       invalid playwright-lockfile "$workdir/package.json uses @playwright/test, and $lock is not committed; the runner image must match the locked version"
     locked=$(jq -r '.packages["node_modules/@playwright/test"].version // empty' "$ROOT/$lock")
     tag=$(sed -nE 's#^mcr\.microsoft\.com/playwright:v([0-9]+\.[0-9]+\.[0-9]+).*#\1#p' <<<"$image")
-    [ -n "$locked" ] && [ "$tag" = "$locked" ] ||
+    if [ -z "$locked" ] || [ "$tag" != "$locked" ]; then
       invalid playwright-version "runner image $image does not match @playwright/test ${locked:-(not in the lockfile)} in $lock; its browsers work only with their own version"
+    fi
   fi
   jq -n --arg f "$HARNESS_REL" --arg p "${ticket:+$(project_for "$ticket")}" --argjson d "$decl" \
     '{status: "ok", file: $f, project: (if $p == "" then null else $p end), declaration: $d}'
