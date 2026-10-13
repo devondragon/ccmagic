@@ -30,6 +30,8 @@ Rules (`ccm-harness check`): every value literal in the merged model, included a
 
 `ccm-harness` runs Docker and Compose with an emptied environment: only `PATH`, `HOME`, `DOCKER_HOST`, `DOCKER_CONFIG`, `TMPDIR`, the proxy variables (`HTTP_PROXY`, `HTTPS_PROXY`, `NO_PROXY`, `ALL_PROXY`, and their lowercase forms), and the CA bundle paths (`SSL_CERT_FILE`, `SSL_CERT_DIR`) pass through. The last two groups let image builds reach a registry from a sandboxed session whose network goes through a proxy; none of them hold secrets.
 
+Registries: inside a sandboxed session (Cyrus), Buildx fetches registry pull tokens from the client side, through the session's egress proxy. A harness Dockerfile's `FROM` images, including the `# syntax=` frontend image, can therefore come only from registries whose token host is on the session's egress allowlist. On the Cyrus deployment only Docker Hub's `auth.docker.io` is allowed today. An image from ghcr.io, mcr.microsoft.com, quay.io, or another registry in a `FROM` line needs that registry's token host added to the allowlist (`sandbox.networkPolicy.allow` in Cyrus's `config.json`) first. Images the daemon pulls directly (the runner image and `image:` services) are not affected.
+
 `ccm-harness` needs Docker Compose 2.30 or newer. Its `check` tests were run on Compose 2.30.0, 2.38.2, and 5.6.0; older versions are untested.
 
 Commands: `check`, `up` (with `--prepare`, `--attach RUN`, `--wait [SECONDS]` for runs longer than one tool call), `seed`, `shoot TICKET SCRIPT`, `down`, `sweep [HOURS]`, `evidence TICKET HEAD PNG...`. Each prints one JSON object; the script's header has the details.

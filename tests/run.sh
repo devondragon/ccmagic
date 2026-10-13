@@ -485,6 +485,12 @@ guard_force_push_denied_autonomously() {
   check "$(denied)" "deny"
 }
 
+guard_force_push_message_names_the_remote() {
+  git checkout -q -b feature/ENG-1-x
+  hook 'git push -fu origin feature/ENG-1-x' ccmagic:auto-push
+  check "$(printf '%s' "$OUT" | grep -c 'git pull --rebase origin feature/ENG-1-x')" "1"
+}
+
 guard_normal_push_allowed_autonomously() {
   git checkout -q -b feature/ENG-1-x
   hook 'git pull --rebase && git push -u origin feature/ENG-1-x' ccmagic:auto-push
@@ -3856,13 +3862,18 @@ skills_auto_ticket_follow_up_dedupe() {
 # added lines in hooks/lib-handshake.sh), to check the visual step's handshake
 # (the changed case arm in hooks/subagent-stop-handshake.sh, spec decision 4 of
 # the UI harness design), and, for every ticket, by the RV-86 finish guard: its
-# own hook file and one PreToolUse entry in hooks.json.
+# own hook file and one PreToolUse entry in hooks.json. The guard's
+# force-push message also changed (one line): it now says
+# `git pull --rebase origin <branch>`, because branches in sandboxed sessions
+# have no upstream (ccmagic 3.18.3 fixed the same assumption in ccm-pr-reply).
 skills_hooks_only_accept_tasks_done() {
   local changed
   changed=$(git -C "$ROOT" diff "$SPEC_BASELINE" -- hooks ':(exclude)hooks/hooks.json' ':(exclude)hooks/pre-tool-use-finish-guard.sh' |
     grep -E '^[-+]' | grep -vE '^(\+\+\+|---) ' || true)
   check "$changed" "+#   tasks_done: [ids]            (optional: work step on a Reeve spec ticket only)
 +        if (l ~ /^[[:space:]]*tasks_done:/) continue
+-      deny \"ccmagic: autonomous runs never force-push (target: \${target:-unknown}). If the branch has diverged, rebase onto the remote (git pull --rebase) and push normally; if that conflicts, return needs-human.\"
++      deny \"ccmagic: autonomous runs never force-push (target: \${target:-unknown}). If the branch has diverged, rebase onto the remote (git pull --rebase origin \${target:-<branch>}) and push normally; if that conflicts, return needs-human.\"
 -  ccmagic:auto-work|ccmagic:auto-feedback|ccmagic:auto-validate|ccmagic:auto-finish|ccmagic:auto-push) allowed=\"done needs-human\" ;;
 +  ccmagic:auto-work|ccmagic:auto-feedback|ccmagic:auto-validate|ccmagic:auto-finish|ccmagic:auto-push|ccmagic:auto-visual) allowed=\"done needs-human\" ;;"
   git -C "$ROOT" show "$SPEC_BASELINE:hooks/hooks.json" | jq -S . >"$T/hooks-base"

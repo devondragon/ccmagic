@@ -2,6 +2,16 @@
 
 All notable changes to ccmagic are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.20.3] - 2026-10
+
+### Fixed
+
+- The guard hook's force-push message now tells agents to run `git pull --rebase origin <branch>` instead of a bare `git pull --rebase`, which fails in a sandboxed session whose branch has no upstream (Cyrus worktrees are created with `--no-track`).
+
+### Documentation
+
+- `docs/harness.md` notes that, inside a sandboxed session, a harness Dockerfile's `FROM` images (including the `# syntax=` frontend image) can come only from registries whose token host is on the session's egress allowlist. On the Cyrus deployment that is Docker Hub's `auth.docker.io` today.
+
 ## [3.20.2] - 2026-10
 
 ### Fixed
