@@ -22,8 +22,9 @@
 #       the working tree or at the base) is an archive of that name
 #   missing-file        proposal.md, tasks.md, or .openspec.yaml is missing
 #   meta                .openspec.yaml has no "schema: spec-driven", a key
-#       openspec 1.14.1 does not know (strict validation rejects it), or a
-#       skip_specs or retire_capabilities value that is not true or false
+#       the tested openspec release does not know (strict validation rejects
+#       it), or a skip_specs or retire_capabilities value that is not true or
+#       false
 #   no-section, section-title, section-order, empty-section, task-marker,
 #   task-outside-section, unnumbered-task, task-text, task-prefix,
 #   duplicate-task, number-range   tasks.md fails Reeve's parseTasks (the
