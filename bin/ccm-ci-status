@@ -12,6 +12,8 @@
 #   failed          1  at least one check failed, was cancelled, or timed out
 #   pending         2  checks still running
 #   not-registered  2  CI is configured but no check or run exists for this commit yet
+#   conflicting     6  nothing has registered and the PR conflicts with its base;
+#                      GitHub runs no pull_request workflows until that is resolved
 #   unreadable      3  neither the Checks API nor the Actions/Status APIs could be read
 #   timeout         5  --watch deadline passed while still pending/not-registered
 #   (usage error    4)
@@ -23,6 +25,10 @@
 # runs; if it also fails the status is `unreadable`. When check runs are hidden
 # (403) and nothing else is found, `no-ci` needs branch protection to be
 # readable and show no required checks; otherwise the status is `unreadable`.
+#
+# Before reporting not-registered for a PR, it re-reads the PR's mergeability:
+# GitHub cannot build the merge ref for a CONFLICTING PR, so its pull_request
+# workflows never start, and waiting out the timeout would only hide that.
 #
 # --watch polls until the status leaves pending/not-registered. One call never
 # runs longer than --max-call-seconds (default 540, under the Bash tool's
@@ -43,7 +49,7 @@ while [ $# -gt 0 ]; do
     --timeout-minutes) timeout_min=${2:?}; shift ;;
     --interval) interval=${2:?}; shift ;;
     --max-call-seconds) max_call=${2:?}; shift ;;
-    -h|--help) sed -n '2,31p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,38p' "$0"; exit 0 ;;
     -*) echo "ccm-ci-status: unknown flag $1" >&2; exit 4 ;;
     *) pr=${1#\#} ;;
   esac
@@ -109,6 +115,10 @@ no_checks_verdict() {
     result no-ci none "no workflow files and no required status checks on $base"
   else
     code=$([ "$has_workflows" = true ] && echo "workflow files exist" || echo "required status checks exist")
+    if [ -n "$pr" ] && [ "$(gh pr view "$pr" --json mergeable -q .mergeable 2>/dev/null || true)" = CONFLICTING ]; then
+      result conflicting none "PR #$pr has merge conflicts with $base, so GitHub will not run its pull_request workflows; nothing has registered for $sha ($code)"
+      return
+    fi
     result not-registered none "CI is configured ($code) but nothing has registered for $sha yet"
   fi
 }
@@ -194,6 +204,7 @@ exit_for() {
     pending|not-registered) echo 2 ;;
     unreadable) echo 3 ;;
     timeout) echo 5 ;;
+    conflicting) echo 6 ;;
     *) echo 3 ;;
   esac
 }

@@ -133,7 +133,7 @@ It exits 0 when the PR may merge and 1 when it may not, and prints JSON:
 
 - `blockers`: each reason the PR can't merge. It covers: the PR isn't `OPEN`; it is `CONFLICTING`, or GitHub still reports `UNKNOWN` mergeability after a few re-reads; CI isn't green; a reviewer's latest review is `CHANGES_REQUESTED`.
 - `warnings`: currently only "no approving review". A PR can proceed without an approval; show the warning.
-- `ci`: the full `ccm-ci-status` result. `ci.status` is `green`, `no-ci` (no workflows and no required checks), `failed`, `pending`, `not-registered` (CI configured but nothing has reported for this commit yet), or `unreadable`. `ci.checks` lists each check with its bucket, for the report. The script already falls back to the Actions and commit-status APIs when a fine-grained PAT gets HTTP 403 on check runs, so a 403 is never on its own a reason to call CI failed or to ask anyone to look at the checks.
+- `ci`: the full `ccm-ci-status` result. `ci.status` is `green`, `no-ci` (no workflows and no required checks), `failed`, `pending`, `not-registered` (CI configured but nothing has reported for this commit yet), `conflicting` (nothing has reported and the PR conflicts with its base, so GitHub will not run its `pull_request` workflows; the conflict is already a blocker, so do not wait), or `unreadable`. `ci.checks` lists each check with its bucket, for the report. The script already falls back to the Actions and commit-status APIs when a fine-grained PAT gets HTTP 403 on check runs, so a 403 is never on its own a reason to call CI failed or to ask anyone to look at the checks.
 
 If `ci.status` is `pending` or `not-registered`, wait for CI rather than reporting it as a blocker yet:
 

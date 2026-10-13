@@ -214,7 +214,15 @@
  
  **4c. Wait for CI and new reviews.** This pass's push(es) already happened (in 4a via `pr-feedback`, and possibly again in 4b); `H` was captured before them at the top of the pass. Now that they've landed:
    - **Wait for CI to settle** with one command, repeated only while it says so:
-@@ -198,11 +214,13 @@ Each 4f follows a feedback pass that pushed, so a run makes at most `max_feedbac
+@@ -166,6 +182,7 @@ Everything this pass pushes is measured against `H`, so bot reviews triggered *b
+     - `green` or `no-ci` → CI is settled and green (record "no CI configured" in the run summary for `no-ci`).
+     - `failed` → settled, not green. Carry `reason` and `checks` into 4d.
+     - `timeout` → **route-and-stop** (reason: "CI did not complete within the timeout", plus the script's `reason`; a `not-registered` timeout means CI is configured but no run appeared for the head SHA).
++    - `conflicting` → **route-and-stop** (reason: "PR has merge conflicts with its base, so CI cannot run: {reason}"). GitHub runs no `pull_request` workflows on a conflicting PR, so there is nothing to wait for; the conflicts need resolving first.
+     - `unreadable` → **route-and-stop** (reason: "cannot read CI status: {reason}").
+ 
+     The script handles what this step used to spell out: the fine-grained-PAT 403 fallback to the Actions and commit-status APIs, the "no checks at all" case (no workflows and no required checks means `no-ci`; otherwise it keeps waiting for a run to register), and quick transient `gh` failures. Don't re-derive CI state from `gh pr checks` output.
+@@ -198,11 +215,13 @@ Each 4f follows a feedback pass that pushed, so a run makes at most `max_feedbac
  
  Only 4e (with the PR head still at `reviewed_head`) and 4f (with a clean re-review of the PR head) lead here, so the last clean review read the commit the gate will merge. Never run this step while the PR head differs from `reviewed_head`: that is a stale review, which Reeve parks as `review-not-clean`; route-and-stop instead (stage = `review-ticket`).
  
@@ -230,7 +238,7 @@
  
  ---
  
-@@ -210,10 +228,13 @@ Run the finish-ticket step via `run_step` — `/ccmagic:finish-ticket` with the
+@@ -210,10 +229,13 @@ Run the finish-ticket step via `run_step` — `/ccmagic:finish-ticket` with the
  
  Whatever the outcome, record it on the PR and the ticket so the unattended run leaves an audit trail.
  
@@ -247,7 +255,7 @@
  
  Under prompt-relay there is no create API, so list every item under "to file" for a human. Every item appears in the summary's Follow-ups section; "none" is correct only when the list is empty. A parked run does the same before route-and-stop posts its note.
  
-@@ -243,6 +264,15 @@ Under prompt-relay there is no create API, so list every item under "to file" fo
+@@ -243,6 +265,15 @@ Under prompt-relay there is no create API, so list every item under "to file" fo
  - To file (prompt-relay): {item} (from {step})
  - {or "none" when no step reported a follow-up}
  
@@ -263,7 +271,7 @@
  ### If parked
  **Waiting on:** {the reason}. Nothing was merged. Resolve it, then re-run `/ccmagic:auto-ticket {TICKET-ID}`.
  
-@@ -252,6 +282,10 @@ Under prompt-relay there is no create API, so list every item under "to file" fo
+@@ -252,6 +283,10 @@ Under prompt-relay there is no create API, so list every item under "to file" fo
  ```
  ````
  
@@ -274,7 +282,7 @@
  `steps` lists every sub-skill invocation of this run in order, one entry each, with the handshake `status` it returned; include `reason` whenever the sub-skill emitted one. Repeated review passes are separate entries, and each fix pass is a `work-ticket` entry whose `reason` starts with `fix pass {n} ({fix_source})`. `review_passes` is the total number of review-ticket calls in the run, 4f re-reviews included: the final `review_pass`, or 1 when there was no re-review. `follow_ups` has one entry per item on the run's follow-up list (empty array when there were none): `ticket` is the filed ID or null, and `reason` says why it wasn't filed (null when filed). The block is emitted on every outcome and under every transport. It is the machine-readable record an external gate reads, so its keys are fixed and must not be renamed; `follow_ups` was added in 3.13.0 as an additive key, and readers that don't know it ignore it.
  
  `version: 2` binds the record to what it describes, and Reeve treats a record whose binding doesn't match the PR it located as no record at all (RV-1). A version 2 record carries `repo`, `pr`, and `head_sha` on every outcome, never omitted (the one exception is the version 1 fallback below):
-@@ -311,8 +345,12 @@ There is no stalled outcome. Never hang waiting for input.
+@@ -311,8 +346,12 @@ There is no stalled outcome. Never hang waiting for input.
  | A sub-skill emits no handshake (crash/tool error) | Treat as `needs-human` → route-and-stop with reason "{skill} produced no handshake". |
  | `work-ticket` → `needs-human` | route-and-stop (stage `work-ticket`). |
  | `review-ticket` → `needs-human`, or `fixable-findings` unresolved after the bounded loop | route-and-stop (stage `review-ticket`). |
@@ -289,7 +297,7 @@
  | `pr-feedback` → `needs-human` (genuine reviewer tie) | route-and-stop (stage `pr-feedback`). |
  | Local `/ccmagic:validate` can't be made green within the bounded attempts | route-and-stop (reason: validation failures). |
  | CI never settles within `ci_timeout_minutes` (watch loop cap) | route-and-stop (reason: CI timeout). |
-@@ -320,7 +358,7 @@ There is no stalled outcome. Never hang waiting for input.
+@@ -320,7 +359,7 @@ There is no stalled outcome. Never hang waiting for input.
  | Step 4 pushed after the last clean review (4a or 4b) | Re-review the pushed head (4f). A stale review never reaches finish: a clean re-review of another head, an unreadable PR head, or findings with no review fix or feedback passes left → route-and-stop (stage `review-ticket`), before any fix is pushed. |
  | `finish-ticket` merge gate not satisfied | It returns `needs-human` and does not merge → route-and-stop (stage `finish-ticket`). |
  | `requested_state: {merge_handoff_state}` and no state of that exact name exists | route-and-stop (stage `finish-ticket`); nothing was merged on the hand-off path. |
@@ -463,6 +471,15 @@
 -If invoked as `/ccmagic:doctor --quick`, run `ccm-doctor --quick` (Project setup and Configuration only) and skip step 2.
 +If invoked as `/ccmagic:doctor --quick`, run `"${CLAUDE_PLUGIN_ROOT}/bin/ccm-doctor" --quick` (Project setup and Configuration only) and skip step 2.
 ### skills/finish-ticket/SKILL.md
+@@ -133,7 +133,7 @@ It exits 0 when the PR may merge and 1 when it may not, and prints JSON:
+ 
+ - `blockers`: each reason the PR can't merge. It covers: the PR isn't `OPEN`; it is `CONFLICTING`, or GitHub still reports `UNKNOWN` mergeability after a few re-reads; CI isn't green; a reviewer's latest review is `CHANGES_REQUESTED`.
+ - `warnings`: currently only "no approving review". A PR can proceed without an approval; show the warning.
+-- `ci`: the full `ccm-ci-status` result. `ci.status` is `green`, `no-ci` (no workflows and no required checks), `failed`, `pending`, `not-registered` (CI configured but nothing has reported for this commit yet), or `unreadable`. `ci.checks` lists each check with its bucket, for the report. The script already falls back to the Actions and commit-status APIs when a fine-grained PAT gets HTTP 403 on check runs, so a 403 is never on its own a reason to call CI failed or to ask anyone to look at the checks.
++- `ci`: the full `ccm-ci-status` result. `ci.status` is `green`, `no-ci` (no workflows and no required checks), `failed`, `pending`, `not-registered` (CI configured but nothing has reported for this commit yet), `conflicting` (nothing has reported and the PR conflicts with its base, so GitHub will not run its `pull_request` workflows; the conflict is already a blocker, so do not wait), or `unreadable`. `ci.checks` lists each check with its bucket, for the report. The script already falls back to the Actions and commit-status APIs when a fine-grained PAT gets HTTP 403 on check runs, so a 403 is never on its own a reason to call CI failed or to ask anyone to look at the checks.
+ 
+ If `ci.status` is `pending` or `not-registered`, wait for CI rather than reporting it as a blocker yet:
+ 
 @@ -433,7 +433,7 @@ Absent all three, run the interactive path exactly as documented above. Also rea
  
  ### Behavior at each human-gate
@@ -486,6 +503,15 @@
  - **Purpose:** Deep iterative research with parallel exploration, source evaluation, and confidence scoring.
  - **When to use:** Before designing a non-trivial feature, or to investigate a library/pattern.
 ### skills/merge/SKILL.md
+@@ -51,7 +51,7 @@ fi
+ "${CLAUDE_PLUGIN_ROOT}/bin/ccm-merge-gate" [PR-NUMBER]
+ ```
+ 
+-It exits 0 when the PR may merge and prints JSON with `blockers` (not open, conflicting or unknown mergeability, CI not green, a reviewer's latest review is `CHANGES_REQUESTED`), `warnings` (no approving review), and the full CI result under `ci`. Report the blockers and warnings as given; do not re-derive them from `gh pr view`. If `ci.status` is `pending` or `not-registered`, wait with `"${CLAUDE_PLUGIN_ROOT}/bin/ccm-ci-status" [PR-NUMBER] --watch --wait-key merge-[PR-NUMBER]` (repeat while it returns `"call_again": true`), then run the gate again.
++It exits 0 when the PR may merge and prints JSON with `blockers` (not open, conflicting or unknown mergeability, CI not green, a reviewer's latest review is `CHANGES_REQUESTED`), `warnings` (no approving review), and the full CI result under `ci`. Report the blockers and warnings as given; do not re-derive them from `gh pr view`. A `ci.status` of `conflicting` means CI cannot start until the conflicts are resolved; do not wait for it. If `ci.status` is `pending` or `not-registered`, wait with `"${CLAUDE_PLUGIN_ROOT}/bin/ccm-ci-status" [PR-NUMBER] --watch --wait-key merge-[PR-NUMBER]` (repeat while it returns `"call_again": true`), then run the gate again.
+ 
+ If the gate fails, show the blockers and stop. Merge anyway only if the user explicitly says to. When `merge_guard: on` is set, the PreToolUse hook denies the merge command while the gate fails; after the user's explicit choice, prefix the merge command with `CCMAGIC_MERGE_OVERRIDE=1`.
+ 
 @@ -98,7 +98,7 @@ gh pr merge --rebase --delete-branch
  ```markdown
  1. Detect platform (GitHub/GitLab/Bitbucket)
