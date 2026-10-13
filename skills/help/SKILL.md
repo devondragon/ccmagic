@@ -98,6 +98,12 @@ End-to-end ticket lifecycle backed by Linear, GitHub Issues, or JIRA. Auto-detec
 - **When to use:** Before a repository's first OpenSpec change, or with `--capability <name>` right before a change has to MODIFY a capability that has no spec. `--check` later reports citations whose lines changed since the baseline commit, and writes nothing.
 - **What it does:** Proposes a capability map and stops for your confirmation, runs read-only sonnet extraction agents (four at a time), writes each spec and evidence section itself, runs `openspec validate --all --strict --no-interactive` and `ccm-baseline-check` after each capability, stops again with the findings for your review, then commits on a branch and runs `/ccmagic:pr`. Writes only under `openspec/` and the evidence file; needs the `openspec` CLI 1.13.x.
 
+**`/ccmagic:propose <idea | TICKET-ID | path/to/document>`**
+- **Purpose:** Turn an idea, a ticket, or a document such as a BRD into OpenSpec changes (one PR per change) on a repository with `openspec/specs/` or `openspec/changes/`, or into tracker tickets that pass Reeve's intake grading on one without.
+- **When to use:** Before building work that is bigger than one PR, or when a document's requirements need to become tickets.
+- **Example:** `/ccmagic:propose "let users reset a counter"`, `/ccmagic:propose ENG-123`, `/ccmagic:propose docs/brd.md`.
+- **What it does:** Reads the input and the repository (current specs and active changes on an OpenSpec repo), asks only what the code cannot settle, one question at a time, splits the work into increments of two or three one-PR sections, and stops for your approval. With OpenSpec it writes each change under `openspec/changes/<name>/`, runs `openspec validate --strict --no-interactive`, `ccm-propose-check`, and `reeve openspec render --grade` when the Reeve CLI and its config are available (skipped with a note otherwise), stops again, then opens one PR per change and never merges. Without OpenSpec it drafts the tickets, stops for confirmation, and creates them in Backlog on the configured `linear_team` and `linear_project` (or the ones you name) with blocking relations. For a document it lists which requirements each change or ticket covers, and which nothing covers.
+
 **`/ccmagic:research <topic>`**
 - **Purpose:** Deep iterative research with parallel exploration, source evaluation, and confidence scoring.
 - **When to use:** Before designing a non-trivial feature, or to investigate a library/pattern.

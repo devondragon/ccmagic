@@ -1,0 +1,5 @@
+schema: spec-driven
+
+context: |
+  Project: tally, a test fixture for ccm-propose-check. Plain Node.js, tests with node --test.
+  Behavior changes ship as OpenSpec changes with delta specs.

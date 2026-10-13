@@ -1,0 +1,349 @@
+#!/usr/bin/env bash
+# ccm-propose-check: check the OpenSpec change folders /ccmagic:propose wrote
+# against the rules Reeve's planner and the openspec CLI apply, and against
+# the skill's own write limits, and print the findings as JSON (RV-99).
+#
+# Usage: ccm-propose-check [--base REF] CHANGE...
+#        ccm-propose-check --probe-reeve
+#
+# CHANGE is the name of a change the run created, one per argument; its folder
+# is openspec/changes/CHANGE/. Run anywhere inside the repository; paths are
+# relative to its top level. The checks need no model and no network.
+#
+# Checks (rule names as they appear in the output):
+#   outside-change      a changed path that is not under one of the named
+#       change folders (the skill writes nothing else)
+#   no-change-folder    openspec/changes/CHANGE/ does not exist
+#   change-name         CHANGE is not lower-case kebab-case, or holds
+#       as-delegation, label-based-prompt, as-refine, linear, or profiles
+#       (Reeve's change-name rule, matched ignoring case)
+#   name-collision      CHANGE is "archive", an active change of that name
+#       exists at the base, or a folder under openspec/changes/archive/ (in
+#       the working tree or at the base) is an archive of that name
+#   missing-file        proposal.md, tasks.md, or .openspec.yaml is missing
+#   meta                .openspec.yaml has no "schema: spec-driven", a key
+#       the tested openspec release does not know (strict validation rejects
+#       it), or a skip_specs or retire_capabilities value that is not true or
+#       false
+#   no-section, section-title, section-order, empty-section, task-marker,
+#   task-outside-section, unnumbered-task, task-text, task-prefix,
+#   duplicate-task, number-range   tasks.md fails Reeve's parseTasks (the
+#       first rejection only, as Reeve reports it)
+#   task-checked        a task box in tasks.md is ticked; a new change has
+#       every box empty
+#   section-count       tasks.md has more than 3 sections; each section is a
+#       full build cycle, so split the work into another change
+#   capability-name     a delta folder specs/<capability>/ is not kebab-case,
+#       or a spec.md lies more than one folder below specs/
+#   new-capability-purpose  a delta for a capability with no
+#       openspec/specs/<capability>/spec.md at the base has no non-empty
+#       "## Purpose" section (Reeve's rule of the same name)
+#   requirement-not-found  a MODIFIED or REMOVED requirement, or a RENAMED
+#       FROM name, that the capability's current spec at the base does not
+#       have as "### Requirement: <exact name>"
+#   skip-specs-deltas   skip_specs is true and the change has delta specs
+#   dash                an em or en dash in a file of a change folder
+#   personal-identifier an email address written out or spelled
+#       ("<word> at <domain>.<tld>") in a file of a change folder, with the
+#       patterns ccm-baseline-check uses; the message never repeats it
+#
+# Every rule is a finding and makes the exit 1; there is no warning level.
+#
+# Changed paths: every path that differs between the base and the working
+# tree, plus untracked files that are not ignored. The base is --base REF
+# when given, else the merge base of HEAD with the default branch
+# (refs/remotes/origin/HEAD, else origin/main, origin/master, main, master),
+# else HEAD itself. The current specs and the active changes are read at the
+# base, which is what the change will land on.
+#
+# --probe-reeve reports whether the Reeve CLI can render and grade a change
+# here, without printing any secret, and checks nothing else:
+#   {cli, repo, grade, missing}
+#   cli      "reeve" when it is on PATH, else the value of REEVE_CLI (a
+#            command such as "npx tsx /path/to/reeve/src/cli.ts"), else null
+#   repo     this checkout's owner/name (github_repo config, gh, or the
+#            origin remote), for render's --as; null when unknown
+#   grade    true when cli is set and Reeve's config (REEVE_CONFIG, else
+#            ./reeve.yml at the repository root), LINEAR_API_KEY, and
+#            ANTHROPIC_API_KEY are all present, which render --grade needs
+#   missing  the names of whatever of those is absent
+# It always exits 0 (3 outside a git repository).
+#
+# Exit codes: 0 clean, 1 findings, 3 cannot read (not a git repository, an
+# unknown --base), 4 usage error (no CHANGE, or one holding a character other
+# than a letter, digit, dot, underscore, or hyphen).
+# Output: {clean, changes: [{name, sections, tasks, deltas}],
+#          base: {ref, commit}, findings: [{rule, file, line, message}]}
+#   on exit 3, {clean: false, unreadable: "<why>"}.
+
+set -euo pipefail
+# shellcheck source=bin/ccm-lib.sh
+. "$(dirname "${BASH_SOURCE[0]}")/ccm-lib.sh"
+
+usage() { echo "ccm-propose-check: $1" >&2; exit 4; }
+
+base_arg="" names=() probe=false
+while [ $# -gt 0 ]; do
+  case $1 in
+    --probe-reeve) probe=true ;;
+    -h|--help) sed -n '2,/^set -euo/p' "$0" | sed '$d'; exit 0 ;;
+    --base) [ $# -ge 2 ] || usage "--base needs a ref"; base_arg=$2; shift ;;
+    --base=*) base_arg=${1#--base=} ;;
+    -*) usage "unexpected flag $1" ;;
+    *) if ! [[ $1 =~ ^[A-Za-z0-9._-]+$ ]] || [ "$1" = . ] || [ "$1" = .. ]; then
+         usage "change $(printf %q "$1") is not a plain folder name"
+       fi
+       names+=("$1") ;;
+  esac
+  shift
+done
+if $probe; then
+  if [ -n "$base_arg" ] || [ "${#names[@]}" -gt 0 ]; then usage "--probe-reeve takes no other argument"; fi
+else
+  [ "${#names[@]}" -gt 0 ] || usage "name at least one change"
+fi
+
+unreadable() {
+  jq -n --arg m "$1" '{clean: false, unreadable: $m}'
+  exit 3
+}
+
+root=$(git rev-parse --show-toplevel 2>/dev/null) || unreadable "not inside a git repository"
+cd "$root"
+
+if $probe; then
+  cli=""
+  if command -v reeve >/dev/null 2>&1; then cli=reeve; elif [ -n "${REEVE_CLI:-}" ]; then cli=$REEVE_CLI; fi
+  slug=$(ccm_repo_slug 2>/dev/null || true)
+  if [ -z "$slug" ]; then
+    url=$(git remote get-url origin 2>/dev/null || true); url=${url%.git}
+    [[ $url =~ ([^/:]+/[^/:]+)$ ]] && slug=${BASH_REMATCH[1]}
+  fi
+  missing=()
+  [ -n "$cli" ] || missing+=(reeve)
+  if [ -n "${REEVE_CONFIG:-}" ]; then
+    [ -f "$REEVE_CONFIG" ] || missing+=(REEVE_CONFIG)
+  else
+    [ -f reeve.yml ] || missing+=(REEVE_CONFIG)
+  fi
+  [ -n "${LINEAR_API_KEY:-}" ] || missing+=(LINEAR_API_KEY)
+  [ -n "${ANTHROPIC_API_KEY:-}" ] || missing+=(ANTHROPIC_API_KEY)
+  jq -n --arg cli "$cli" --arg repo "$slug" --args '{cli: (if $cli == "" then null else $cli end),
+    repo: (if $repo == "" then null else $repo end), grade: ($ARGS.positional | length == 0),
+    missing: $ARGS.positional}' ${missing[@]+"${missing[@]}"}
+  exit 0
+fi
+
+if [ -n "$base_arg" ]; then
+  base_ref=$base_arg
+  base=$(git rev-parse -q --verify "$base_arg^{commit}") || unreadable "--base $base_arg is not a commit"
+else
+  line=$(ccm_default_diff_base); base=${line%%$'\t'*}; base_ref=${line#*$'\t'}
+fi
+
+tmp=$(mktemp -d)
+trap 'rm -rf "$tmp"' EXIT
+: >"$tmp/out"
+
+finding() { printf 'F\t%s\t%s\t%s\t%s\n' "$1" "$2" "$3" "$4" >>"$tmp/out"; }
+
+# at_base PATH: whether PATH exists at the base (never, with no base commit).
+at_base() { [ -n "$base" ] && git cat-file -e "$base:$1" 2>/dev/null; }
+
+# Archive folder names, in the working tree and at the base.
+{
+  if [ -d openspec/changes/archive ]; then
+    for d in openspec/changes/archive/*/; do [ -d "$d" ] && { d=${d%/}; echo "${d##*/}"; }; done
+  fi
+  if at_base openspec/changes/archive; then
+    git ls-tree --name-only "$base:openspec/changes/archive" 2>/dev/null || true
+  fi
+} | LC_ALL=C sort -u >"$tmp/archives"
+
+known_meta=" schema created goal affected_areas initiative skip_specs retire_capabilities "
+
+for name in "${names[@]}"; do
+  dir=openspec/changes/$name
+  nsec=0 ntask=0 ndelta=0
+
+  # ---- the name ----------------------------------------------------------------
+  if ! [[ $name =~ ^[a-z0-9]+(-[a-z0-9]+)*$ ]]; then
+    finding change-name "$dir" 0 "change $name is not lower-case kebab-case"
+  else
+    shopt -s nocasematch
+    if [[ $name =~ (as-delegation|label-based-prompt|as-refine|linear|profiles) ]]; then
+      finding change-name "$dir" 0 "change $name holds ${BASH_REMATCH[1]}, which Reeve refuses in a change name"
+    fi
+    shopt -u nocasematch
+  fi
+  if [ "$name" = archive ]; then
+    finding name-collision "$dir" 0 "openspec/changes/archive is the archive folder, not a change"
+  elif at_base "$dir"; then
+    finding name-collision "$dir" 0 "a change named $name already exists at the base"
+  fi
+  while IFS= read -r a; do
+    [ -n "$a" ] || continue
+    if ccm_archive_matches "$a" "$name"; then
+      finding name-collision "$dir" 0 "openspec/changes/archive/$a is already an archive of a change named $name"
+    fi
+  done <"$tmp/archives"
+
+  if [ ! -d "$dir" ]; then
+    finding no-change-folder "$dir" 0 "$dir does not exist"
+    printf 'C\t%s\t0\t0\t0\n' "$name" >>"$tmp/out"
+    continue
+  fi
+  for f in proposal.md tasks.md .openspec.yaml; do
+    [ -f "$dir/$f" ] || finding missing-file "$dir/$f" 0 "$dir/$f is missing"
+  done
+
+  # ---- .openspec.yaml ------------------------------------------------------------
+  skip_specs=false
+  if [ -f "$dir/.openspec.yaml" ]; then
+    schema="" n=0
+    command cp -f "$dir/.openspec.yaml" "$tmp/meta"
+    while IFS= read -r l || [ -n "$l" ]; do
+      n=$((n + 1))
+      l=${l%$'\r'}
+      [[ $l =~ ^([A-Za-z_][A-Za-z0-9_-]*)[[:space:]]*:(.*)$ ]] || continue
+      key=${BASH_REMATCH[1]}
+      val=$(printf '%s' "${BASH_REMATCH[2]}" | sed -E 's/[[:space:]]+#.*$//; s/^[[:space:]]+//; s/[[:space:]]+$//')
+      case $val in \"*\") val=${val#\"}; val=${val%\"} ;; \'*\') val=${val#\'}; val=${val%\'} ;; esac
+      if [[ $known_meta != *" $key "* ]]; then
+        finding meta "$dir/.openspec.yaml" "$n" "unknown key $key (openspec validate --strict rejects it)"
+        continue
+      fi
+      case $key in
+        schema) schema=$val ;;
+        skip_specs|retire_capabilities)
+          case $val in
+            true) [ "$key" = skip_specs ] && skip_specs=true ;;
+            false) ;;
+            *) finding meta "$dir/.openspec.yaml" "$n" "$key is not true or false" ;;
+          esac ;;
+      esac
+    done <"$tmp/meta"
+    [ "$schema" = spec-driven ] || finding meta "$dir/.openspec.yaml" 1 "the file has no \"schema: spec-driven\" line"
+  fi
+
+  # ---- tasks.md ------------------------------------------------------------------
+  if [ -f "$dir/tasks.md" ]; then
+    parsed=$(ccm_parse_tasks "$dir/tasks.md")
+    if grep -q '^E' <<<"$parsed"; then
+      l=$(grep -m1 '^E' <<<"$parsed"); l=${l#E$'\t'}
+      prule=${l%%$'\t'*}; l=${l#*$'\t'}
+      pline=${l%%$'\t'*}; preason=${l#*$'\t'}
+      finding "$prule" "$dir/tasks.md" "${pline:-0}" "$preason"
+    else
+      nsec=$(grep -c '^S' <<<"$parsed" || true)
+      ntask=$(grep -c '^T' <<<"$parsed" || true)
+      awk -F'\t' '$1 == "T" && $5 == 1 { print $2 "\t" $4 }' <<<"$parsed" |
+        while IFS=$'\t' read -r tl tid; do finding task-checked "$dir/tasks.md" "$tl" "task $tid is ticked; every box in a new change is empty"; done
+      if [ "$nsec" -gt 3 ]; then
+        finding section-count "$dir/tasks.md" 1 "tasks.md has $nsec sections (the limit is 3); move the later ones to another change"
+      fi
+    fi
+  fi
+
+  # ---- delta specs ---------------------------------------------------------------
+  for spec in "$dir"/specs/*/spec.md; do
+    [ -f "$spec" ] || continue
+    ndelta=$((ndelta + 1))
+    cap=${spec%/spec.md}; cap=${cap##*/}
+    [[ $cap =~ ^[a-z0-9]+(-[a-z0-9]+)*$ ]] || finding capability-name "$spec" 0 "capability folder $cap is not one-segment kebab-case"
+    current=openspec/specs/$cap/spec.md
+    : >"$tmp/current"
+    has_spec=false
+    if at_base "$current"; then
+      has_spec=true; git cat-file blob "$base:$current" >"$tmp/current"
+    elif [ -z "$base" ] && [ -f "$current" ]; then
+      has_spec=true; command cat "$current" >"$tmp/current"
+    fi
+    # P (a Purpose with text) and R<TAB>line<TAB>kind<TAB>name for every name
+    # the delta needs the current spec to have, read outside code fences.
+    LC_ALL=C awk '
+      function trim(s) { sub(/^[ \t]+/, "", s); sub(/[ \t\r]+$/, "", s); return s }
+      {
+        raw = $0; sub(/\r$/, "", raw)
+        if (fence == "") {
+          if (match(raw, /^ ? ? ?(```+|~~~+)/)) { fence = substr(raw, RSTART, RLENGTH); sub(/^ +/, "", fence); next }
+        } else {
+          c = substr(fence, 1, 1); t = raw; sub(/^ ? ? ?/, "", t); k = 0
+          while (substr(t, k + 1, 1) == c) k++
+          if (k >= length(fence) && substr(t, k + 1) ~ /^[ \t]*$/) fence = ""
+          next
+        }
+        low = tolower(raw)
+        if (low ~ /^##[ \t]+(added|modified|removed|renamed)[ \t]+requirements[ \t]*$/) { split(trim(low), w, /[ \t]+/); kind = w[2]; next }
+        if (low ~ /^##[ \t]+purpose[ \t]*$/) { kind = "purpose"; next }
+        if (raw ~ /^##[^#]/ || raw == "##") { kind = "skip"; next }
+        if (kind == "purpose" && trim(raw) != "") { purpose = 1; next }
+        if (kind == "modified" || kind == "removed") {
+          s = raw
+          if (kind == "removed") { sub(/^[ \t]*[-*+][ \t]+/, "", s); gsub(/`/, "", s) }
+          if (tolower(s) ~ /^###[ \t]*requirement:/) { sub(/^###[ \t]*[Rr][Ee][Qq][Uu][Ii][Rr][Ee][Mm][Ee][Nn][Tt]:/, "", s); print "R\t" NR "\t" kind "\t" trim(s) }
+          next
+        }
+        if (kind == "renamed" && raw ~ /^[ \t]*([-*+][ \t]*)?FROM:/) {
+          s = raw; sub(/^[ \t]*([-*+][ \t]*)?FROM:[ \t]*`?/, "", s); sub(/`?[ \t]*$/, "", s)
+          if (tolower(s) ~ /^###[ \t]*requirement:/) { sub(/^###[ \t]*[Rr][Ee][Qq][Uu][Ii][Rr][Ee][Mm][Ee][Nn][Tt]:/, "", s); print "R\t" NR "\trenamed\t" trim(s) }
+        }
+      }
+      END { if (purpose) print "P" }' "$spec" >"$tmp/delta"
+    if ! $has_spec && ! grep -q '^P' "$tmp/delta"; then
+      finding new-capability-purpose "$spec" 1 "capability $cap has no spec at the base and this delta has no ## Purpose; openspec archive would write a placeholder Purpose that strict validation rejects"
+    fi
+    LC_ALL=C awk '{ s = $0; sub(/\r$/, "", s); if (tolower(s) ~ /^###[ \t]*requirement:/) { sub(/^###[ \t]*[^:]*:/, "", s); sub(/^[ \t]+/, "", s); sub(/[ \t]+$/, "", s); print s } }' "$tmp/current" >"$tmp/names"
+    { grep '^R' "$tmp/delta" || true; } | while IFS=$'\t' read -r _ rl rkind rname; do
+      if ! $has_spec; then
+        finding requirement-not-found "$spec" "$rl" "$rkind requirement \"$rname\": capability $cap has no spec at the base"
+      elif ! grep -qxF -- "$rname" "$tmp/names"; then
+        finding requirement-not-found "$spec" "$rl" "$rkind requirement \"$rname\" is not in $current at the base; copy the name exactly"
+      fi
+    done
+  done
+  if [ -d "$dir/specs" ]; then
+    while IFS= read -r nested; do
+      finding capability-name "$nested" 0 "a capability path below specs/ has more than one segment; Reeve plans only specs/<capability>/spec.md"
+    done < <(/usr/bin/find "$dir/specs" -mindepth 3 -name spec.md -type f | LC_ALL=C sort)
+  fi
+  if $skip_specs && [ "$ndelta" -gt 0 ]; then
+    finding skip-specs-deltas "$dir/.openspec.yaml" 1 "skip_specs is true and the change has delta specs"
+  fi
+
+  # ---- characters in every file of the folder ------------------------------------
+  while IFS= read -r f; do
+    { LC_ALL=C grep -n -e $'\xe2\x80\x93' -e $'\xe2\x80\x94' "$f" || true; } | cut -d: -f1 |
+      while read -r n; do finding dash "$f" "$n" "em or en dash"; done
+    { grep -n -i -E -e "$CCM_EMAIL_RE" -e "$CCM_SPELLED_EMAIL_RE" "$f" || true; } | cut -d: -f1 |
+      while read -r n; do finding personal-identifier "$f" "$n" "an email address is written out; leave it out or name the role"; done
+  done < <(/usr/bin/find "$dir" -type f | LC_ALL=C sort)
+
+  printf 'C\t%s\t%s\t%s\t%s\n' "$name" "$nsec" "$ntask" "$ndelta" >>"$tmp/out"
+done
+
+# ---- changed paths ---------------------------------------------------------------
+{
+  if [ -n "$base" ]; then git diff -z --name-only --no-renames "$base" --; fi
+  git ls-files -z --others --exclude-standard
+} | tr '\0' '\n' | LC_ALL=C sort -u | while IFS= read -r p; do
+  [ -n "$p" ] || continue
+  ok=false
+  for name in "${names[@]}"; do
+    case $p in "openspec/changes/$name/"*) ok=true; break ;; esac
+  done
+  $ok || finding outside-change "$p" 0 "changed outside the new change folders"
+done
+
+# ---- output ----------------------------------------------------------------------
+jq -R -s --arg base "$base" --arg base_ref "$base_ref" '
+  split("\n") | map(select(length > 0) | split("\t")) as $rows
+  | ($rows | map(select(.[0] == "F") | {rule: .[1], file: .[2], line: (.[3] | tonumber), message: .[4]})
+      | sort_by(.file, .line, .rule)) as $f
+  | {clean: (($f | length) == 0),
+     changes: ($rows | map(select(.[0] == "C") | {name: .[1], sections: (.[2] | tonumber), tasks: (.[3] | tonumber), deltas: (.[4] | tonumber)})),
+     base: {ref: $base_ref, commit: $base}, findings: $f}
+' "$tmp/out" >"$tmp/json"
+command cat "$tmp/json"
+if [ "$(jq -r .clean "$tmp/json")" = true ]; then exit 0; fi
+exit 1

@@ -2,6 +2,18 @@
 
 All notable changes to ccmagic are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.21.0] - 2026-10
+
+### Added
+
+- `/ccmagic:propose <input>` turns a sentence, a ticket identifier, or a document such as a BRD into work split for building one PR at a time (RV-99). It reads the repository first (on an OpenSpec repository, every current spec and active change, so a new change never collides with a planned one), asks only what the code cannot settle, one question at a time, and stops for approval of the split: increments, each with two or three one-PR sections. On a repository with `openspec/specs/` or `openspec/changes/` it writes each change folder under `openspec/changes/<name>/` (its only write grant), runs `openspec validate --strict --no-interactive`, `ccm-propose-check`, and `reeve openspec render --dir . --change <name> --grade` when the Reeve CLI (`reeve` on PATH, or a `REEVE_CLI` command) and its config are available, fixing and repeating until they pass, stops again, and opens one PR per change. It never merges. On a repository without OpenSpec it drafts tickets in the form Reeve's intake grades well (the five rubric dimensions, testable acceptance criteria, context with paths), and after confirmation creates them in Backlog on the repository's Linear team and project with blocking relations, printing their identifiers. For a document input it records which of the document's requirements each change or ticket covers and lists the ones nothing covers. It is standalone: no ticket workflow runs it.
+- `bin/ccm-propose-check` checks those change folders without a model: only the new folders changed; each name is kebab-case, avoids the words Reeve refuses in a change name, and matches no active change or archive folder; `proposal.md`, `tasks.md`, and `.openspec.yaml` exist, the last with `schema: spec-driven` and only keys OpenSpec 1.14.1 knows; `tasks.md` passes Reeve's task parser with every box empty and at most three sections; a delta for a capability with no current spec has `## Purpose` (Reeve's `new-capability-purpose`); every MODIFIED, REMOVED, and RENAMED FROM requirement name is in the current spec; and no em or en dash or written email address. `--probe-reeve` reports whether the Reeve CLI, its config, and the two API keys are present, without printing a value.
+- New config keys `linear_team` and `linear_project`, read by `/ccmagic:propose` in ticket mode.
+
+### Changed
+
+- `ccm-openspec-scope`'s port of Reeve's task parser and archive-name rule, and `ccm-baseline-check`'s diff base and email patterns, moved to `bin/ccm-lib.sh` unchanged so the new check shares them.
+
 ## [3.20.5] - 2026-10
 
 ### Fixed
