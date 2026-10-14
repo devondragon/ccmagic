@@ -159,7 +159,7 @@ collisions() {
   : >"$2"
   cut -f1 "$1" | LC_ALL=C sort -u >"$scratch/caplist"
   while IFS= read -r c; do
-    [ -n "$c" ] && [ "$c" != "${SELF:-}" ] || continue
+    if [ -z "$c" ] || [ "$c" = "${SELF:-}" ]; then continue; fi
     while IFS= read -r cap; do
       at "$base_sha" "openspec/changes/$c/specs/$cap/spec.md" || continue
       git cat-file blob "$base_sha:openspec/changes/$c/specs/$cap/spec.md" >"$scratch/theirs.md"
@@ -256,7 +256,9 @@ fi
 
 if [ "$mode" = check ]; then
   name=${args[0]}
-  [[ $name =~ ^[A-Za-z0-9._-]+$ ]] && [ "$name" != . ] && [ "$name" != .. ] || usage "change $(printf %q "$name") is not a plain folder name"
+  if ! [[ $name =~ ^[A-Za-z0-9._-]+$ ]] || [ "$name" = . ] || [ "$name" = .. ]; then
+    usage "change $(printf %q "$name") is not a plain folder name"
+  fi
   dir=openspec/changes/$name
   : >"$scratch/out"
   finding() { printf '%s\t%s\t%s\t%s\n' "$1" "$2" "$3" "$4" >>"$scratch/out"; }
@@ -369,8 +371,9 @@ archive_dirs() { touched | awk -v a="$A" 'index($0, a) == 1 { r = substr($0, len
 
 if [ "$mode" = reopen ]; then
   dirs=$(archive_dirs)
-  [ -n "$dirs" ] && [ "$(wc -l <<<"$dirs" | tr -d ' ')" -eq 1 ] ||
-    { jq -n --arg d "the branch touches $(grep -c . <<<"$dirs" || true) archive folders; reopen needs exactly one" '{pass: false, mode: "reopen", rule: "delta-folders", detail: $d}'; exit 1; }
+  if [ -z "$dirs" ] || [ "$(wc -l <<<"$dirs" | tr -d ' ')" -ne 1 ]; then
+    jq -n --arg d "the branch touches $(grep -c . <<<"$dirs" || true) archive folders; reopen needs exactly one" '{pass: false, mode: "reopen", rule: "delta-folders", detail: $d}'; exit 1
+  fi
   F=$dirs
   awk -F'\t' -v a="$A$F/" '(index($2, a) == 1 || index($3, a) == 1) && $1 != "A" { bad = 1 } END { exit bad }' "$changes" ||
     { jq -n --arg d "$A$F is not a folder the branch adds" '{pass: false, mode: "reopen", rule: "delta-folders", detail: $d}'; exit 1; }
