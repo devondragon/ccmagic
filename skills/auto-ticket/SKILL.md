@@ -114,6 +114,10 @@ Run the work-ticket step via `run_step` — `/ccmagic:work-ticket {TICKET-ID}` w
 **Only when the grounding block has a `spec:` section.** The work step's handshake carries a `tasks_done:` line (contract §3). Keep the list from the first work pass as the run's `tasks_done`; fix passes emit `tasks_done: []` and leave it unchanged. When the first pass's handshake has no such line, the run's `tasks_done` is `[]`. Step 6 writes it into the run record.
 <!-- /ccmagic:spec-only -->
 
+<!-- ccmagic:plain-delta -->
+**Only when the base has `openspec/specs/` and the grounding block has no `spec:` section** (the work step decides this, and reports it with a `spec_delta:` line, contract §3). Keep the value from the last work pass that emitted one, first pass or fix pass, as the run's `spec_delta`. When no pass emitted one, the run has none, and Step 6 leaves the key out of the run record.
+<!-- /ccmagic:plain-delta -->
+
 ---
 
 ## Step 2: Locate the PR
@@ -316,6 +320,16 @@ Judged head: {judged_head}
 
 `change` is the `spec:` section's `change`, and `section` its `section`: a JSON number for a section, the string `"archive"` for the archive ticket. `tasks_done` is the run's `tasks_done` from Step 1 as JSON strings, `[]` when the work step reported none or emitted no `tasks_done:` line, and always `[]` for the archive. The record stays `"version": 2`; a version 1 fallback record carries the key in the same place. The key is additive like `follow_ups`, and readers that don't know it ignore it. The parked note's record (contract §4) carries the same key. A parent ticket (`section: parent`, which the work step parks before any work) gets no `openspec` key: its record is the ordinary template, since Reeve accepts only a number or `"archive"` as `section` and drops a whole record that carries anything else.
 <!-- /ccmagic:spec-only -->
+
+<!-- ccmagic:plain-delta -->
+**Only when the base has `openspec/specs/` and the grounding block has no `spec:` section,** and only when the run has a `spec_delta` (Step 1). The record carries one more key, `spec_delta`, as the last key inside `ccmagic`, right after `follow_ups`:
+
+```json
+{"ccmagic": {"version": 2, "run_id": "{run_id}", "ticket": "{TICKET-ID}", "repo": "{owner/name}", "pr": {pr_number or null}, "head_sha": {"<PR head SHA>" or null}, "outcome": "{merged | handed-off | parked}", "classification": "{class}", "merge_owner": "{self | reeve}", "review_passes": {n}, "feedback_passes": {n}, "ci_attempts": {n}, "findings": {"critical": {n}, "high": {n}}, "steps": [{"step": "work-ticket", "status": "done"}, {"step": "review-ticket", "status": "clean"}, {"step": "validate", "status": "needs-human", "reason": "{one line}"}, {"step": "validate", "status": "done"}, {"step": "finish-ticket", "status": "done", "reason": "handed off to reeve; PR #12 awaiting merge"}], "follow_ups": [{"item": "{short description}", "step": "review-ticket", "ticket": "{id or null}", "reason": "{why not filed, or null}"}], "spec_delta": "{spec_delta: none, or openspec/changes/archive/<folder>}"}}
+```
+
+`spec_delta` is the string `none` or the archive folder's path, exactly as the work step reported it (`openspec/changes/archive/2026-10-13-bmc-430-fix-expiry`). Reeve's gate checks it against the archive folder the PR carries. The record stays `"version": 2`; a version 1 fallback record carries the key in the same place. The key is additive like `follow_ups`, and readers that don't know it ignore it. A run that parked before the work step decided has no `spec_delta`, and its record leaves the key out. The parked note's record (contract §4) carries the same key.
+<!-- /ccmagic:plain-delta -->
 
 `version: 2` binds the record to what it describes, and Reeve treats a record whose binding doesn't match the PR it located as no record at all (RV-1). A version 2 record carries `repo`, `pr`, and `head_sha` on every outcome, never omitted (the one exception is the version 1 fallback below):
 

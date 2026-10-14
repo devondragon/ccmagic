@@ -2,6 +2,18 @@
 
 All notable changes to ccmagic are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.22.0] - 2026-10
+
+### Added
+
+- A plain ticket (one without a Reeve `spec:` section) on a repository whose base branch has `openspec/specs/<capability>/spec.md` carries its own spec delta when it changes specified behavior, archived in the same PR as the code (RV-100). After implementing, `work-ticket` decides whether a requirement or scenario that held for the base code is now false, or new observable behavior inside a capability went unspecified; a refactor, a fix toward what a requirement already says, and behavior no capability covers need no delta. When one is needed it names the change `<ticket>-<slug>`, writes `proposal.md` and the delta specs (never a new or retired capability), stops when an active change at the base names the same requirement, checks the folder, runs `openspec archive` and `openspec validate --all --strict --no-interactive`, and checks the result before the push, correcting its own delta at most twice before it parks. The PR body gets a `## OpenSpec` section, the work step's handshake a `spec_delta:` line, and the run record a `"spec_delta"` key (`"none"` or `openspec/changes/archive/<folder>`). `review-ticket` reports a missing delta, a delta that does not match the code, and main specs that do not match the delta as fixable findings, and a collision as `needs-human`; a fix pass reopens the archive to correct it. `finish-ticket` checks the branch again before the merge or hand-off. On a repository without `openspec/specs/` every ticket runs as before: the new lines sit in `<!-- ccmagic:plain-delta -->` blocks, which the baseline regression test strips like the spec-only blocks.
+- `bin/ccm-spec-delta` with modes `applies`, `name`, `collision`, `check`, `scope`, and `reopen`. `scope` applies the file rules of Reeve's gate for plain deltas (`delta-active`, `delta-outside`, `delta-folders`, `delta-name`, `delta-content`, `delta-specs`, `delta-collision`) and then `delta-not-applied`, which replays `openspec archive` on the merge base's OpenSpec tree in a `mktemp -d` directory under `$TMPDIR` and compares each capability's `spec.md` with the branch's. It writes nothing to the repository's `.git` and creates no worktree. `docs/cyrus-deployment.md` grants `Bash(ccm-spec-delta *)`.
+
+### Changed
+
+- `ccm-propose-check`'s change-name rule, delta reader, requirement-name reader, and dash and email checks moved to `bin/ccm-lib.sh` unchanged, so `ccm-spec-delta` shares them.
+- The SubagentStop handshake check accepts a `spec_delta:` line after `follow_ups:`, without requiring it.
+
 ## [3.21.0] - 2026-10
 
 ### Added

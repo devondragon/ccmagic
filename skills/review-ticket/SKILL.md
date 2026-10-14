@@ -2,7 +2,7 @@
 name: review-ticket
 description: Ticket-grounded code review. Fetches the ticket from Linear, GitHub Issues, or JIRA, then runs /ccmagic:review with the ticket scope as the primary intent source. Adds an explicit Ticket-scope drift section (in-scope / out-of-scope / missing-from-ticket).
 user-invocable: true
-allowed-tools: Read(*), Bash(git diff:*, git log:*, git status:*, git branch:*, git show:*, git show-ref:*, git rev-parse:*, git merge-base:*, git ls-files:*, gh issue view:*, gh issue comment:*, gh pr view:*, gh pr diff:*, gh pr list:*, gh pr comment:*, gh repo view:*), Bash(${CLAUDE_PLUGIN_ROOT}/bin/ccm-context *), Bash(ccm-context *), Bash(${CLAUDE_PLUGIN_ROOT}/bin/ccm-post-review *), Bash(ccm-post-review *), Glob(*), Grep(*), Agent(*), Task(*), TodoWrite(*), AskUserQuestion(*), Skill(*)
+allowed-tools: Read(*), Bash(git diff:*, git log:*, git status:*, git branch:*, git show:*, git show-ref:*, git rev-parse:*, git merge-base:*, git ls-files:*, gh issue view:*, gh issue comment:*, gh pr view:*, gh pr diff:*, gh pr list:*, gh pr comment:*, gh repo view:*), Bash(${CLAUDE_PLUGIN_ROOT}/bin/ccm-context *), Bash(ccm-context *), Bash(${CLAUDE_PLUGIN_ROOT}/bin/ccm-post-review *), Bash(ccm-post-review *), Bash(${CLAUDE_PLUGIN_ROOT}/bin/ccm-spec-delta *), Bash(ccm-spec-delta *), Glob(*), Grep(*), Agent(*), Task(*), TodoWrite(*), AskUserQuestion(*), Skill(*)
 argument-hint: "[TICKET-ID] [--threshold N]"
 model: inherit
 ---
@@ -122,6 +122,18 @@ Hold this analysis — it will be merged into the final report after `/ccmagic:r
 
 **Systemic findings.** When any finding — drift or code-quality — is an instance of a repeatable pattern, enumerate all instances across every reference mechanism that could carry the pattern (template attributes, raw attributes, ES-module imports, CSS `@import`/`url()`, manifests, service workers, config), not just the syntax of the first hit, and tag the finding `systemic:` per the review finding schema. Any "no other instances" claim must state its search scope and the mechanisms covered, or be downgraded to "no other {mechanism} instances found".
 
+<!-- ccmagic:plain-delta -->
+**Only when the base has `openspec/specs/` and the grounding block has no `spec:` section** (a plain ticket in a repository with OpenSpec specs). A plain ticket that changes specified behavior must carry its own spec delta, archived in the same PR. Check that it does. `{base-ref}` is `origin/{base_branch}` when `git rev-parse --verify origin/{base_branch}` succeeds, else `{base_branch}`. Run `"${CLAUDE_PLUGIN_ROOT}/bin/ccm-spec-delta" applies {base-ref}` (the bare name `ccm-spec-delta` only when the path form is not found or is denied, as for the other call here). When its `applies` is `false`, skip this pass. Otherwise run `"${CLAUDE_PLUGIN_ROOT}/bin/ccm-spec-delta" scope {TICKET-ID} {base-ref}`, which judges the branch's committed `openspec/` files the way Reeve's gate does and replays the archive, then read the diff against the specs:
+
+- **Missing delta** (fixable): the diff changes behavior a requirement or scenario states (a `SHALL` sentence or a scenario's `WHEN` and `THEN` that held for the base code is false for the new code, or new observable behavior inside a capability's `## Purpose`), and the PR has no archived delta for it (`spec_delta` is `none`) or the PR body says `Spec delta: none`. A fix that makes the code do what a requirement already says needs no delta, and behavior no capability covers needs none either (the PR body should say so).
+- **Delta does not match the code** (fixable): an ADDED or MODIFIED requirement or scenario in the archived delta says something the new code does not do, or a REMOVED requirement still describes code that remains.
+- **Main spec does not match the delta** (fixable): `scope` failed `delta-not-applied`. The fix is to reopen the delta and archive it again.
+- **Delta files outside the rules** (fixable): `scope` failed any other rule except `delta-collision`; name the rule and its `detail`.
+- **Collision** (`needs-human`): `scope` failed `delta-collision`. Name the active change, the capability, and the requirement: a person decides whether to wait for that change or fold the fix into it.
+
+Each finding cites `openspec/specs/{cap}/spec.md:{line}` and the code. Exit 3 from `scope` (it could not read the branch or run the replay) is a `needs-human` finding that names its `detail`.
+<!-- /ccmagic:plain-delta -->
+
 ---
 
 ## Step 5: Invoke /ccmagic:review with ticket context
@@ -192,6 +204,10 @@ If empty: "All AC items have corresponding changes."
 
 {Full code review report from /ccmagic:review here, including its own Scope Check, Critical/High/Medium findings, etc.}
 ```
+
+<!-- ccmagic:plain-delta -->
+**Only when the base has `openspec/specs/` and the grounding block has no `spec:` section** (Step 4 ran the spec delta pass). Add a `### Spec delta` section after *Missing from ticket*: the `spec_delta` value `scope` reported, then each spec-delta finding, or "The spec delta matches the code." when there is none.
+<!-- /ccmagic:plain-delta -->
 
 The drift section is informational — it does not block. But it gives the user a clear pre-merge signal for whether the work matches the ticket.
 
@@ -267,6 +283,10 @@ follow_ups: [<any tickets or deferrals noted>]
 - **clean** — no CRITICAL findings and no missing AC (out-of-scope items, if any, are flagged only).
 - **fixable-findings** — one or more CRITICAL findings and/or missing-AC items that are mechanically fixable in-scope. **List them** in the report so the caller can address them.
 - **needs-human** — a finding or missing AC needs human judgment or can't be closed in-scope; `reason` names it. If top-level, route-and-stop (park to `needs_human_state`, or `needs_human_label` if that state doesn't exist — on GitHub create the label first if missing; comment on the PR + ticket) before emitting the handshake. **Under prompt-relay** (contract §7), that top-level park applies contract §4's *Under the prompt-relay transport* adjustments — no state move or label, parked note to the PR only, emitted (with `Requested state: {needs_human_state}`) wrapped in the §7 final-message delimiters as your final output.
+
+<!-- ccmagic:plain-delta -->
+**Only when the base has `openspec/specs/` and the grounding block has no `spec:` section.** A fixable spec-delta finding (Step 4) counts toward `fixable-findings` the way a missing acceptance criterion does, and a collision or an unreadable `scope` toward `needs-human`.
+<!-- /ccmagic:plain-delta -->
 
 ---
 

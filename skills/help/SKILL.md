@@ -24,7 +24,7 @@ End-to-end ticket lifecycle backed by Linear, GitHub Issues, or JIRA. Auto-detec
 - **Purpose:** End-to-end ticket workflow — lookup, assign, branch, work, review, PR.
 - **When to use:** Starting work on a new ticket from your tracker.
 - **Example:** `/ccmagic:work-ticket ENG-123` (Linear/JIRA) or `/ccmagic:work-ticket 42` (GitHub).
-- **What it does:** Classifies the ticket (Quick Fix / Complex Feature / Debugging), creates a branch with the right prefix, executes the work (delegating to `/ccmagic:debug` for bugs), validates scope against the ticket, then opens a PR.
+- **What it does:** Classifies the ticket (Quick Fix / Complex Feature / Debugging), creates a branch with the right prefix, executes the work (delegating to `/ccmagic:debug` for bugs), validates scope against the ticket, then opens a PR. On a repository with `openspec/specs/`, a ticket that changes specified behavior carries its own spec delta, archived in the same PR (`ccm-spec-delta`).
 
 **`/ccmagic:review-ticket [TICKET-ID]`**
 - **Purpose:** Code review grounded in the ticket's stated scope and acceptance criteria.
