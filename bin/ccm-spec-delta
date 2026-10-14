@@ -1,0 +1,507 @@
+#!/usr/bin/env bash
+# ccm-spec-delta: a plain ticket's OpenSpec delta, archived in the same PR as
+# the code (RV-100). Names the change, checks it before and after
+# `openspec archive`, and reopens it for a fix pass. Prints JSON.
+#
+# Usage: ccm-spec-delta applies BASE
+#        ccm-spec-delta name TICKET TITLE BASE
+#        ccm-spec-delta collision [--stdin] NAME BASE
+#        ccm-spec-delta check [--worktree] NAME BASE
+#        ccm-spec-delta scope [--worktree] TICKET BASE
+#        ccm-spec-delta reopen BASE
+#
+# TICKET is a tracker key (BMC-430; a key whose letters Reeve's change-name rule
+# refuses, such as one with an underscore, fails change-name in name mode) or a GitHub issue number (42 or #42);
+# BASE the PR's base branch (a ref such as origin/main). The merge base is the
+# merge base of BASE and HEAD: the specs the branch started from, which the
+# archive was applied to, and the point Reeve's gate lists the PR's files from.
+#
+# applies: whether the plain-ticket rule applies here: BASE's tip has at least
+#   one openspec/specs/<cap>/spec.md. Output: {pass, mode, applies, capabilities}
+#   (pass is always true; exit 0 either way).
+#
+# name: the change name, `<ticket>-<slug>` (bmc-430-fix-expiry; a GitHub issue
+#   gives issue-42-...), at most 40 characters cut at a word boundary. A title
+#   word that would put as-delegation, label-based-prompt, as-refine, linear,
+#   or profiles into the name is dropped (Reeve's change-name rule). When the
+#   name is "archive", an active change at BASE, or the name of an archive
+#   folder (at BASE or in the working tree), -2, -3, ... is appended.
+#   Fails change-name when the ticket key alone breaks that rule.
+#   Output: {pass, mode, name}
+#
+# collision: requirement names the delta shares with an active change at BASE
+#   (any operation, RENAMED FROM and TO included, compared ignoring case), per
+#   capability. The delta is openspec/changes/NAME/specs/*/spec.md in the
+#   working tree, or with --stdin "capability<TAB>requirement" lines.
+#   Rule: delta-collision.
+#   Output: {pass, mode, rule, detail, collisions: [{change, capability, requirement}]}
+#
+# check: the delta folder before the archive. Rules: change-name,
+#   name-collision, files (a file other than proposal.md and
+#   specs/<cap>/spec.md, or no spec at all), capability-name, capability-new
+#   (no openspec/specs/<cap>/spec.md at the merge base: a plain ticket never
+#   creates a capability), requirement-not-found (a MODIFIED, REMOVED, or
+#   RENAMED FROM name the capability's spec at the merge base does not have),
+#   dash, personal-identifier. Reads the folder from the working tree with
+#   --worktree, else from HEAD.
+#   Output: {pass, mode, change, findings: [{rule, file, line, message}]}
+#
+# scope: the branch's OpenSpec files after the archive, by the file rules of
+#   Reeve's gate, in its order: delta-active, delta-outside, delta-folders,
+#   delta-name (without the gate's ledger part), delta-content, delta-specs,
+#   delta-collision (against the active changes at BASE's tip); then
+#   delta-not-applied, which replays `openspec archive` on the merge base's
+#   OpenSpec tree in a scratch directory and compares each capability's
+#   spec.md with the branch's, byte for byte. The rules apply only in delta
+#   mode, when the branch touches openspec/specs/ or openspec/changes/archive/;
+#   otherwise scope passes with spec_delta "none". With --worktree the branch
+#   is the working tree: tracked changes and the untracked files under
+#   openspec/.
+#   Output: {pass, mode, delta, spec_delta, folder, capabilities, rule, detail,
+#            file, base, merge_base}
+#
+# reopen: undo the archive in the working tree for a fix pass. The archive
+#   folder the branch adds goes back to openspec/changes/<name>/, and each
+#   capability's spec.md is restored from the merge base.
+#   Output: {pass, mode, change, folder, capabilities}
+#
+# Writes: only under openspec/ in the working tree (reopen), and to a
+# directory from mktemp -d under $TMPDIR, removed on exit. Never a git
+# worktree, a checkout, or the index.
+#
+# Exit codes: 0 pass, 1 a rule failed, 3 cannot read or run (not a git
+# repository, an unknown BASE, no openspec CLI, an unwritable TMPDIR, a replay
+# that fails), 4 usage error.
+
+set -euo pipefail
+here=$(dirname "${BASH_SOURCE[0]}")
+# shellcheck source=bin/ccm-lib.sh
+. "$here/ccm-lib.sh"
+
+usage() { echo "ccm-spec-delta: $1" >&2; exit 4; }
+
+mode=${1:-}
+case $mode in
+  -h|--help) sed -n '2,/^set -euo/p' "$0" | sed '$d'; exit 0 ;;
+  applies|name|collision|check|scope|reopen) shift ;;
+  "") usage "name a mode: applies, name, collision, check, scope, or reopen" ;;
+  *) usage "unknown mode $mode" ;;
+esac
+
+# Flags come before the first positional argument; "--" or the first positional
+# ends them, so a title that starts with "-" is read as a title.
+worktree=false stdin=false args=()
+while [ $# -gt 0 ]; do
+  if [ ${#args[@]} -gt 0 ]; then args+=("$1"); shift; continue; fi
+  case $1 in
+    --) shift; args+=("$@"); break ;;
+    --worktree) [ "$mode" = check ] || [ "$mode" = scope ] || usage "--worktree applies to check and scope"; worktree=true ;;
+    --stdin) [ "$mode" = collision ] || usage "--stdin applies to collision"; stdin=true ;;
+    -*) usage "unknown flag $1" ;;
+    *) args+=("$1") ;;
+  esac
+  shift
+done
+need() { [ ${#args[@]} -eq "$1" ] || usage "$mode takes $2"; }
+case $mode in
+  name) need 3 "TICKET, TITLE, and BASE" ;;
+  collision|check) need 2 "NAME and BASE" ;;
+  scope) need 2 "TICKET and BASE" ;;
+  applies|reopen) need 1 "BASE" ;;
+esac
+
+# ticket_key TICKET: the lowercased key a change name starts with.
+ticket_key() {
+  if [[ $1 =~ ^[A-Za-z][A-Za-z0-9_]*-[0-9]+$ ]]; then printf '%s' "$1" | tr '[:upper:]' '[:lower:]'
+  elif [[ $1 =~ ^#?([0-9]+)$ ]]; then printf 'issue-%s' "$((10#${BASH_REMATCH[1]}))"
+  else usage "ticket $(printf %q "$1") is not a tracker key (ABC-123) or an issue number"
+  fi
+}
+
+unreadable() { jq -n --arg m "$mode" --arg d "$1" '{pass: false, mode: $m, rule: null, detail: $d}'; exit 3; }
+
+top=$(git rev-parse --show-toplevel 2>/dev/null) || unreadable "not inside a git repository"
+cd "$top"
+scratch=$(mktemp -d "${TMPDIR:-/tmp}/ccm-spec-delta.XXXXXX" 2>/dev/null) ||
+  unreadable "cannot make a scratch directory under ${TMPDIR:-/tmp}"
+trap 'rm -rf "$scratch"' EXIT
+
+base=${args[${#args[@]}-1]}
+base_sha=$(git rev-parse --verify --quiet "$base^{commit}") || unreadable "cannot resolve base $base to a commit"
+head_sha=$(git rev-parse --verify --quiet "HEAD^{commit}") || unreadable "cannot resolve HEAD to a commit"
+mb_sha=$(git merge-base "$base_sha" "$head_sha") || unreadable "$base and HEAD have no merge base"
+
+# at REV PATH: whether PATH exists at REV.
+at() { git cat-file -e "$1:$2" 2>/dev/null; }
+# active_changes REV: the active change folder names at REV, one per line.
+active_changes() {
+  at "$1" openspec/changes || return 0
+  git ls-tree -d --name-only "$1:openspec/changes" | { grep -vxF archive || true; }
+}
+# archive_folders: the archive folder names at BASE and in the working tree.
+archive_folders() {
+  {
+    if [ -d openspec/changes/archive ]; then
+      for d in openspec/changes/archive/*/; do [ -d "$d" ] && { d=${d%/}; echo "${d##*/}"; }; done
+    fi
+    if at "$base_sha" openspec/changes/archive; then git ls-tree -d --name-only "$base_sha:openspec/changes/archive"; fi
+  } | LC_ALL=C sort -u
+}
+# names_of FILE: every requirement name a delta touches, lowercased, sorted.
+names_of() { ccm_delta_refs "$1" all | awk -F'\t' '$1 == "R" { print tolower($4) }' | LC_ALL=C sort -u; }
+
+# collisions CAPLIST OUT: for each "capability<TAB>name" line of CAPLIST (names
+# lowercased), every active change at BASE's tip, other than SELF, whose delta
+# for that capability names the same requirement, as
+# "change<TAB>capability<TAB>requirement" lines in OUT.
+collisions() {
+  local c cap
+  : >"$2"
+  cut -f1 "$1" | LC_ALL=C sort -u >"$scratch/caplist"
+  while IFS= read -r c; do
+    if [ -z "$c" ] || [ "$c" = "${SELF:-}" ]; then continue; fi
+    while IFS= read -r cap; do
+      at "$base_sha" "openspec/changes/$c/specs/$cap/spec.md" || continue
+      git cat-file blob "$base_sha:openspec/changes/$c/specs/$cap/spec.md" >"$scratch/theirs.md"
+      names_of "$scratch/theirs.md" >"$scratch/theirs"
+      awk -F'\t' -v cap="$cap" '$1 == cap { print $2 }' "$1" | LC_ALL=C sort -u >"$scratch/ours"
+      LC_ALL=C comm -12 "$scratch/ours" "$scratch/theirs" | awk -v c="$c" -v cap="$cap" '{ print c "\t" cap "\t" $0 }' >>"$2"
+    done <"$scratch/caplist"
+  done < <(active_changes "$base_sha")
+}
+collisions_json() { jq -R -s 'split("\n") | map(select(length > 0) | split("\t") | {change: .[0], capability: .[1], requirement: .[2]})' "$1"; }
+collision_detail() {
+  awk -F'\t' 'NR == 1 { printf "requirement \"%s\" of %s is also named by active change %s", $3, $2, $1 } END { if (NR > 1) printf " (and %d more)", NR - 1 }' "$1"
+}
+
+
+# ---- applies --------------------------------------------------------------------
+
+if [ "$mode" = applies ]; then
+  { git ls-tree -r --name-only "$base_sha" -- openspec/specs/ || unreadable "cannot list openspec/specs at $base"; } |
+    awk -F/ 'NF == 4 && $4 == "spec.md" { print $3 }' | LC_ALL=C sort -u >"$scratch/caps"
+  jq -R . "$scratch/caps" | jq -s '{pass: true, mode: "applies", applies: (length > 0), capabilities: .}'
+  exit 0
+fi
+
+# ---- name -----------------------------------------------------------------------
+
+if [ "$mode" = name ]; then
+  key=$(ticket_key "${args[0]}")
+  why=$(ccm_change_name_problem "$key")
+  if [ -n "$why" ]; then
+    jq -n --arg d "$why" '{pass: false, mode: "name", name: null, rule: "change-name", detail: $d}'; exit 1
+  fi
+  words=()
+  read -r -a words <<<"$(printf '%s' "${args[1]}" | tr '[:upper:]' '[:lower:]' | LC_ALL=C tr -c 'a-z0-9' ' ')"
+  # build LIMIT: the key plus as many title words as fit in LIMIT characters.
+  build() {
+    local n=$key w
+    for w in ${words[@]+"${words[@]}"}; do
+      [ $((${#n} + 1 + ${#w})) -le "$1" ] || break
+      [ -z "$(ccm_change_name_problem "$n-$w")" ] || continue
+      n=$n-$w
+    done
+    printf '%s' "$n"
+  }
+  archive_folders >"$scratch/archives"
+  active_changes "$base_sha" >"$scratch/active"
+  taken() {
+    [ "$1" != archive ] || return 0
+    grep -qxF -- "$1" "$scratch/active" && return 0
+    local a
+    while IFS= read -r a; do ccm_archive_matches "$a" "$1" && return 0; done <"$scratch/archives"
+    return 1
+  }
+  name=$(build 40)
+  if taken "$name"; then
+    found=""
+    for k in $(seq 2 99); do
+      cand=$(build $((40 - 1 - ${#k})))-$k
+      if ! taken "$cand"; then found=$cand; break; fi
+    done
+    [ -n "$found" ] || unreadable "no free change name for ${args[0]} up to -99"
+    name=$found
+  fi
+  jq -n --arg n "$name" '{pass: true, mode: "name", name: $n}'
+  exit 0
+fi
+
+# ---- collision ------------------------------------------------------------------
+
+if [ "$mode" = collision ]; then
+  SELF=${args[0]}
+  : >"$scratch/caps"
+  if $stdin; then
+    awk -F'\t' 'NF >= 2 && $1 != "" && $2 != "" { print $1 "\t" tolower($2) }' >"$scratch/caps"
+  else
+    [ -d "openspec/changes/$SELF/specs" ] || unreadable "openspec/changes/$SELF/specs does not exist in the working tree"
+    for spec in "openspec/changes/$SELF"/specs/*/spec.md; do
+      [ -f "$spec" ] || continue
+      cap=${spec%/spec.md}; cap=${cap##*/}
+      names_of "$spec" | awk -v cap="$cap" '{ print cap "\t" $0 }' >>"$scratch/caps"
+    done
+  fi
+  collisions "$scratch/caps" "$scratch/hits"
+  if [ -s "$scratch/hits" ]; then
+    jq -n --arg d "$(collision_detail "$scratch/hits")" --argjson c "$(collisions_json "$scratch/hits")" \
+      '{pass: false, mode: "collision", rule: "delta-collision", detail: $d, collisions: $c}'
+    exit 1
+  fi
+  jq -n '{pass: true, mode: "collision", rule: null, detail: null, collisions: []}'
+  exit 0
+fi
+
+# ---- check ----------------------------------------------------------------------
+
+if [ "$mode" = check ]; then
+  name=${args[0]}
+  if ! [[ $name =~ ^[A-Za-z0-9._-]+$ ]] || [ "$name" = . ] || [ "$name" = .. ]; then
+    usage "change $(printf %q "$name") is not a plain folder name"
+  fi
+  dir=openspec/changes/$name
+  : >"$scratch/out"
+  finding() { printf '%s\t%s\t%s\t%s\n' "$1" "$2" "$3" "$4" >>"$scratch/out"; }
+  why=$(ccm_change_name_problem "$name")
+  [ -z "$why" ] || finding change-name "$dir" 0 "$why"
+  if [ "$name" = archive ]; then
+    finding name-collision "$dir" 0 "openspec/changes/archive is the archive folder, not a change"
+  elif at "$base_sha" "$dir"; then
+    finding name-collision "$dir" 0 "a change named $name already exists at the base"
+  fi
+  archive_folders >"$scratch/archives"
+  while IFS= read -r a; do
+    [ -n "$a" ] || continue
+    ccm_archive_matches "$a" "$name" && finding name-collision "$dir" 0 "openspec/changes/archive/$a is already an archive of a change named $name"
+  done <"$scratch/archives"
+
+  # The folder, copied to the scratch directory so both sources read the same way.
+  copy=$scratch/folder
+  mkdir -p "$copy"
+  if $worktree; then
+    [ -d "$dir" ] && command cp -R "$dir/." "$copy/"
+  elif at "$head_sha" "$dir"; then
+    git archive "$head_sha" "$dir" | tar -x -C "$scratch" && command cp -R "$scratch/$dir/." "$copy/"
+  fi
+  nspec=0
+  while IFS= read -r rel; do
+    rel=${rel#./}
+    case $rel in
+      proposal.md) ;;
+      specs/*/spec.md)
+        cap=${rel#specs/}; cap=${cap%/spec.md}
+        if [[ $cap == */* ]]; then
+          finding capability-name "$dir/$rel" 0 "a capability path below specs/ has more than one segment; Reeve plans only specs/<capability>/spec.md"
+          continue
+        fi
+        nspec=$((nspec + 1))
+        [[ $cap =~ ^[a-z0-9]+(-[a-z0-9]+)*$ ]] || finding capability-name "$dir/$rel" 0 "capability folder $cap is not one-segment kebab-case"
+        current=openspec/specs/$cap/spec.md
+        if ! at "$mb_sha" "$current"; then
+          finding capability-new "$dir/$rel" 0 "capability $cap has no $current at the merge base; a plain ticket changes only capabilities that exist, so leave this behavior out of the delta and name it in the PR body"
+          continue
+        fi
+        git cat-file blob "$mb_sha:$current" >"$scratch/current"
+        ccm_requirement_names "$scratch/current" >"$scratch/names"
+        { ccm_delta_refs "$copy/$rel" | grep '^R' || true; } | while IFS=$'\t' read -r _ rl rkind rname; do
+          grep -qxF -- "$rname" "$scratch/names" ||
+            finding requirement-not-found "$dir/$rel" "$rl" "$rkind requirement \"$rname\" is not in $current at the merge base; copy the name exactly"
+        done ;;
+      *) finding files "$dir/$rel" 0 "a plain delta holds only proposal.md and specs/<capability>/spec.md" ;;
+    esac
+    ccm_text_findings "$copy/$rel" | while IFS=$'\t' read -r rule n; do
+      case $rule in
+        dash) finding dash "$dir/$rel" "$n" "em or en dash" ;;
+        *) finding personal-identifier "$dir/$rel" "$n" "an email address is written out; leave it out or name the role" ;;
+      esac
+    done
+  done < <(cd "$copy" && /usr/bin/find . -type f | LC_ALL=C sort)
+  [ "$nspec" -gt 0 ] || finding files "$dir" 0 "$dir holds no specs/<capability>/spec.md; a change with no delta fails strict validation"
+  jq -R -s --arg n "$name" '
+    split("\n") | map(select(length > 0) | split("\t") | {rule: .[0], file: .[1], line: (.[2] | tonumber), message: .[3]})
+    | sort_by(.file, .line, .rule) as $f
+    | {pass: (($f | length) == 0), mode: "check", change: $n, findings: $f}' "$scratch/out" >"$scratch/json"
+  command cat "$scratch/json"
+  [ "$(jq -r .pass "$scratch/json")" = true ] && exit 0
+  exit 1
+fi
+
+# ---- scope and reopen: the paths the branch changes -------------------------------
+
+# STATUS<TAB>OLD<TAB>NEW per path the branch changes from the merge base (OLD
+# empty unless renamed), as GitHub lists a PR's files. With --worktree (and
+# for reopen) the branch is the working tree: tracked files as they are now,
+# plus the untracked, not ignored files under openspec/ as added. Read
+# NUL-separated, so a path git would quote is read as it is; a path holding a
+# tab or a newline is unreadable.
+worktree_side=$worktree
+[ "$mode" = reopen ] && worktree_side=true
+if $worktree_side; then
+  { git diff -z --name-status --find-renames "$mb_sha" -- &&
+    git ls-files -z -o --exclude-standard -- openspec/ | while IFS= read -r -d '' p; do printf 'A\0%s\0' "$p"; done; } >"$scratch/changes.z" ||
+    unreadable "cannot list the paths the working tree changes from the merge base"
+else
+  git diff -z --name-status --find-renames "$mb_sha" "$head_sha" >"$scratch/changes.z" ||
+    unreadable "cannot list the paths the branch changes from the merge base"
+fi
+changes=$scratch/changes
+: >"$changes"
+while IFS= read -r -d '' st; do
+  old=""
+  if [[ $st == [RC]* ]]; then IFS= read -r -d '' old || unreadable "cannot read git diff -z output"; fi
+  st=${st:0:1}
+  IFS= read -r -d '' new || unreadable "cannot read git diff -z output"
+  for p in "$old" "$new"; do
+    case $p in *$'\t'* | *$'\n'*) unreadable "the branch changes $(printf %q "$p"), whose name holds a tab or a newline" ;; esac
+  done
+  printf '%s\t%s\t%s\n' "$st" "$old" "$new" >>"$changes"
+done <"$scratch/changes.z"
+touched() { awk -F'\t' '{ if ($2 != "") print $2; print $3 }' "$changes" | LC_ALL=C sort -u; }
+# side_cat PATH OUT: the branch's copy of PATH.
+side_cat() {
+  if $worktree_side; then command cp -f "$1" "$2" 2>/dev/null
+  else git cat-file -e "$head_sha:$1" 2>/dev/null && git cat-file blob "$head_sha:$1" >"$2"
+  fi
+}
+A=openspec/changes/archive/
+# The archive folders the branch touches, and whether every path under them is added.
+archive_dirs() { touched | awk -v a="$A" 'index($0, a) == 1 { r = substr($0, length(a) + 1); if (index(r, "/")) print substr(r, 1, index(r, "/") - 1); else print "" }' | LC_ALL=C sort -u; }
+
+# ---- reopen ---------------------------------------------------------------------
+
+if [ "$mode" = reopen ]; then
+  dirs=$(archive_dirs)
+  if [ -z "$dirs" ] || [ "$(wc -l <<<"$dirs" | tr -d ' ')" -ne 1 ]; then
+    jq -n --arg d "the branch touches $(grep -c . <<<"$dirs" || true) archive folders; reopen needs exactly one" '{pass: false, mode: "reopen", rule: "delta-folders", detail: $d}'; exit 1
+  fi
+  F=$dirs
+  awk -F'\t' -v a="$A$F/" '(index($2, a) == 1 || index($3, a) == 1) && $1 != "A" { bad = 1 } END { exit bad }' "$changes" ||
+    { jq -n --arg d "$A$F is not a folder the branch adds" '{pass: false, mode: "reopen", rule: "delta-folders", detail: $d}'; exit 1; }
+  [[ $F =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}-(.+)$ ]] ||
+    { jq -n --arg d "$A$F is not YYYY-MM-DD-<name>" '{pass: false, mode: "reopen", rule: "delta-name", detail: $d}'; exit 1; }
+  name=${BASH_REMATCH[1]}
+  [ ! -e "openspec/changes/$name" ] ||
+    { jq -n --arg d "openspec/changes/$name already exists" '{pass: false, mode: "reopen", rule: "delta-active", detail: $d}'; exit 1; }
+  mkdir -p "openspec/changes/$name"
+  command cp -R "$A$F/." "openspec/changes/$name/"
+  caps=()
+  for spec in "$A$F"/specs/*/spec.md; do
+    [ -f "$spec" ] || continue
+    cap=${spec%/spec.md}; cap=${cap##*/}; caps+=("$cap")
+    main=openspec/specs/$cap/spec.md
+    if at "$mb_sha" "$main"; then git cat-file blob "$mb_sha:$main" >|"$main"
+    else command rm -f "$main"; rmdir "openspec/specs/$cap" 2>/dev/null || true
+    fi
+  done
+  command rm -rf "${A:?}$F"
+  rmdir openspec/changes/archive 2>/dev/null || true
+  jq -n --arg n "$name" --arg f "$A$F" '{pass: true, mode: "reopen", change: $n, folder: $f, capabilities: $ARGS.positional}' --args ${caps[@]+"${caps[@]}"}
+  exit 0
+fi
+
+# ---- scope ----------------------------------------------------------------------
+
+key=$(ticket_key "${args[0]}")
+F="" caps_json='[]' delta=false
+result() {
+  local sd=null extra=${5:-}
+  [ -n "$extra" ] || extra='{}'
+  if [ "$delta" = false ]; then sd='"none"'; elif [ -n "$F" ]; then sd=$(jq -n --arg f "$A$F" '$f'); fi
+  jq -n --argjson pass "$1" --arg rule "$2" --arg detail "$3" --arg file "${4:-}" --argjson delta "$delta" \
+    --argjson sd "$sd" --arg folder "$F" --argjson caps "$caps_json" --arg base "$base_sha" --arg mb "$mb_sha" \
+    --argjson extra "$extra" '
+    {pass: $pass, mode: "scope", delta: $delta, spec_delta: $sd,
+     folder: (if $folder == "" then null else "openspec/changes/archive/" + $folder end), capabilities: $caps,
+     rule: (if $rule == "" then null else $rule end), detail: (if $detail == "" then null else $detail end),
+     file: (if $file == "" then null else $file end), base: $base, merge_base: $mb} + $extra'
+  [ "$1" = true ] && exit 0
+  exit 1
+}
+fail() { result false "$@"; }
+
+touched >"$scratch/touched"
+if ! grep -qE '^openspec/(specs|changes/archive)/' "$scratch/touched"; then result true "" ""; fi
+delta=true
+
+# 1. delta-active
+first=$(awk 'index($0, "openspec/changes/") == 1 { r = substr($0, 18); i = index(r, "/"); if (i > 1 && substr(r, 1, i - 1) != "archive") { print; exit } }' "$scratch/touched")
+[ -z "$first" ] || fail delta-active "$first is in an active change folder; a plain delta is archived in the same PR, so no folder is left under openspec/changes/ outside archive/" "$first"
+# 2. delta-outside
+first=$(awk -v a="$A" 'index($0, "openspec/") == 1 && index($0, a) != 1 && $0 !~ /^openspec\/specs\/[^\/]+\/spec\.md$/ { print; exit }' "$scratch/touched")
+[ -z "$first" ] || fail delta-outside "$first is under openspec/ and is neither in an archive folder nor openspec/specs/<capability>/spec.md" "$first"
+# 3. delta-folders
+dirs=$(archive_dirs)
+first=$(awk -v a="$A" 'index($0, a) == 1 && index(substr($0, length(a) + 1), "/") == 0 { print; exit }' "$scratch/touched")
+[ -z "$first" ] || fail delta-folders "$first is a file directly under openspec/changes/archive/, not in an archive folder" "$first"
+n=$(grep -c . <<<"$dirs" || true)
+if [ "$n" -eq 0 ]; then
+  first=$(grep -m1 '^openspec/specs/' "$scratch/touched")
+  fail delta-folders "$first changes without an archived delta" "$first"
+fi
+[ "$n" -eq 1 ] || fail delta-folders "the branch touches $n archive folders ($(tr '\n' ' ' <<<"$dirs" | sed 's/ $//')); a plain delta adds exactly one" "$A"
+F=$dirs
+first=$(awk -F'\t' -v a="$A$F/" '(index($2, a) == 1 || index($3, a) == 1) && $1 != "A" { print ($3 != "" ? $3 : $2); exit }' "$changes")
+[ -z "$first" ] || fail delta-folders "$first is not added; a plain delta adds a new archive folder and changes no existing one" "$first"
+# 4. delta-name
+[[ $F =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}-(.+)$ ]] || fail delta-name "$A$F is not YYYY-MM-DD-<name>" "$A$F"
+name=${BASH_REMATCH[1]}
+why=$(ccm_change_name_problem "$name")
+[ -z "$why" ] || fail delta-name "$why" "$A$F"
+[ "$name" = "$key" ] || [[ $name == "$key"-* ]] || fail delta-name "change $name does not start with this ticket's key $key" "$A$F"
+# 5. delta-content
+awk -v d="$A$F/" 'index($0, d) == 1 { print substr($0, length(d) + 1) }' "$scratch/touched" >"$scratch/files"
+first=$(awk '$0 != "proposal.md" && $0 != "design.md" && $0 != "tasks.md" && $0 != ".openspec.yaml" && $0 !~ /^specs\/[^\/]+\/spec\.md$/ { print; exit }' "$scratch/files")
+[ -z "$first" ] || fail delta-content "$A$F/$first is not a file openspec archive writes (proposal.md, design.md, tasks.md, .openspec.yaml, specs/<capability>/spec.md)" "$A$F/$first"
+awk -F/ '/^specs\// { print $2 }' "$scratch/files" | LC_ALL=C sort -u >"$scratch/caps"
+[ -s "$scratch/caps" ] || fail delta-content "$A$F holds no specs/<capability>/spec.md" "$A$F"
+caps_json=$(jq -R . "$scratch/caps" | jq -sc .)
+# 6. delta-specs
+first=$(awk -F'\t' 'NR == FNR { cap[$0] = 1; next }
+  { for (i = 2; i <= 3; i++) if (index($i, "openspec/specs/") == 1) {
+      split($i, p, "/")
+      if ($1 != "M" || $i !~ /^openspec\/specs\/[^\/]+\/spec\.md$/ || !(p[3] in cap)) { print $1 "\t" $i; exit } } }' "$scratch/caps" "$changes")
+if [ -n "$first" ]; then
+  st=${first%%$'\t'*} p=${first#*$'\t'}
+  case $st in
+    M) fail delta-specs "$p changes, and the delta in $A$F has no specs/ folder for its capability" "$p" ;;
+    A) fail delta-specs "$p is added; a plain ticket never creates a capability" "$p" ;;
+    *) fail delta-specs "$p is removed or renamed; a plain ticket never retires a capability" "$p" ;;
+  esac
+fi
+while IFS= read -r cap; do
+  awk -F'\t' -v p="openspec/specs/$cap/spec.md" '$1 == "M" && $3 == p { ok = 1 } END { exit !ok }' "$changes" ||
+    fail delta-specs "the delta in $A$F changes $cap, and openspec/specs/$cap/spec.md is unchanged; run openspec archive" "openspec/specs/$cap/spec.md"
+done <"$scratch/caps"
+# 7. delta-collision
+: >"$scratch/mine"
+while IFS= read -r cap; do
+  side_cat "$A$F/specs/$cap/spec.md" "$scratch/delta.md" || unreadable "cannot read $A$F/specs/$cap/spec.md on the branch"
+  names_of "$scratch/delta.md" | awk -v cap="$cap" '{ print cap "\t" $0 }' >>"$scratch/mine"
+done <"$scratch/caps"
+SELF="" collisions "$scratch/mine" "$scratch/hits"
+if [ -s "$scratch/hits" ]; then
+  fail delta-collision "$(collision_detail "$scratch/hits")" "$A$F" "$(jq -c '{collisions: .}' <<<"$(collisions_json "$scratch/hits")")"
+fi
+
+# delta-not-applied: replay the archive on the merge base's OpenSpec tree.
+command -v openspec >/dev/null 2>&1 || unreadable "the openspec CLI is not on PATH, and delta-not-applied replays openspec archive"
+replay=$scratch/replay
+mkdir -p "$replay"
+at "$mb_sha" openspec || unreadable "the merge base has no openspec/ folder to replay the archive on"
+git archive "$mb_sha" openspec | tar -x -C "$replay" || unreadable "cannot extract openspec/ at the merge base"
+[ ! -e "$replay/openspec/changes/$name" ] || unreadable "an active change named $name exists at the merge base, so the replay cannot tell the two apart"
+mkdir -p "$replay/openspec/changes/$name"
+while IFS= read -r rel; do
+  mkdir -p "$(dirname "$replay/openspec/changes/$name/$rel")"
+  side_cat "$A$F/$rel" "$replay/openspec/changes/$name/$rel" || unreadable "cannot read $A$F/$rel on the branch"
+done <"$scratch/files"
+if ! (cd "$replay" && OPENSPEC_TELEMETRY=0 DO_NOT_TRACK=1 openspec archive "$name" --yes) >"$scratch/replay.log" 2>&1; then
+  unreadable "the replay of openspec archive $name on the merge base failed: $(tail -3 "$scratch/replay.log" | tr '\n' ' ' | sed 's/ *$//')"
+fi
+while IFS= read -r cap; do
+  main=openspec/specs/$cap/spec.md
+  side_cat "$main" "$scratch/side.md" || fail delta-not-applied "$main is missing on the branch" "$main"
+  cmp -s "$replay/$main" "$scratch/side.md" ||
+    fail delta-not-applied "$main on the branch is not the result of archiving $A$F on the merge base's specs; restore it with reopen and archive again" "$main"
+done <"$scratch/caps"
+result true "" ""

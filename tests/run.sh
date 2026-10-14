@@ -3854,15 +3854,19 @@ finish_hook_registered_and_documented() {
 # blank line, whose first line starts "**Only when"; the added grants are the
 # only other change. Removing both gives $SPEC_BASELINE byte for byte, so a
 # ticket without a spec block reads the same prompts, steps, and run record
-# templates as that release.
+# templates as that release. RV-100's plain-ticket spec delta lines sit the
+# same way in <!-- ccmagic:plain-delta --> blocks, whose first line starts
+# "**Only when the base has `openspec/specs/`", with the ccm-spec-delta grants:
+# on a repository without OpenSpec specs, every ticket also reads what the
+# baseline did.
 strip_spec_only() {
   awk '
     eat { eat = 0; if ($0 == "") next }
-    $0 == "<!-- ccmagic:spec-only -->" { skip = 1; next }
-    skip && $0 == "<!-- /ccmagic:spec-only -->" { skip = 0; eat = 1; next }
+    $0 == "<!-- ccmagic:spec-only -->" || $0 == "<!-- ccmagic:plain-delta -->" { skip = 1; next }
+    skip && ($0 == "<!-- /ccmagic:spec-only -->" || $0 == "<!-- /ccmagic:plain-delta -->") { skip = 0; eat = 1; next }
     skip { next }
     /^allowed-tools:/ {
-      n = split(" Bash(${CLAUDE_PLUGIN_ROOT}/bin/ccm-openspec-scope *), Bash(ccm-openspec-scope *),| Bash(${CLAUDE_PLUGIN_ROOT}/bin/ccm-openspec-version *), Bash(ccm-openspec-version *),| Bash(${CLAUDE_PLUGIN_ROOT}/bin/ccm-spec-block *), Bash(ccm-spec-block *),", g, "|")
+      n = split(" Bash(${CLAUDE_PLUGIN_ROOT}/bin/ccm-openspec-scope *), Bash(ccm-openspec-scope *),| Bash(${CLAUDE_PLUGIN_ROOT}/bin/ccm-openspec-version *), Bash(ccm-openspec-version *),| Bash(${CLAUDE_PLUGIN_ROOT}/bin/ccm-spec-block *), Bash(ccm-spec-block *),| Bash(${CLAUDE_PLUGIN_ROOT}/bin/ccm-spec-delta *), Bash(ccm-spec-delta *),", g, "|")
       for (i = 1; i <= n; i++) while ((k = index($0, g[i])) > 0) $0 = substr($0, 1, k - 1) substr($0, k + length(g[i]))
     }
     { print }' "$1"
@@ -3895,11 +3899,19 @@ skills_spec_only_blocks_well_formed() {
   for f in $(spec_prompt_files); do
     [ -f "$ROOT/$f" ] || continue
     awk -v f="$f" '
-      want_blank { want_blank = 0; if ($0 != "") { print f ":" NR ": no blank line after a spec-only block"; bad = 1 } }
-      $0 == "<!-- ccmagic:spec-only -->" { if (inb) { print f ":" NR ": nested block"; bad = 1 } inb = 1; first = 1; next }
-      $0 == "<!-- /ccmagic:spec-only -->" { if (!inb) { print f ":" NR ": end without start"; bad = 1 } inb = 0; want_blank = 1; next }
-      inb && first && $0 != "" { first = 0; t = $0; sub(/^[ \t]+/, "", t); if (t !~ /^\*\*Only when/) { print f ":" NR ": block does not start with **Only when"; bad = 1 } }
-      /ccmagic:spec-only/ && $0 != "<!-- ccmagic:spec-only -->" && $0 != "<!-- /ccmagic:spec-only -->" { print f ":" NR ": marker not on a line of its own"; bad = 1 }
+      want_blank { want_blank = 0; if ($0 != "") { print f ":" NR ": no blank line after a " kind " block"; bad = 1 } }
+      $0 == "<!-- ccmagic:spec-only -->" || $0 == "<!-- ccmagic:plain-delta -->" {
+        if (inb) { print f ":" NR ": nested block"; bad = 1 }
+        inb = 1; first = 1; kind = ($0 ~ /plain-delta/) ? "plain-delta" : "spec-only"; next }
+      $0 == "<!-- /ccmagic:spec-only -->" || $0 == "<!-- /ccmagic:plain-delta -->" {
+        if (!inb) { print f ":" NR ": end without start"; bad = 1 }
+        else if (index($0, kind) == 0) { print f ":" NR ": " kind " block closed by another marker"; bad = 1 }
+        inb = 0; want_blank = 1; next }
+      inb && first && $0 != "" {
+        first = 0; t = $0; sub(/^[ \t]+/, "", t)
+        if (kind == "spec-only" && t !~ /^\*\*Only when/) { print f ":" NR ": block does not start with **Only when"; bad = 1 }
+        if (kind == "plain-delta" && index(t, "**Only when the base has `openspec/specs/`") != 1) { print f ":" NR ": plain-delta block does not start with **Only when the base has `openspec/specs/`"; bad = 1 } }
+      /ccmagic:(spec-only|plain-delta)/ && $0 !~ /^<!-- \/?ccmagic:(spec-only|plain-delta) -->$/ { print f ":" NR ": marker not on a line of its own"; bad = 1 }
       END { if (inb) print f ": unclosed block" }' "$ROOT/$f" | grep . && missing+=" $f"
   done
   check "${missing# }" ""
@@ -3957,7 +3969,9 @@ skills_hooks_only_accept_tasks_done() {
   changed=$(git -C "$ROOT" diff "$SPEC_BASELINE" -- hooks ':(exclude)hooks/hooks.json' ':(exclude)hooks/pre-tool-use-finish-guard.sh' |
     grep -E '^[-+]' | grep -vE '^(\+\+\+|---) ' || true)
   check "$changed" "+#   tasks_done: [ids]            (optional: work step on a Reeve spec ticket only)
++#   spec_delta: none | <folder>  (optional: work step on a plain ticket in a repo with specs)
 +        if (l ~ /^[[:space:]]*tasks_done:/) continue
++        if (l ~ /^[[:space:]]*spec_delta:/) continue
 +#   Review stats: \`ccm-review-route --record\` without \`--local\`.
 +#     Autonomous: denied. The tracked context/review-stats.json it would modify
 +#     gets committed after the review, moving the PR head off the reviewed
@@ -3999,6 +4013,24 @@ skills_run_record_openspec_key_only_for_spec_tickets() {
     strip_spec_only "$ROOT/$f" | grep '"openspec"' >/dev/null && missing+=" $f:key-outside-block"
     [ "$(strip_spec_only "$ROOT/$f" | grep -m1 '^{"ccmagic": ')" = "$base" ] || missing+=" $f:ordinary-template-in-block"
   done
+  check "${missing# }" ""
+}
+
+# A plain ticket's run record is the ordinary template with the spec_delta
+# key added last inside "ccmagic", only inside a plain-delta block (RV-100).
+skills_run_record_spec_delta_key_only_for_plain_deltas() {
+  local f base plain frag missing=
+  frag=', "spec_delta": "{spec_delta: none, or openspec/changes/archive/<folder>}"'
+  for f in skills/auto-ticket/SKILL.md skills/auto-ticket/autonomous-contract.md; do
+    base=$(grep -m1 '^{"ccmagic": ' "$ROOT/$f")
+    plain=$(awk '$0 == "<!-- ccmagic:plain-delta -->" { b = 1 } $0 == "<!-- /ccmagic:plain-delta -->" { b = 0 } b && /^\{"ccmagic": /' "$ROOT/$f")
+    [ "$plain" = "${base%\}\}}$frag}}" ] || missing+=" $f:plain-template"
+    strip_spec_only "$ROOT/$f" | grep '"spec_delta"' >/dev/null && missing+=" $f:key-outside-block"
+  done
+  # The work agent and the contract's handshake name the line; the hook accepts it.
+  grep -qF 'spec_delta: none' "$ROOT/agents/auto-work.md" || missing+=" auto-work"
+  # shellcheck source=hooks/lib-handshake.sh
+  printf 'x\nstatus: done\nreason: r\nfollow_ups: []\nspec_delta: none\n' | (. "$HOOKS/lib-handshake.sh"; ccm_handshake_problem "done needs-human") | grep . && missing+=" hook"
   check "${missing# }" ""
 }
 
@@ -4626,6 +4658,267 @@ skills_propose_workflow() {
   grep -qF '/ccmagic:propose' "$ROOT/skills/help/SKILL.md" || missing+=" help"
   grep -qF 'RV-99' "$ROOT/CHANGELOG.md" || missing+=" changelog"
   check "${missing# }" ""
+}
+
+# ---- ccm-spec-delta: a plain ticket's spec delta (RV-100) --------------------
+
+SD_FIXTURE=$ROOT/tests/fixtures/spec-delta
+SDC=openspec/changes/rv-12-count-display
+
+# sd_repo: the propose fixture on main (the counting spec and the active change
+# add-reset, whose delta modifies "Increment"), then a branch holding the
+# plain delta rv-12-count-display (modifying "Count display"), written and not
+# yet archived, as work-ticket has it before the archive.
+sd_repo() {
+  cp -R "$PROPOSE_FIXTURE/." .
+  gcommit base
+  git checkout -q -b fix/rv-12
+  sd_delta
+}
+sd_delta() { mkdir -p "$SDC" && cp -R "$SD_FIXTURE/rv-12-count-display/." "$SDC/"; }
+sd() { run "$BIN/ccm-spec-delta" "$@"; }
+need_openspec() {
+  command -v openspec >/dev/null 2>&1 && return 0
+  echo "    skipped: openspec CLI not on PATH (CI installs @fission-ai/openspec@1.14.1)"
+  return 1
+}
+# sd_archive: archive the delta and commit it with a code change, as
+# work-ticket does; SDF is the archive folder.
+sd_archive() {
+  OPENSPEC_TELEMETRY=0 DO_NOT_TRACK=1 openspec archive rv-12-count-display --yes >"$T/archive" 2>&1 ||
+    { sed 's/^/    /' "$T/archive"; return 1; }
+  echo '// zero reads "no items"' >>src/counter.js
+  gcommit 'fix: zero items'
+  SDF=openspec/changes/archive/$(command ls openspec/changes/archive | grep rv-12-count-display)
+}
+sd_reset() { git checkout -q -- openspec && git clean -qfd -- openspec; }
+# git_state: what a run must leave as it found it: .git (without the index,
+# which git status refreshes, and the logs), the worktree list, and status.
+git_state() {
+  (cd "$(git rev-parse --git-dir)" && /usr/bin/find . \( -path ./index -o -path ./logs \) -prune -o -type f -print | LC_ALL=C sort |
+    while IFS= read -r f; do shasum "$f"; done | shasum)
+  git worktree list --porcelain
+  git status --porcelain
+}
+
+specdelta_name_rules() {
+  sd_repo
+  sd name RV-12 "Fix the count display for zero items" main
+  check "$RC,$(jqval .name)" "0,rv-12-fix-the-count-display-for-zero"
+  # A word that would put a Cyrus routing marker or "linear" in the name is dropped.
+  sd name ENG-4 "Sync Linear profiles as refine" main
+  check "$RC,$(jqval .name)" "0,eng-4-sync-as"
+  sd name '#42' "Fix it" main
+  check "$RC,$(jqval .name)" "0,issue-42-fix-it"
+  sd name LINEAR-1 "Fix it" main
+  check "$RC,$(jqval .rule)" "1,change-name"
+  # A name an archive folder already holds gets -2, still within 40 characters.
+  mkdir -p openspec/changes/archive/2026-01-01-rv-12-fix-it openspec/changes/archive/2026-01-02-rv-12-a-much-longer-title-for-cut
+  touch openspec/changes/archive/2026-01-01-rv-12-fix-it/proposal.md openspec/changes/archive/2026-01-02-rv-12-a-much-longer-title-for-cut/proposal.md
+  sd name RV-12 "Fix it" main
+  check "$RC,$(jqval .name)" "0,rv-12-fix-it-2"
+  sd name RV-12 "A much longer title for cutting words" main
+  check "$RC,$(jqval .name)" "0,rv-12-a-much-longer-title-for-cutting"
+  sd name RV-12 "A much longer title for cut" main
+  check "$RC,$(jqval .name)" "0,rv-12-a-much-longer-title-for-cut-2"
+  sd name rv "x" main
+  check "$RC" "4"
+  # A title that starts with a dash is a title, and "--" ends the flags.
+  sd name RV-12 "-1 shown as negative" main
+  check "$RC,$(jqval .name)" "0,rv-12-1-shown-as-negative"
+  sd name -- RV-12 "--verbose flag ignored" main
+  check "$RC,$(jqval .name)" "0,rv-12-verbose-flag-ignored"
+  # A key Reeve's change-name rule refuses fails that rule, exit 1.
+  sd name MY_PROJ-12 "Fix it" main
+  check "$RC,$(jqval .rule)" "1,change-name"
+}
+
+specdelta_applies() {
+  sd_repo
+  sd applies main
+  check "$RC,$(jqval .applies),$(jq -c .capabilities <<<"$OUT")" '0,true,["counting"]'
+  git checkout -q --orphan bare && git rm -rqf . && echo x >README.md && gcommit bare
+  sd applies bare
+  check "$RC,$(jqval .applies)" "0,false"
+}
+
+specdelta_collision() {
+  sd_repo
+  sd collision rv-12-count-display main
+  check "$RC,$(jqval .pass),$(jq -c .collisions <<<"$OUT")" "0,true,[]"
+  # The same requirement as add-reset's delta, in another case, collides.
+  printf '\n### Requirement: increment\nThe system SHALL add two.\n\n#### Scenario: Add\n- **WHEN** incremented\n- **THEN** it grows by two\n' >>"$SDC/specs/counting/spec.md"
+  sd collision rv-12-count-display main
+  check "$RC,$(jqval .rule),$(jq -c .collisions <<<"$OUT")" '1,delta-collision,[{"change":"add-reset","capability":"counting","requirement":"increment"}]'
+  # Before the folder exists, from stdin; a RENAMED TO name counts too.
+  run "$BIN/ccm-spec-delta" collision --stdin rv-12-other main <<<$'resetting\tReset to zero'
+  check "$RC,$(jqval '.collisions[0].change')" "1,add-reset"
+  run "$BIN/ccm-spec-delta" collision --stdin rv-12-other main <<<$'counting\tCount display'
+  check "$RC" "0"
+  sd_reset
+  sd_delta
+  # shellcheck disable=SC2016 # literal backticks in the delta
+  printf '## RENAMED Requirements\n\n- FROM: `### Requirement: Counter start`\n- TO: `### Requirement: Increment`\n' >"$SDC/specs/counting/spec.md"
+  sd collision rv-12-count-display main
+  check "$RC,$(jqval '.collisions[0].requirement')" "1,increment"
+}
+
+specdelta_check_rules() {
+  sd_repo
+  sd check --worktree rv-12-count-display main
+  check "$RC,$(jqval .pass),$(jqval '.findings | length')" "0,true,0"
+  # Not committed, so HEAD has no folder.
+  sd check rv-12-count-display main
+  check "$RC,$(jqval '[.findings[].rule] | unique | join(",")')" "1,files"
+  gcommit 'wip: delta'
+  sd check rv-12-count-display main
+  check "$RC" "0"
+  mkdir -p "$SDC/specs/billing"
+  printf '## ADDED Requirements\n\n### Requirement: Bill\nThe system SHALL bill.\n\n#### Scenario: Bill\n- **WHEN** billed\n- **THEN** a bill\n' >"$SDC/specs/billing/spec.md"
+  sed 's/Requirement: Count display/Requirement: Count displays/' "$SD_FIXTURE/rv-12-count-display/specs/counting/spec.md" >"$SDC/specs/counting/spec.md"
+  echo '- [ ] 1.1 nothing' >"$SDC/tasks.md"
+  printf 'Asked by someone@example.com \xe2\x80\x94 today\n' >>"$SDC/proposal.md"
+  sd check --worktree rv-12-count-display main
+  check "$RC,$(jqval '[.findings[].rule] | unique | join(",")')" "1,capability-new,dash,files,personal-identifier,requirement-not-found"
+  sd check --worktree add-reset main
+  check "$RC,$(jqval '[.findings[].rule] | index("name-collision") != null')" "1,true"
+}
+
+specdelta_scope_no_openspec_change_is_none() {
+  sd_repo
+  command rm -rf "$SDC"
+  echo '// refactor' >>src/counter.js
+  gcommit 'refactor: counter'
+  # No openspec CLI is needed outside delta mode.
+  PATH="$ROOT/tests/stubs:/usr/bin:/bin:$(dirname "$(command -v jq)"):$(dirname "$(command -v git)")" sd scope RV-12 main
+  check "$RC,$(jqval .delta),$(jqval .spec_delta),$(jqval .rule)" "0,false,none,null"
+  # A new proposal folder alone is not delta mode either, as at the gate.
+  mkdir -p openspec/changes/add-thing && echo '# Proposal' >openspec/changes/add-thing/proposal.md
+  sd scope --worktree RV-12 main
+  check "$RC,$(jqval .spec_delta)" "0,none"
+}
+
+specdelta_scope_true_archive_passes() {
+  need_openspec || return 0
+  sd_repo
+  OPENSPEC_TELEMETRY=0 DO_NOT_TRACK=1 openspec archive rv-12-count-display --yes >"$T/archive" 2>&1
+  # Uncommitted, with --worktree.
+  sd scope --worktree RV-12 main
+  check "$RC,$(jqval .delta),$(jq -c .capabilities <<<"$OUT")" '0,true,["counting"]'
+  sd_reset
+  sd_delta
+  sd_archive
+  mkdir -p "$T/tmp"
+  local before
+  before=$(git_state)
+  TMPDIR=$T/tmp sd scope RV-12 main
+  check "$RC,$(jqval .spec_delta),$(jqval .folder)" "0,$SDF,$SDF"
+  check "$(git_state)" "$before"
+  check "$(command ls -A "$T/tmp")" ""
+}
+
+specdelta_scope_file_rules() {
+  need_openspec || return 0
+  sd_repo
+  sd_archive
+  mkdir -p openspec/changes/left-behind && echo '# Proposal' >openspec/changes/left-behind/proposal.md
+  sd scope --worktree RV-12 main; check "$RC,$(jqval .rule)" "1,delta-active"; sd_reset
+  echo 'extra: 1' >>openspec/config.yaml
+  sd scope --worktree RV-12 main; check "$RC,$(jqval .rule)" "1,delta-outside"; sd_reset
+  mkdir -p openspec/changes/archive/2026-01-01-rv-12-other && echo x >openspec/changes/archive/2026-01-01-rv-12-other/proposal.md
+  sd scope --worktree RV-12 main; check "$RC,$(jqval .rule)" "1,delta-folders"; sd_reset
+  sd scope RV-13 main; check "$RC,$(jqval .rule)" "1,delta-name"
+  echo note >"$SDF/notes.txt"
+  sd scope --worktree RV-12 main; check "$RC,$(jqval .rule),$(jqval .file)" "1,delta-content,$SDF/notes.txt"; sd_reset
+  mkdir -p openspec/specs/billing && echo '# billing' >openspec/specs/billing/spec.md
+  sd scope --worktree RV-12 main; check "$RC,$(jqval .rule),$(jqval .file)" "1,delta-specs,openspec/specs/billing/spec.md"; sd_reset
+  git show main:openspec/specs/counting/spec.md >|openspec/specs/counting/spec.md
+  sd scope --worktree RV-12 main; check "$RC,$(jqval .rule)" "1,delta-specs"; sd_reset
+  # A spec edit with no archive folder at all.
+  git checkout -q main && git checkout -q -b fix/rv-14
+  echo 'hand edit' >>openspec/specs/counting/spec.md
+  sd scope --worktree RV-14 main; check "$RC,$(jqval .rule)" "1,delta-folders"; sd_reset
+  # An archive folder already on the base cannot be edited.
+  mkdir -p openspec/changes/archive/2026-01-01-rv-14-old && echo old >openspec/changes/archive/2026-01-01-rv-14-old/proposal.md
+  gcommit 'old archive'
+  git checkout -q main && git merge -q --ff-only fix/rv-14 && git checkout -q fix/rv-14
+  echo edited >>openspec/changes/archive/2026-01-01-rv-14-old/proposal.md
+  sd scope --worktree RV-14 main; check "$RC,$(jqval .rule)" "1,delta-folders"
+}
+
+specdelta_scope_collision_and_not_applied() {
+  need_openspec || return 0
+  sd_repo
+  sd_archive
+  echo 'hand edit' >>openspec/specs/counting/spec.md
+  sd scope --worktree RV-12 main; check "$RC,$(jqval .rule)" "1,delta-not-applied"; sd_reset
+  # The base gains an unrelated edit to the same spec.md while the PR waits:
+  # the replay starts from the merge base, so the branch still passes.
+  git checkout -q main
+  sed 's/limited to the cap of 100 (a fixed value)\./limited to the cap of 100 (a fixed value), and SHALL reject a negative start./' openspec/specs/counting/spec.md >"$T/spec" && cp "$T/spec" openspec/specs/counting/spec.md
+  gcommit 'base: negative start'
+  git checkout -q fix/rv-12
+  sd scope RV-12 main; check "$RC,$(jqval .pass)" "0,true"
+  # A delta that also changes add-reset's requirement collides.
+  git checkout -q main && git checkout -q -b fix/rv-15
+  mkdir -p openspec/changes/rv-15-both/specs/counting
+  { command cat "$SD_FIXTURE/rv-12-count-display/specs/counting/spec.md"; echo
+    sed -n '/^### Requirement: Increment/,/^### Requirement: Count display/p' openspec/specs/counting/spec.md | sed '$d'; } >openspec/changes/rv-15-both/specs/counting/spec.md
+  OPENSPEC_TELEMETRY=0 DO_NOT_TRACK=1 openspec archive rv-15-both --yes >"$T/archive" 2>&1 || { sed 's/^/    /' "$T/archive"; return 1; }
+  sd scope --worktree RV-15 main
+  check "$RC,$(jqval .rule),$(jqval '.collisions[0].change')" "1,delta-collision,add-reset"
+}
+
+specdelta_reopen() {
+  need_openspec || return 0
+  sd_repo
+  sd_archive
+  sd reopen main
+  check "$RC,$(jqval .change),$(jq -c .capabilities <<<"$OUT")" '0,rv-12-count-display,["counting"]'
+  check "$(diff -r "$SD_FIXTURE/rv-12-count-display" "$SDC" && echo same)" "same"
+  check "$(git diff --quiet main -- openspec/specs && echo restored)" "restored"
+  check "$([ -e "$SDF" ] || echo gone)" "gone"
+  # A correction on a fix pass: the restore brings the committed archive
+  # back, so reopen runs again before the rewrite (work-ticket Step 5).
+  sd_reset
+  check "$([ -e "$SDF" ] && echo back)" "back"
+  local before
+  before=$(git_state)
+  sd reopen main
+  check "$RC" "0"
+  check "$(git_state | sed -n 1,2p)" "$(sed -n 1,2p <<<"$before")"
+  sd check --worktree rv-12-count-display main
+  check "$RC" "0"
+  # The fix pass edits the delta and archives again; the result passes.
+  OPENSPEC_TELEMETRY=0 DO_NOT_TRACK=1 openspec archive rv-12-count-display --yes >"$T/archive" 2>&1
+  mkdir -p "$T/tmp"
+  before=$(git_state | sed -n 1,2p)
+  TMPDIR=$T/tmp sd scope --worktree RV-12 main
+  check "$RC,$(jqval .pass)" "0,true"
+  check "$(git_state | sed -n 1,2p)" "$before"
+  check "$(command ls -A "$T/tmp")" ""
+}
+
+specdelta_unreadable_and_usage() {
+  sd_repo
+  sd scope RV-12 nope; check "$RC" "3"
+  TMPDIR=$T/missing sd scope RV-12 main; check "$RC,$(jqval .detail)" "3,cannot make a scratch directory under $T/missing"
+  mkdir -p "$T/ro" && chmod 555 "$T/ro"
+  TMPDIR=$T/ro sd scope RV-12 main; check "$RC" "3"
+  chmod 755 "$T/ro"
+  sd frobnicate; check "$RC" "4"
+  sd scope RV-12; check "$RC" "4"
+  sd name RV-12 "x" main --worktree; check "$RC" "4"
+  # A replay that fails is exit 3, not a rule failure.
+  mkdir -p "$T/fake" && printf '#!/bin/sh\nexit 1\n' >"$T/fake/openspec" && chmod +x "$T/fake/openspec"
+  mkdir -p openspec/changes/archive/2026-01-01-rv-12-count-display && command mv "$SDC"/* openspec/changes/archive/2026-01-01-rv-12-count-display/
+  echo edit >>openspec/specs/counting/spec.md
+  PATH="$T/fake:$PATH" sd scope --worktree RV-12 main; check "$RC" "3"
+}
+
+stop_handshake_accepts_spec_delta() {
+  run_stop_hook $'Opened PR #7.\n\n```\nstatus: done\nreason: https://github.com/acme/app/pull/7\nfollow_ups: []\nspec_delta: openspec/changes/archive/2026-10-14-eng-1-fix\nrequested_state: In Review\n```' ccmagic:auto-work
+  check "$(blocked)" "allow"
 }
 
 # ---- ccm-openspec-version (RV-87) --------------------------------------------
@@ -5362,7 +5655,7 @@ harness_docker_env_passes_proxy_not_secrets() {
 MIRRORS=$(mktemp -d)
 trap 'rm -rf "$MIRRORS"' EXIT
 
-for fn in $(declare -F | awk '{print $3}' | grep -E '^(context|ci|merge_gate|guard|post|postreview|stop|threads|reply|validate|route|doctor|extreview|skills|spec_block|scope|finish|baseline|propose|openspecver|harness)_'); do
+for fn in $(declare -F | awk '{print $3}' | grep -E '^(context|ci|merge_gate|guard|post|postreview|stop|threads|reply|validate|route|doctor|extreview|skills|spec_block|scope|finish|baseline|propose|specdelta|openspecver|harness)_'); do
   t "$fn" "$fn"
 done
 

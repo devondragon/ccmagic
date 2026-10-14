@@ -231,3 +231,76 @@ ccm_archive_matches() { # FOLDER NAME: Reeve's archiveFolderMatches
   local d='^[0-9]{4}-[0-9]{2}-[0-9]{2}-'
   if [[ $2 =~ $d ]]; then [ "$1" = "$2" ]; else [[ $1 =~ $d ]] && [ "${1:11}" = "$2" ]; fi
 }
+
+# ---- OpenSpec change folder checks (shared by ccm-propose-check and ccm-spec-delta) ----
+
+# ccm_change_name_problem NAME: print why NAME cannot be a change name under
+# Reeve's change-name rule (isChangeName), or nothing when it can.
+ccm_change_name_problem() {
+  if ! [[ $1 =~ ^[a-z0-9]+(-[a-z0-9]+)*$ ]]; then
+    printf 'change %s is not lower-case kebab-case\n' "$1"
+    return
+  fi
+  shopt -s nocasematch
+  if [[ $1 =~ (as-delegation|label-based-prompt|as-refine|linear|profiles) ]]; then
+    printf 'change %s holds %s, which Reeve refuses in a change name\n' "$1" "${BASH_REMATCH[1]}"
+  fi
+  shopt -u nocasematch
+}
+
+# ccm_delta_refs FILE [all]: read a delta spec outside code fences. Prints "P"
+# when it has a "## Purpose" with text, and "R<TAB>line<TAB>kind<TAB>name" for
+# every requirement name a MODIFIED or REMOVED block, or a RENAMED FROM line,
+# needs the current spec to have. With "all", also every ADDED name (kind
+# added) and every RENAMED TO name (kind renamed-to): every name the delta
+# touches, which is what two changes collide on.
+ccm_delta_refs() {
+  LC_ALL=C awk -v all="${2:-}" '
+    function trim(s) { sub(/^[ \t]+/, "", s); sub(/[ \t\r]+$/, "", s); return s }
+    function reqname(s) { sub(/^###[ \t]*[Rr][Ee][Qq][Uu][Ii][Rr][Ee][Mm][Ee][Nn][Tt]:/, "", s); return trim(s) }
+    {
+      raw = $0; sub(/\r$/, "", raw)
+      if (fence == "") {
+        if (match(raw, /^ ? ? ?(```+|~~~+)/)) { fence = substr(raw, RSTART, RLENGTH); sub(/^ +/, "", fence); next }
+      } else {
+        c = substr(fence, 1, 1); t = raw; sub(/^ ? ? ?/, "", t); k = 0
+        while (substr(t, k + 1, 1) == c) k++
+        if (k >= length(fence) && substr(t, k + 1) ~ /^[ \t]*$/) fence = ""
+        next
+      }
+      low = tolower(raw)
+      if (low ~ /^##[ \t]+(added|modified|removed|renamed)[ \t]+requirements[ \t]*$/) { split(trim(low), w, /[ \t]+/); kind = w[2]; next }
+      if (low ~ /^##[ \t]+purpose[ \t]*$/) { kind = "purpose"; next }
+      if (raw ~ /^##[^#]/ || raw == "##") { kind = "skip"; next }
+      if (kind == "purpose" && trim(raw) != "") { purpose = 1; next }
+      if (kind == "modified" || kind == "removed" || (all && kind == "added")) {
+        s = raw
+        if (kind == "removed") { sub(/^[ \t]*[-*+][ \t]+/, "", s); gsub(/`/, "", s) }
+        if (tolower(s) ~ /^###[ \t]*requirement:/) print "R\t" NR "\t" kind "\t" reqname(s)
+        next
+      }
+      if (kind == "renamed" && raw ~ /^[ \t]*([-*+][ \t]*)?FROM:/) {
+        s = raw; sub(/^[ \t]*([-*+][ \t]*)?FROM:[ \t]*`?/, "", s); sub(/`?[ \t]*$/, "", s)
+        if (tolower(s) ~ /^###[ \t]*requirement:/) print "R\t" NR "\trenamed\t" reqname(s)
+      }
+      if (all && kind == "renamed" && raw ~ /^[ \t]*([-*+][ \t]*)?TO:/) {
+        s = raw; sub(/^[ \t]*([-*+][ \t]*)?TO:[ \t]*`?/, "", s); sub(/`?[ \t]*$/, "", s)
+        if (tolower(s) ~ /^###[ \t]*requirement:/) print "R\t" NR "\trenamed-to\t" reqname(s)
+      }
+    }
+    END { if (purpose) print "P" }' "$1"
+}
+
+# ccm_requirement_names FILE: every "### Requirement: <name>" name in a main
+# spec, one per line, trimmed.
+ccm_requirement_names() {
+  LC_ALL=C awk '{ s = $0; sub(/\r$/, "", s); if (tolower(s) ~ /^###[ \t]*requirement:/) { sub(/^###[ \t]*[^:]*:/, "", s); sub(/^[ \t]+/, "", s); sub(/[ \t]+$/, "", s); print s } }' "$1"
+}
+
+# ccm_text_findings FILE: "dash<TAB>line" for every line with an em or en
+# dash, then "personal-identifier<TAB>line" for every line with an email
+# address written out or spelled.
+ccm_text_findings() {
+  { LC_ALL=C grep -n -e $'\xe2\x80\x93' -e $'\xe2\x80\x94' "$1" || true; } | cut -d: -f1 | awk '{ print "dash\t" $0 }'
+  { grep -n -i -E -e "$CCM_EMAIL_RE" -e "$CCM_SPELLED_EMAIL_RE" "$1" || true; } | cut -d: -f1 | awk '{ print "personal-identifier\t" $0 }'
+}

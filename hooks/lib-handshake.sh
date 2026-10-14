@@ -9,6 +9,7 @@
 #   reason: <one line>
 #   follow_ups: [...]
 #   tasks_done: [ids]            (optional: work step on a Reeve spec ticket only)
+#   spec_delta: none | <folder>  (optional: work step on a plain ticket in a repo with specs)
 #   requested_state: <state>     (optional: a tracker state change the step needs)
 
 # ccm_handshake_problem ALLOWED: read text on stdin and print what is wrong
@@ -37,6 +38,7 @@ ccm_handshake_problem() {
         if (l ~ /^[[:space:]]*requested_state:/) continue
         if (l ~ /^[[:space:]]*head:/) continue
         if (l ~ /^[[:space:]]*tasks_done:/) continue
+        if (l ~ /^[[:space:]]*spec_delta:/) continue
         if (l ~ /^[[:space:]]*(- |-$|```|$)/) continue
         print "text after the handshake (`" substr(l, 1, 60) "`); the handshake must be the last thing"; exit
       }

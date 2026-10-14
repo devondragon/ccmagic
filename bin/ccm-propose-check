@@ -167,15 +167,8 @@ for name in "${names[@]}"; do
   nsec=0 ntask=0 ndelta=0
 
   # ---- the name ----------------------------------------------------------------
-  if ! [[ $name =~ ^[a-z0-9]+(-[a-z0-9]+)*$ ]]; then
-    finding change-name "$dir" 0 "change $name is not lower-case kebab-case"
-  else
-    shopt -s nocasematch
-    if [[ $name =~ (as-delegation|label-based-prompt|as-refine|linear|profiles) ]]; then
-      finding change-name "$dir" 0 "change $name holds ${BASH_REMATCH[1]}, which Reeve refuses in a change name"
-    fi
-    shopt -u nocasematch
-  fi
+  why=$(ccm_change_name_problem "$name")
+  [ -z "$why" ] || finding change-name "$dir" 0 "$why"
   if [ "$name" = archive ]; then
     finding name-collision "$dir" 0 "openspec/changes/archive is the archive folder, not a change"
   elif at_base "$dir"; then
@@ -261,39 +254,11 @@ for name in "${names[@]}"; do
     fi
     # P (a Purpose with text) and R<TAB>line<TAB>kind<TAB>name for every name
     # the delta needs the current spec to have, read outside code fences.
-    LC_ALL=C awk '
-      function trim(s) { sub(/^[ \t]+/, "", s); sub(/[ \t\r]+$/, "", s); return s }
-      {
-        raw = $0; sub(/\r$/, "", raw)
-        if (fence == "") {
-          if (match(raw, /^ ? ? ?(```+|~~~+)/)) { fence = substr(raw, RSTART, RLENGTH); sub(/^ +/, "", fence); next }
-        } else {
-          c = substr(fence, 1, 1); t = raw; sub(/^ ? ? ?/, "", t); k = 0
-          while (substr(t, k + 1, 1) == c) k++
-          if (k >= length(fence) && substr(t, k + 1) ~ /^[ \t]*$/) fence = ""
-          next
-        }
-        low = tolower(raw)
-        if (low ~ /^##[ \t]+(added|modified|removed|renamed)[ \t]+requirements[ \t]*$/) { split(trim(low), w, /[ \t]+/); kind = w[2]; next }
-        if (low ~ /^##[ \t]+purpose[ \t]*$/) { kind = "purpose"; next }
-        if (raw ~ /^##[^#]/ || raw == "##") { kind = "skip"; next }
-        if (kind == "purpose" && trim(raw) != "") { purpose = 1; next }
-        if (kind == "modified" || kind == "removed") {
-          s = raw
-          if (kind == "removed") { sub(/^[ \t]*[-*+][ \t]+/, "", s); gsub(/`/, "", s) }
-          if (tolower(s) ~ /^###[ \t]*requirement:/) { sub(/^###[ \t]*[Rr][Ee][Qq][Uu][Ii][Rr][Ee][Mm][Ee][Nn][Tt]:/, "", s); print "R\t" NR "\t" kind "\t" trim(s) }
-          next
-        }
-        if (kind == "renamed" && raw ~ /^[ \t]*([-*+][ \t]*)?FROM:/) {
-          s = raw; sub(/^[ \t]*([-*+][ \t]*)?FROM:[ \t]*`?/, "", s); sub(/`?[ \t]*$/, "", s)
-          if (tolower(s) ~ /^###[ \t]*requirement:/) { sub(/^###[ \t]*[Rr][Ee][Qq][Uu][Ii][Rr][Ee][Mm][Ee][Nn][Tt]:/, "", s); print "R\t" NR "\trenamed\t" trim(s) }
-        }
-      }
-      END { if (purpose) print "P" }' "$spec" >"$tmp/delta"
+    ccm_delta_refs "$spec" >"$tmp/delta"
     if ! $has_spec && ! grep -q '^P' "$tmp/delta"; then
       finding new-capability-purpose "$spec" 1 "capability $cap has no spec at the base and this delta has no ## Purpose; openspec archive would write a placeholder Purpose that strict validation rejects"
     fi
-    LC_ALL=C awk '{ s = $0; sub(/\r$/, "", s); if (tolower(s) ~ /^###[ \t]*requirement:/) { sub(/^###[ \t]*[^:]*:/, "", s); sub(/^[ \t]+/, "", s); sub(/[ \t]+$/, "", s); print s } }' "$tmp/current" >"$tmp/names"
+    ccm_requirement_names "$tmp/current" >"$tmp/names"
     { grep '^R' "$tmp/delta" || true; } | while IFS=$'\t' read -r _ rl rkind rname; do
       if ! $has_spec; then
         finding requirement-not-found "$spec" "$rl" "$rkind requirement \"$rname\": capability $cap has no spec at the base"
@@ -313,10 +278,12 @@ for name in "${names[@]}"; do
 
   # ---- characters in every file of the folder ------------------------------------
   while IFS= read -r f; do
-    { LC_ALL=C grep -n -e $'\xe2\x80\x93' -e $'\xe2\x80\x94' "$f" || true; } | cut -d: -f1 |
-      while read -r n; do finding dash "$f" "$n" "em or en dash"; done
-    { grep -n -i -E -e "$CCM_EMAIL_RE" -e "$CCM_SPELLED_EMAIL_RE" "$f" || true; } | cut -d: -f1 |
-      while read -r n; do finding personal-identifier "$f" "$n" "an email address is written out; leave it out or name the role"; done
+    ccm_text_findings "$f" | while IFS=$'\t' read -r rule n; do
+      case $rule in
+        dash) finding dash "$f" "$n" "em or en dash" ;;
+        *) finding personal-identifier "$f" "$n" "an email address is written out; leave it out or name the role" ;;
+      esac
+    done
   done < <(/usr/bin/find "$dir" -type f | LC_ALL=C sort)
 
   printf 'C\t%s\t%s\t%s\t%s\n' "$name" "$nsec" "$ntask" "$ndelta" >>"$tmp/out"

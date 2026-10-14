@@ -2,7 +2,7 @@
 name: finish-ticket
 description: Closes out a development ticket end-to-end. Detects the tracker (Linear, GitHub Issues, or JIRA) and the ticket from the current branch, sanity-checks the PR, confirms disposition (Done by default, or QA when configured/requested), merges the PR, and updates the ticket with a comment, PR link, and final status.
 user-invocable: true
-allowed-tools: Read(*), Edit(*), Bash(git:*, gh:*), Bash(${CLAUDE_PLUGIN_ROOT}/bin/ccm-context *), Bash(ccm-context *), Bash(${CLAUDE_PLUGIN_ROOT}/bin/ccm-merge-gate *), Bash(ccm-merge-gate *), Bash(${CLAUDE_PLUGIN_ROOT}/bin/ccm-ci-status *), Bash(ccm-ci-status *), Bash(${CLAUDE_PLUGIN_ROOT}/bin/ccm-openspec-scope *), Bash(ccm-openspec-scope *), Glob(*), Grep(*), AskUserQuestion(*), Skill(*)
+allowed-tools: Read(*), Edit(*), Bash(git:*, gh:*), Bash(${CLAUDE_PLUGIN_ROOT}/bin/ccm-context *), Bash(ccm-context *), Bash(${CLAUDE_PLUGIN_ROOT}/bin/ccm-merge-gate *), Bash(ccm-merge-gate *), Bash(${CLAUDE_PLUGIN_ROOT}/bin/ccm-ci-status *), Bash(ccm-ci-status *), Bash(${CLAUDE_PLUGIN_ROOT}/bin/ccm-openspec-scope *), Bash(ccm-openspec-scope *), Bash(${CLAUDE_PLUGIN_ROOT}/bin/ccm-spec-delta *), Bash(ccm-spec-delta *), Glob(*), Grep(*), AskUserQuestion(*), Skill(*)
 argument-hint: "[--qa]"
 model: sonnet
 ---
@@ -154,6 +154,16 @@ The `PreToolUse` hook enforces the same gate: in an autonomous run, `gh pr merge
 
 It judges the branch's HEAD against the base branch tip. Anything but exit 0 is a blocker, `spec scope check failed ({rule}): {detail}` (or `cannot run the spec scope check: {detail}` when it printed no `rule`), listed with the merge gate's blockers; in autonomous mode it is a `needs-human` like any blocker, and the PR is neither merged nor handed off.
 <!-- /ccmagic:spec-only -->
+
+<!-- ccmagic:plain-delta -->
+**Only when the base has `openspec/specs/` and the grounding block has no `spec:` section** (a plain ticket in a repository with OpenSpec specs). Check the PR's OpenSpec files with the merge gate's plain-delta rules before any merge or hand-off. Run `git fetch origin {baseRefName}`, then `"${CLAUDE_PLUGIN_ROOT}/bin/ccm-spec-delta" applies origin/{baseRefName}`, each as its own Bash call (the bare name `ccm-spec-delta` only when the path form is not found or is denied). When its `applies` is `true`, run:
+
+```bash
+"${CLAUDE_PLUGIN_ROOT}/bin/ccm-spec-delta" scope {TICKET-ID} origin/{baseRefName}
+```
+
+It judges the branch's HEAD from its merge base with the base branch and replays the archive. Anything but exit 0 is a blocker, `spec delta check failed ({rule}): {detail}` (or `cannot run the spec delta check: {detail}` when it printed no `rule`), listed with the merge gate's blockers; in autonomous mode it is a `needs-human` like any blocker, and the PR is neither merged nor handed off.
+<!-- /ccmagic:plain-delta -->
 
 ### 3d. Scope Alignment
 Run:

@@ -143,6 +143,10 @@ requested_state: <intended tracker state: orchestrated runs (§8) and the prompt
 **Only when the grounding block has a `spec:` section (§2).** The work step's handshake carries one more line, after `follow_ups:`: `tasks_done: [<task ids>]`, the ids of the section's tasks whose boxes the step changed from unchecked to checked (`[]` when it ticked none: the archive, a park before any box, and every fix pass). No other step emits it, and the SubagentStop hook accepts the line without requiring it.
 <!-- /ccmagic:spec-only -->
 
+<!-- ccmagic:plain-delta -->
+**Only when the base has `openspec/specs/` and the grounding block has no `spec:` section.** The work step's handshake may carry one more line, after `follow_ups:`: `spec_delta: none` when the ticket changed no specified behavior, or `spec_delta: openspec/changes/archive/<folder>` naming the archived delta the PR carries. The first pass emits it once it has decided, on `done` and on `needs-human`, except on a stop after it decided a delta was needed and before the delta was archived and checked; a fix pass emits it only when it changed the delta. No other step emits it, and the SubagentStop hook accepts the line without requiring it.
+<!-- /ccmagic:plain-delta -->
+
 Which values each sub-skill can emit:
 
 | Sub-skill | Emits |
@@ -258,6 +262,14 @@ The keys and rules are the same as the Step 6 `### Run record` block (contract �
 {"ccmagic": {"version": 2, "run_id": "{run_id}", "ticket": "{TICKET-ID}", "repo": "{owner/name}", "pr": {pr_number or null}, "head_sha": {"<PR head SHA>" or null}, "outcome": "parked", "classification": "{class}", "merge_owner": "{self | reeve}", "review_passes": {n}, "feedback_passes": {n}, "ci_attempts": {n}, "findings": {"critical": {n}, "high": {n}}, "steps": [{"step": "work-ticket", "status": "done"}, {"step": "review-ticket", "status": "needs-human", "reason": "{one line}"}], "follow_ups": [], "openspec": {"change": "{spec.change}", "section": {spec.section: a number, or "archive"}, "tasks_done": [{"task id", ...}]}}}
 ```
 <!-- /ccmagic:spec-only -->
+
+<!-- ccmagic:plain-delta -->
+**Only when the base has `openspec/specs/` and the grounding block has no `spec:` section,** and only when the run has a `spec_delta` (`skills/auto-ticket/SKILL.md` Step 1). The parked record carries the `spec_delta` key as the last key inside `ccmagic`:
+
+```json
+{"ccmagic": {"version": 2, "run_id": "{run_id}", "ticket": "{TICKET-ID}", "repo": "{owner/name}", "pr": {pr_number or null}, "head_sha": {"<PR head SHA>" or null}, "outcome": "parked", "classification": "{class}", "merge_owner": "{self | reeve}", "review_passes": {n}, "feedback_passes": {n}, "ci_attempts": {n}, "findings": {"critical": {n}, "high": {n}}, "steps": [{"step": "work-ticket", "status": "done"}, {"step": "review-ticket", "status": "needs-human", "reason": "{one line}"}], "follow_ups": [], "spec_delta": "{spec_delta: none, or openspec/changes/archive/<folder>}"}}
+```
+<!-- /ccmagic:plain-delta -->
 
 ### Under the prompt-relay transport
 
