@@ -1,0 +1,200 @@
+#!/usr/bin/env bash
+# ccm-spec-polish: the deterministic half of /ccmagic:spec-polish (RV-90).
+# Computes the files hash Reeve compares a polish record with, writes the
+# record, checks it, and checks that a change can still be polished.
+#
+# Usage: ccm-spec-polish hash CHANGE
+#        ccm-spec-polish preflight [--base REF] CHANGE
+#        ccm-spec-polish write CHANGE ROUNDS CLEAN_ROUNDS RUBRIC_HASH
+#        ccm-spec-polish check CHANGE
+#
+# CHANGE names openspec/changes/CHANGE/. Run anywhere inside the repository;
+# paths are relative to its top level. No model and no network.
+#
+# The record is openspec/changes/CHANGE/.reeve.yml:
+#   polish:
+#     rounds: N          rounds run, at least 1
+#     clean_rounds: M    consecutive rounds at the end with no accepted
+#                        finding, 0 to N
+#     files_hash: H      16 lowercase hex, below
+#     rubric_hash: R     the rubric hash `reeve openspec render --grade` printed
+# OpenSpec 1.14.1 ignores the file under `validate --strict`, and
+# `openspec archive` moves it with the change folder.
+#
+# files_hash is Reeve's polishFilesHash (src/openspec/polish.ts): the change's
+# kept files other than the record (tasks.md, proposal.md, .openspec.yaml, and
+# specs/<capability>/spec.md, each that exists as a regular file), each as its
+# git blob SHA (`git hash-object`, the SHA a tree at a commit of the file
+# lists), sorted by path in byte order, serialized as compact JSON
+# [["path","sha"],...], hashed with sha256, first 16 hex characters. design.md
+# and any other file are left out, since Reeve does not plan from them. A
+# symlink is never hashed: neither a symlinked file nor a symlinked capability
+# folder (Reeve's readers skip both).
+#
+# hash       prints {change, files: {path: sha}, files_hash}.
+# preflight  checks that CHANGE can be polished: the name follows Reeve's
+#            change-name rule (change-name), the folder exists (no-change-folder)
+#            and holds tasks.md (no-tasks-file), and the change is not at the
+#            base already (planned: Reeve plans a change as soon as it reaches
+#            the default branch, so an edit after that is drift for
+#            `reeve replan`, not polish). The base is --base REF, else the
+#            default branch (refs/remotes/origin/HEAD, else origin/main,
+#            origin/master, main, master). Prints {ok, base, findings}.
+# write      writes the record with the current files hash; ROUNDS and
+#            CLEAN_ROUNDS are whole numbers of 1 to 9 digits (Reeve's limit)
+#            with 1 <= ROUNDS and 0 <= CLEAN_ROUNDS <= ROUNDS, RUBRIC_HASH one
+#            word. A record that is a symlink is refused (exit 3). Prints
+#            {written, rounds, clean_rounds, files_hash, rubric_hash}.
+# check      reads the record as Reeve does and prints {status, ...}: none (no
+#            record), malformed (reason), unconverged (fewer than 2 clean
+#            rounds), stale (files_hash differs from the files now), or
+#            polished. It reads only the flat form `write` produces: any other
+#            line (a comment, a quoted value, another key, a repeated key)
+#            reads as malformed here, which Reeve may read differently in
+#            either direction. Reeve's `reeve openspec render` line is the
+#            reading that counts.
+#
+# Exit codes: 0 hash, write, a clean preflight, or check polished; 1 a
+# preflight finding or a check status other than polished; 3 cannot read (not
+# a git repository, no change folder for hash, write, or check, an unknown
+# --base); 4 usage error.
+
+set -euo pipefail
+# shellcheck source=bin/ccm-lib.sh
+. "$(dirname "$0")/ccm-lib.sh"
+
+CLEAN_NEEDED=2
+RECORD=.reeve.yml
+
+usage() { echo "usage: ccm-spec-polish hash|preflight [--base REF]|write|check CHANGE [ROUNDS CLEAN_ROUNDS RUBRIC_HASH]" >&2; exit 4; }
+fail3() { jq -cn --arg why "$1" '{unreadable: $why}'; exit 3; }
+
+sha256() { if command -v sha256sum >/dev/null 2>&1; then sha256sum | cut -d' ' -f1; else shasum -a 256 | cut -d' ' -f1; fi; }
+
+[ $# -ge 1 ] || usage
+cmd=$1
+shift
+base_arg=
+if [ "$cmd" = preflight ] && [ "${1:-}" = --base ]; then
+  [ $# -ge 2 ] || usage
+  base_arg=$2
+  shift 2
+fi
+[ $# -ge 1 ] || usage
+change=$1
+shift
+# A plain folder name only, so it is never used as a path outside the changes folder.
+[[ $change =~ ^[A-Za-z0-9._-]+$ ]] && [ "$change" != . ] && [ "$change" != .. ] || usage
+case $cmd in
+  hash | check | preflight) [ $# -eq 0 ] || usage ;;
+  write) [ $# -eq 3 ] || usage ;;
+  *) usage ;;
+esac
+
+top=$(git rev-parse --show-toplevel 2>/dev/null) || fail3 "not a git repository"
+cd "$top"
+dir=openspec/changes/$change
+
+# kept_files: "path<TAB>sha" per kept file other than the record, sorted by path in byte order.
+kept_files() {
+  local p
+  {
+    for p in tasks.md proposal.md .openspec.yaml; do
+      [ -f "$dir/$p" ] && [ ! -L "$dir/$p" ] && printf '%s\t%s\n' "$p" "$(git hash-object -- "$dir/$p")"
+    done
+    if [ -d "$dir/specs" ]; then
+      shopt -s dotglob nullglob
+      for p in "$dir"/specs/*/spec.md; do
+        [ -f "$p" ] && [ ! -L "$p" ] && [ ! -L "${p%/spec.md}" ] || continue
+        printf '%s\t%s\n' "${p#"$dir"/}" "$(git hash-object -- "$p")"
+      done
+    fi
+  } | LC_ALL=C sort
+}
+files_hash() { kept_files | jq -Rnc '[inputs | split("\t")]' | tr -d '\n' | sha256 | cut -c1-16; }
+files_json() { kept_files | jq -Rn '[inputs | split("\t") | {(.[0]): .[1]}] | add // {}'; }
+
+need_folder() { [ -d "$dir" ] && [ "$change" != archive ] || fail3 "no change folder $dir"; }
+
+case $cmd in
+  hash)
+    need_folder
+    jq -n --arg c "$change" --argjson f "$(files_json)" --arg h "$(files_hash)" '{change: $c, files: $f, files_hash: $h}'
+    ;;
+
+  preflight)
+    findings='[]'
+    add() { findings=$(jq -c --arg r "$1" --arg m "$2" '. + [{rule: $r, message: $m}]' <<<"$findings"); }
+    problem=$(ccm_change_name_problem "$change")
+    [ -z "$problem" ] || add change-name "$problem"
+    [ "$change" != archive ] || add change-name "changes/archive holds archived changes, never an active one"
+    if [ ! -d "$dir" ]; then add no-change-folder "$dir does not exist"
+    elif [ ! -f "$dir/tasks.md" ]; then add no-tasks-file "$dir/tasks.md does not exist"
+    fi
+    if [ -n "$base_arg" ]; then
+      git rev-parse -q --verify "$base_arg^{commit}" >/dev/null || fail3 "unknown --base $base_arg"
+      base=$base_arg
+    else
+      base=
+      def=$(git symbolic-ref -q --short refs/remotes/origin/HEAD 2>/dev/null || true)
+      for cand in $def origin/main origin/master main master; do
+        if git rev-parse -q --verify "$cand^{commit}" >/dev/null; then base=$cand; break; fi
+      done
+    fi
+    if [ -n "$base" ] && git cat-file -e "$base:$dir/tasks.md" 2>/dev/null; then
+      add planned "$dir is already on $base, so Reeve has planned it (or recorded it as a baseline); an edit now is drift for reeve replan, not polish"
+    fi
+    ok=false
+    [ "$findings" = '[]' ] && ok=true
+    jq -n --argjson ok "$ok" --arg b "$base" --argjson f "$findings" '{ok: $ok, base: (if $b == "" then null else $b end), findings: $f}'
+    [ "$ok" = true ] || exit 1
+    ;;
+
+  write)
+    need_folder
+    rounds=$1 clean=$2 rubric=$3
+    [[ $rounds =~ ^[0-9]{1,9}$ ]] && [[ $clean =~ ^[0-9]{1,9}$ ]] || usage
+    rounds=$((10#$rounds)) clean=$((10#$clean))
+    [ "$rounds" -ge 1 ] && [ "$clean" -le "$rounds" ] || usage
+    [[ $rubric =~ ^[A-Za-z0-9._-]+$ ]] || usage
+    [ ! -L "$dir/$RECORD" ] || fail3 "$dir/$RECORD is a symlink"
+    h=$(files_hash)
+    printf 'polish:\n  rounds: %s\n  clean_rounds: %s\n  files_hash: %s\n  rubric_hash: %s\n' "$rounds" "$clean" "$h" "$rubric" >|"$dir/$RECORD"
+    jq -n --argjson r "$rounds" --argjson c "$clean" --arg h "$h" --arg rh "$rubric" \
+      '{written: true, rounds: $r, clean_rounds: $c, files_hash: $h, rubric_hash: $rh}'
+    ;;
+
+  check)
+    need_folder
+    if [ ! -e "$dir/$RECORD" ]; then jq -n '{status: "none"}'; exit 1; fi
+    malformed() { jq -n --arg r "$1" '{status: "malformed", reason: $r}'; exit 1; }
+    [ -f "$dir/$RECORD" ] && [ ! -L "$dir/$RECORD" ] || malformed "the record is not a regular file"
+    # The flat form write produces: "polish:" then two-space-indented "key: value" lines.
+    vals=$(awk '
+      /^polish:[[:space:]]*$/ { inside = 1; next }
+      /^[^[:space:]]/ { inside = 0 }
+      inside && /^  [a-z_]+:[[:space:]]/ { k = $1; sub(/:$/, "", k); v = $0; sub(/^  [a-z_]+:[[:space:]]+/, "", v); sub(/[[:space:]]+$/, "", v); print k "\t" v }
+    ' "$dir/$RECORD")
+    get() { awk -F'\t' -v k="$1" '$1 == k { print $2; exit }' <<<"$vals"; }
+    [ -n "$vals" ] || malformed "the file has no polish mapping"
+    # Exactly the four lines write produces after "polish:", each key once.
+    others=$(grep -vcE '^(polish:|  (rounds|clean_rounds|files_hash|rubric_hash):( [^ ].*)?)$' "$dir/$RECORD" || true)
+    [ "$others" = 0 ] || malformed "the record holds a line outside the form ccm-spec-polish write produces"
+    dups=$(grep -oE '^  [a-z_]+:' "$dir/$RECORD" | sort | uniq -d | head -1)
+    [ -z "$dups" ] || malformed "the record repeats ${dups#  }"
+    rounds=$(get rounds) clean=$(get clean_rounds) fh=$(get files_hash) rubric=$(get rubric_hash)
+    [[ $rounds =~ ^[0-9]{1,9}$ ]] && [ "$((10#$rounds))" -ge 1 ] || malformed "polish.rounds is not a whole number of at least 1"
+    [[ $clean =~ ^[0-9]{1,9}$ ]] && [ "$((10#$clean))" -le "$((10#$rounds))" ] || malformed "polish.clean_rounds is not a whole number between 0 and polish.rounds"
+    [[ $fh =~ ^[0-9a-f]{16}$ ]] || malformed "polish.files_hash is not 16 lowercase hex characters"
+    [ -n "$rubric" ] || malformed "polish.rubric_hash is missing"
+    rounds=$((10#$rounds)) clean=$((10#$clean))
+    now=$(files_hash)
+    status=polished
+    if [ "$clean" -lt "$CLEAN_NEEDED" ]; then status=unconverged
+    elif [ "$fh" != "$now" ]; then status=stale
+    fi
+    jq -n --arg s "$status" --argjson r "$rounds" --argjson c "$clean" --arg fh "$fh" --arg now "$now" --arg rh "$rubric" \
+      '{status: $s, rounds: $r, clean_rounds: $c, files_hash: $fh, files_hash_now: $now, files_match: ($fh == $now), rubric_hash: $rh}'
+    [ "$status" = polished ] || exit 1
+    ;;
+esac
