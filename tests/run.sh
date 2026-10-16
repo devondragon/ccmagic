@@ -3721,6 +3721,27 @@ EOF
   [[ $(jqval .detail) == *"not in the plain form"* ]]
 }
 
+# A base .openspec.yaml over 64 KB is one Reeve's gate does not parse, so the
+# archive PR parks as unreadable; the check stops at exit 3 before it opens.
+scope_archive_meta_over_64kb_unreadable() {
+  local n want
+  for n in 65536 65537; do
+    setup_fresh
+    seed_spec all
+    g checkout -q main
+    { printf 'schema: spec-driven\nskip_specs: true\n# '; printf '%*s' "$((n - 40))" '' | tr ' ' x; printf '\n'; } >openspec/changes/add-export/.openspec.yaml
+    check "$(wc -c <openspec/changes/add-export/.openspec.yaml | tr -d ' ')" "$n"
+    commit flags && g checkout -q -B work
+    archive_as 2026-09-30-add-export
+    scope add-export archive main
+    want=specs-changed,1
+    [ "$n" = 65536 ] || want=pass,3
+    check "$(rule),$RC" "$want"
+  done
+  check "$(jqval .pass),$(jqval .rule)" "false,null"
+  [[ $(jqval .detail) == *"is larger than 64 KB, the most repository YAML Reeve parses"* ]]
+}
+
 # The handshake validator accepts the work step's tasks_done: line and still
 # requires reason: and follow_ups:.
 stop_tasks_done_line_passes() {
@@ -4497,6 +4518,23 @@ propose_meta() {
   pcheck add-reset
   check "$RC,$(prules),$(jqval '.findings[0].message')" '1,meta,the file has no "schema: spec-driven" line'
   printf 'schema: "spec-driven"  # the default\ncreated: 2026-10-12\ngoal: reset\nskip_specs: false\n' >|"$PC/.openspec.yaml"
+  pcheck add-reset
+  check "$RC,$(prules)" "0,"
+}
+
+# pad_yaml BYTES: a .openspec.yaml of exactly BYTES bytes, the schema line
+# then one comment line of x padding.
+pad_yaml() { printf 'schema: spec-driven\n# %s\n' "$(printf '%*s' "$(($1 - 23))" '' | tr ' ' x)"; }
+
+# Reeve's planner refuses repository YAML over 64 KB (REPO_YAML_MAX_BYTES).
+propose_meta_over_64kb() {
+  pr_repo
+  pad_yaml 65537 >|"$PC/.openspec.yaml"
+  check "$(wc -c <"$PC/.openspec.yaml" | tr -d ' ')" "65537"
+  pcheck add-reset
+  check "$RC,$(prules),$(jqval '.findings[0].line'),$(jqval '.findings[0].message')" \
+    "1,meta,0,the file is larger than 64 KB, more than Reeve parses"
+  pad_yaml 65536 >|"$PC/.openspec.yaml"
   pcheck add-reset
   check "$RC,$(prules)" "0,"
 }
