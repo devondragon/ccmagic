@@ -14,7 +14,7 @@ openspec/changes/<name>/
   specs/<capability>/spec.md     one per capability added or modified
 ```
 
-No `design.md` unless the owner asked for one. No other file.
+No `design.md` unless the owner asked for one. No other file. (`/ccmagic:spec-polish` later adds `.reeve.yml`, its record of the review loop, which strict validation ignores.)
 
 ## The name
 

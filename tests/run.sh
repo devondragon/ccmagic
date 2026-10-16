@@ -3721,6 +3721,27 @@ EOF
   [[ $(jqval .detail) == *"not in the plain form"* ]]
 }
 
+# A base .openspec.yaml over 64 KB is one Reeve's gate does not parse, so the
+# archive PR parks as unreadable; the check stops at exit 3 before it opens.
+scope_archive_meta_over_64kb_unreadable() {
+  local n want
+  for n in 65536 65537; do
+    setup_fresh
+    seed_spec all
+    g checkout -q main
+    { printf 'schema: spec-driven\nskip_specs: true\n# '; printf '%*s' "$((n - 40))" '' | tr ' ' x; printf '\n'; } >openspec/changes/add-export/.openspec.yaml
+    check "$(wc -c <openspec/changes/add-export/.openspec.yaml | tr -d ' ')" "$n"
+    commit flags && g checkout -q -B work
+    archive_as 2026-09-30-add-export
+    scope add-export archive main
+    want=specs-changed,1
+    [ "$n" = 65536 ] || want=pass,3
+    check "$(rule),$RC" "$want"
+  done
+  check "$(jqval .pass),$(jqval .rule)" "false,null"
+  [[ $(jqval .detail) == *"is larger than 64 KB, the most repository YAML Reeve parses"* ]]
+}
+
 # The handshake validator accepts the work step's tasks_done: line and still
 # requires reason: and follow_ups:.
 stop_tasks_done_line_passes() {
@@ -3876,9 +3897,9 @@ strip_spec_only() {
 # (RV-84). Their directories are left out of the comparison, and
 # skills_standalone_not_on_ticket_path checks that no ticket-path file names
 # them.
-STANDALONE_SKILLS_SINCE_BASELINE=(spec-baseline propose)
+STANDALONE_SKILLS_SINCE_BASELINE=(spec-baseline propose spec-polish)
 # Their scripts, which docs/cyrus-deployment.md need not grant.
-STANDALONE_SCRIPTS_SINCE_BASELINE=(ccm-baseline-check ccm-propose-check)
+STANDALONE_SCRIPTS_SINCE_BASELINE=(ccm-baseline-check ccm-propose-check ccm-spec-polish)
 # Step agents added since $SPEC_BASELINE. They are new files, so the every-ticket
 # comparison has no baseline for them; auto-ticket's changes that run them are in
 # $EVERY_TICKET_DIFF.
@@ -4501,6 +4522,23 @@ propose_meta() {
   check "$RC,$(prules)" "0,"
 }
 
+# pad_yaml BYTES: a .openspec.yaml of exactly BYTES bytes, the schema line
+# then one comment line of x padding.
+pad_yaml() { printf 'schema: spec-driven\n# %s\n' "$(printf '%*s' "$(($1 - 23))" '' | tr ' ' x)"; }
+
+# Reeve's planner refuses repository YAML over 64 KB (REPO_YAML_MAX_BYTES).
+propose_meta_over_64kb() {
+  pr_repo
+  pad_yaml 65537 >|"$PC/.openspec.yaml"
+  check "$(wc -c <"$PC/.openspec.yaml" | tr -d ' ')" "65537"
+  pcheck add-reset
+  check "$RC,$(prules),$(jqval '.findings[0].line'),$(jqval '.findings[0].message')" \
+    "1,meta,0,the file is larger than 64 KB, more than Reeve parses"
+  pad_yaml 65536 >|"$PC/.openspec.yaml"
+  pcheck add-reset
+  check "$RC,$(prules)" "0,"
+}
+
 propose_tasks_parse() {
   pr_repo
   printf '# Tasks\n\n- [ ] 1.1 Do it\n' >|"$PC/tasks.md"
@@ -4657,6 +4695,200 @@ skills_propose_workflow() {
   grep -qF 'ccm-propose-check' "$ROOT/README.md" || missing+=" readme-script"
   grep -qF '/ccmagic:propose' "$ROOT/skills/help/SKILL.md" || missing+=" help"
   grep -qF 'RV-99' "$ROOT/CHANGELOG.md" || missing+=" changelog"
+  check "${missing# }" ""
+}
+
+# ---- ccm-spec-polish and /ccmagic:spec-polish (RV-90) -----------------------
+
+SP=openspec/changes/add-reset
+# The files hash Reeve's polishFilesHash (src/openspec/polish.ts) gives the
+# propose fixture's add-reset on disk, computed with Reeve on 2026-10-15. A
+# change to the hash rule on either side breaks this check.
+SP_FIXTURE_HASH=00da6621ca4335ca
+
+sp() { run "$BIN/ccm-spec-polish" "$@"; }
+
+specpolish_hash_matches_reeve() {
+  pr_repo
+  # design.md and the record itself are not hashed.
+  echo design >"$SP/design.md"
+  sp hash add-reset
+  check "$RC,$(jqval .files_hash),$(jqval '.files | keys | join(" ")')" \
+    "0,$SP_FIXTURE_HASH,.openspec.yaml proposal.md specs/counting/spec.md specs/resetting/spec.md tasks.md"
+  echo 'polish: {}' >"$SP/.reeve.yml"
+  sp hash add-reset
+  check "$(jqval .files_hash)" "$SP_FIXTURE_HASH"
+  # A symlinked spec.md or capability folder is never hashed; a dot-named capability is.
+  mkdir -p "$T/elsewhere/linked" && echo s >"$T/elsewhere/linked/spec.md"
+  ln -s "$T/elsewhere/linked" "$SP/specs/linked"
+  ln -s "$T/elsewhere/linked/spec.md" "$SP/specs/counting/spec.md.lnk"
+  sp hash add-reset
+  check "$(jqval .files_hash)" "$SP_FIXTURE_HASH"
+  mkdir -p "$SP/specs/.dotted" && echo d >"$SP/specs/.dotted/spec.md"
+  sp hash add-reset
+  check "$(jqval '.files | has("specs/.dotted/spec.md")')" "true"
+  command rm -rf "$SP/specs/.dotted" "$SP/specs/linked" "$SP/specs/counting/spec.md.lnk"
+  # A tasks.md edit changes it.
+  echo '' >>"$SP/tasks.md"
+  sp hash add-reset
+  [ "$(jqval .files_hash)" != "$SP_FIXTURE_HASH" ]
+}
+
+# A symlinked kept file is a blob of its target's path in git, so Reeve never
+# counts the change as polished: hash lists it, write refuses, check is malformed.
+specpolish_symlinked_kept_file() {
+  pr_repo
+  mkdir -p "$T/elsewhere"
+  command cp -f "$SP/specs/resetting/spec.md" "$T/elsewhere/spec.md"
+  command rm -f "$SP/specs/resetting/spec.md"
+  ln -s "$T/elsewhere/spec.md" "$SP/specs/resetting/spec.md"
+  sp hash add-reset
+  check "$RC,$(jq -c .links <<<"$OUT"),$(jqval '.files | has("specs/resetting/spec.md")')" '0,["specs/resetting/spec.md"],false'
+  sp write add-reset 3 2 abcd1234abcd1234
+  check "$RC,$(jqval .unreadable),$([ -e "$SP/.reeve.yml" ] && echo written || echo none)" \
+    "3,kept file specs/resetting/spec.md is a symlink, which a polish record cannot cover,none"
+  sp check add-reset
+  check "$RC,$(jqval .status)" "1,none"
+  printf 'polish:\n  rounds: 3\n  clean_rounds: 2\n  files_hash: %s\n  rubric_hash: r\n' "$SP_FIXTURE_HASH" >"$SP/.reeve.yml"
+  sp check add-reset
+  check "$RC,$(jqval .status),$(jqval .reason)" "1,malformed,a kept file is a symlink: specs/resetting/spec.md"
+  # Two links, joined in path order.
+  command cp -f "$SP/tasks.md" "$T/elsewhere/tasks.md"
+  command rm -f "$SP/tasks.md"
+  ln -s "$T/elsewhere/tasks.md" "$SP/tasks.md"
+  sp hash add-reset
+  check "$RC,$(jq -c .links <<<"$OUT")" '0,["specs/resetting/spec.md","tasks.md"]'
+  sp check add-reset
+  check "$(jqval .reason)" "a kept file is a symlink: specs/resetting/spec.md, tasks.md"
+  # A symlinked capability folder is not a kept file, so it is no link.
+  command rm -f "$SP/tasks.md" "$SP/specs/resetting/spec.md" "$SP/.reeve.yml"
+  command cp -f "$T/elsewhere/tasks.md" "$SP/tasks.md"
+  command cp -f "$T/elsewhere/spec.md" "$SP/specs/resetting/spec.md"
+  mkdir -p "$T/elsewhere/linked" && echo s >"$T/elsewhere/linked/spec.md"
+  ln -s "$T/elsewhere/linked" "$SP/specs/linked"
+  sp hash add-reset
+  check "$RC,$(jq -c .links <<<"$OUT"),$(jqval .files_hash)" "0,[],$SP_FIXTURE_HASH"
+  sp write add-reset 3 2 abcd1234abcd1234
+  sp check add-reset
+  check "$RC,$(jqval .status)" "0,polished"
+}
+
+specpolish_write_and_check() {
+  pr_repo
+  sp check add-reset
+  check "$RC,$(jqval .status)" "1,none"
+  sp write add-reset 4 2 abcd1234abcd1234
+  check "$RC,$(jqval .files_hash),$(jqval .rounds),$(jqval .clean_rounds)" "0,$SP_FIXTURE_HASH,4,2"
+  check "$(cat "$SP/.reeve.yml")" "$(printf 'polish:\n  rounds: 4\n  clean_rounds: 2\n  files_hash: %s\n  rubric_hash: abcd1234abcd1234' "$SP_FIXTURE_HASH")"
+  sp check add-reset
+  check "$RC,$(jqval .status),$(jqval .files_match)" "0,polished,true"
+  # An edit after the record makes it stale.
+  echo '' >>"$SP/proposal.md"
+  sp check add-reset
+  check "$RC,$(jqval .status),$(jqval .files_match)" "1,stale,false"
+  # Fewer than two clean rounds did not converge, whatever the files.
+  sp write add-reset 6 1 abcd1234abcd1234
+  sp check add-reset
+  check "$RC,$(jqval .status)" "1,unconverged"
+}
+
+specpolish_check_malformed() {
+  pr_repo
+  local body want
+  while IFS='|' read -r body want; do
+    printf '%b' "$body" >"$SP/.reeve.yml"
+    sp check add-reset
+    check "$RC,$(jqval .status),$(jqval .reason)" "1,malformed,$want"
+  done <<'EOF2'
+other: 1\n|the file has no polish mapping
+polish:\n  rounds: 0\n  clean_rounds: 0\n  files_hash: 0123456789abcdef\n  rubric_hash: r\n|polish.rounds is not a whole number of at least 1
+polish:\n  rounds: 2\n  clean_rounds: 3\n  files_hash: 0123456789abcdef\n  rubric_hash: r\n|polish.clean_rounds is not a whole number between 0 and polish.rounds
+polish:\n  rounds: 2\n  clean_rounds: 2\n  files_hash: ABC\n  rubric_hash: r\n|polish.files_hash is not 16 lowercase hex characters
+polish:\n  rounds: 2\n  clean_rounds: 2\n  files_hash: 0123456789abcdef\n|polish.rubric_hash is missing
+polish:\n  rounds: 1234567890\n  clean_rounds: 2\n  files_hash: 0123456789abcdef\n  rubric_hash: r\n|polish.rounds is not a whole number of at least 1
+polish:\n  # a comment\n  rounds: 2\n  clean_rounds: 2\n  files_hash: 0123456789abcdef\n  rubric_hash: r\n|the record holds a line outside the form ccm-spec-polish write produces
+polish:\n  rounds: 2\n  clean_rounds: 1\n  clean_rounds: 2\n  files_hash: 0123456789abcdef\n  rubric_hash: r\n|the record repeats clean_rounds:
+EOF2
+}
+
+specpolish_usage_and_unreadable() {
+  pr_repo
+  sp write add-reset 0 0 r
+  check "$RC" "4"
+  sp write add-reset 2 3 r
+  check "$RC" "4"
+  sp write add-reset 2 2 'bad hash'
+  check "$RC" "4"
+  sp write add-reset 1234567890 2 r
+  check "$RC" "4"
+  # A record that is a symlink is never written through.
+  ln -s ../../../outside.txt "$SP/.reeve.yml"
+  sp write add-reset 2 2 r
+  check "$RC,$([ -e outside.txt ] && echo written || echo untouched)" "3,untouched"
+  command rm -f "$SP/.reeve.yml"
+  sp hash ../add-reset
+  check "$RC" "4"
+  sp nope add-reset
+  check "$RC" "4"
+  sp hash no-such-change
+  check "$RC,$(jqval .unreadable)" "3,no change folder openspec/changes/no-such-change"
+  [ ! -e openspec/changes/no-such-change ]
+}
+
+specpolish_preflight() {
+  pr_repo
+  sp preflight add-reset
+  check "$RC,$(jqval .ok),$(jqval .base)" "0,true,main"
+  sp preflight add_reset
+  check "$RC,$(jqval '[.findings[].rule] | join(",")')" "1,change-name,no-change-folder"
+  # Once the change is on the default branch, Reeve has planned it.
+  gcommit 'docs(openspec): propose add-reset'
+  git checkout -q main && git merge -q --ff-only feat/add-reset
+  sp preflight add-reset
+  check "$RC,$(jqval '[.findings[].rule] | join(",")')" "1,planned"
+  sp preflight --base nope add-reset
+  check "$RC" "3"
+}
+
+specpolish_record_passes_openspec_and_propose_check() {
+  pr_repo
+  sp write add-reset 3 2 abcd1234abcd1234
+  pcheck add-reset
+  check "$RC,$(prules)" "0,"
+  if ! command -v openspec >/dev/null 2>&1; then
+    echo "    skipped the validate half: openspec CLI not on PATH (CI installs @fission-ai/openspec@1.14.1)"
+    return 0
+  fi
+  OPENSPEC_TELEMETRY=0 DO_NOT_TRACK=1 openspec validate add-reset --strict --no-interactive >"$T/validate" 2>&1 || { sed 's/^/    /' "$T/validate"; return 1; }
+}
+
+skills_spec_polish_write_grants() {
+  local f=$ROOT/skills/spec-polish/SKILL.md tools writes
+  tools=$(awk 'NR > 1 && /^---$/ { exit } /^allowed-tools:/ { sub(/^allowed-tools:[ ]*/, ""); print }' "$f")
+  writes=$(grep -oE '(Write|Edit|MultiEdit|NotebookEdit)(\([^)]*\))?' <<<"$tools" | LC_ALL=C sort | paste -sd' ' -)
+  check "$writes" "Edit(openspec/changes/**) Write(openspec/changes/**)"
+  if grep -qE '(^|, )Bash(\(\*\))?(,|$)' <<<"$tools"; then echo "    unrestricted Bash grant"; return 1; fi
+  [[ $tools != *"Agent(*)"* && $tools != *"Task(*)"* ]] || { echo "    agents not limited"; return 1; }
+  [[ $tools != *"gh pr merge"* && $tools != *"gh:*"* && $tools != *"--force"* ]] || { echo "    merge or force-push grant"; return 1; }
+}
+
+skills_spec_polish_workflow() {
+  local d=$ROOT/skills/spec-polish missing=
+  grep -qF '**Final stop.**' "$d/SKILL.md" || missing+=" stop"
+  grep -qF 'two consecutive rounds are clean' "$d/SKILL.md" || missing+=" convergence"
+  grep -qF 'model: "opus"' "$d/SKILL.md" || missing+=" model"
+  grep -qF 'openspec validate <change> --strict --no-interactive' "$d/SKILL.md" || missing+=" validate"
+  grep -qF -- '--grade' "$d/SKILL.md" || missing+=" grade"
+  grep -qF 'ccm-spec-polish" write' "$d/SKILL.md" || missing+=" write"
+  grep -qF 'ccm-spec-polish" preflight' "$d/SKILL.md" || missing+=" preflight"
+  grep -qF '# polish: polished:' "$d/SKILL.md" || missing+=" reeve-line"
+  grep -qF 'Never merge' "$d/SKILL.md" || missing+=" never-merge"
+  grep -qF 'List every problem you find, however many' "$d/review-prompt.md" || missing+=" long-list"
+  grep -qF 'owner rejected' "$d/review-prompt.md" || missing+=" rejected"
+  grep -qF '`/ccmagic:spec-polish' "$ROOT/README.md" || missing+=" readme"
+  grep -qF 'ccm-spec-polish' "$ROOT/README.md" || missing+=" readme-script"
+  grep -qF '/ccmagic:spec-polish' "$ROOT/skills/help/SKILL.md" || missing+=" help"
+  grep -qF 'RV-90' "$ROOT/CHANGELOG.md" || missing+=" changelog"
   check "${missing# }" ""
 }
 
@@ -5655,7 +5887,7 @@ harness_docker_env_passes_proxy_not_secrets() {
 MIRRORS=$(mktemp -d)
 trap 'rm -rf "$MIRRORS"' EXIT
 
-for fn in $(declare -F | awk '{print $3}' | grep -E '^(context|ci|merge_gate|guard|post|postreview|stop|threads|reply|validate|route|doctor|extreview|skills|spec_block|scope|finish|baseline|propose|specdelta|openspecver|harness)_'); do
+for fn in $(declare -F | awk '{print $3}' | grep -E '^(context|ci|merge_gate|guard|post|postreview|stop|threads|reply|validate|route|doctor|extreview|skills|spec_block|scope|finish|baseline|propose|specpolish|specdelta|openspecver|harness)_'); do
   t "$fn" "$fn"
 done
 

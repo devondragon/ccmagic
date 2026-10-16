@@ -21,10 +21,11 @@
 #       exists at the base, or a folder under openspec/changes/archive/ (in
 #       the working tree or at the base) is an archive of that name
 #   missing-file        proposal.md, tasks.md, or .openspec.yaml is missing
-#   meta                .openspec.yaml has no "schema: spec-driven", a key
-#       the tested openspec release does not know (strict validation rejects
-#       it), or a skip_specs or retire_capabilities value that is not true or
-#       false
+#   meta                .openspec.yaml is larger than 64 KB (65536 bytes,
+#       the most repository YAML Reeve parses; the rest of the file is then
+#       not read), has no "schema: spec-driven", a key the tested openspec
+#       release does not know (strict validation rejects it), or a skip_specs
+#       or retire_capabilities value that is not true or false
 #   no-section, section-title, section-order, empty-section, task-marker,
 #   task-outside-section, unnumbered-task, task-text, task-prefix,
 #   duplicate-task, number-range   tasks.md fails Reeve's parseTasks (the
@@ -192,7 +193,10 @@ for name in "${names[@]}"; do
 
   # ---- .openspec.yaml ------------------------------------------------------------
   skip_specs=false
-  if [ -f "$dir/.openspec.yaml" ]; then
+  if [ -f "$dir/.openspec.yaml" ] && [ "$(wc -c <"$dir/.openspec.yaml" | tr -d ' ')" -gt 65536 ]; then
+    # Reeve's planner refuses repository YAML over REPO_YAML_MAX_BYTES (src/repo-yaml.ts).
+    finding meta "$dir/.openspec.yaml" 0 "the file is larger than 64 KB, more than Reeve parses"
+  elif [ -f "$dir/.openspec.yaml" ]; then
     schema="" n=0
     command cp -f "$dir/.openspec.yaml" "$tmp/meta"
     while IFS= read -r l || [ -n "$l" ]; do

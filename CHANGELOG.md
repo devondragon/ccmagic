@@ -2,6 +2,15 @@
 
 All notable changes to ccmagic are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.23.0] - 2026-10
+
+### Added
+
+- `/ccmagic:spec-polish <change>` reviews an OpenSpec change in rounds before Reeve plans it (RV-90). Each round dispatches a fresh read-only reviewer (opus) that reads the proposal, `tasks.md`, the delta specs, the current specs, and the code, and lists every problem it finds (coverage of each requirement by a task, section order, Why against What Changes, MODIFIED blocks that drop a scenario, vague tasks, claims the code contradicts); findings the owner rejected are passed to later rounds so they are not raised again. You accept or reject each finding, the session applies the accepted ones inside the change folder, and `openspec validate --strict --no-interactive`, `ccm-propose-check`, and `reeve openspec render --grade` must pass. It stops after two consecutive rounds with nothing accepted, or at `--max-rounds` (default 6), writes the polish record `openspec/changes/<change>/.reeve.yml` (`rounds`, `clean_rounds`, `files_hash`, `rubric_hash`), confirms with `reeve openspec render` that Reeve reads it as polished, and commits after a final stop. It never merges. Reeve carries the record on `spec-planned`, splits `reeve stats` by it, and with `openspec.require_polish` plans only a change whose record matches its files. Standalone: no ticket workflow runs it.
+- `bin/ccm-spec-polish` with modes `hash` (the files hash, matching Reeve's `polishFilesHash`, which the tests hold with a vector computed by Reeve), `write`, `check` (`none`, `malformed`, `unconverged`, `stale`, or `polished`, exit 0 only for `polished`), and `preflight` (Reeve's change-name rule, the folder and its `tasks.md`, and `planned` for a change already on the default branch).
+- `ccm-propose-check` reports a `meta` finding for a `.openspec.yaml` larger than 64 KB (65536 bytes), and `ccm-openspec-scope` stops at exit 3 (unreadable) in archive mode when the base `.openspec.yaml` is that large, mirroring Reeve, which parses no repository YAML over 64 KB: its planner rejects the file and its gate parks the archive PR as unreadable (RV-90).
+- `ccm-spec-polish` never covers a symlinked kept file (`tasks.md`, `proposal.md`, `.openspec.yaml`, or `specs/<capability>/spec.md`), as Reeve, whose planner lists one as a blob of its target's path, never counts such a change as polished: `hash` lists them in `links`, `write` refuses with exit 3, and `check` reports `malformed` ("a kept file is a symlink: <paths>"). A symlinked capability folder is still ignored (RV-90).
+
 ## [3.22.0] - 2026-10
 
 ### Added

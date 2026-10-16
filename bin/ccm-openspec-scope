@@ -34,7 +34,8 @@
 # tasks-unreadable, section-missing (sections only).
 #
 # Exit codes: 0 pass, 1 a rule failed, 3 cannot read the repository or BASE
-# (or, archive mode, a .openspec.yaml outside the plain form), 4 usage error.
+# (or, archive mode, a base .openspec.yaml larger than 64 KB, which Reeve's
+# gate does not parse and parks on, or outside the plain form), 4 usage error.
 # Output: {pass, mode, change, section, rule, detail, file, line, task_id,
 #          tasks, unchecked, tasks_done, base, merge_base}
 
@@ -48,7 +49,7 @@ usage() { echo "ccm-openspec-scope: $1" >&2; exit 4; }
 precheck=false worktree=false repo="" args=()
 while [ $# -gt 0 ]; do
   case $1 in
-    -h|--help) sed -n '2,39p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,40p' "$0"; exit 0 ;;
     --precheck) precheck=true ;;
     --worktree) worktree=true ;;
     --repo) [ $# -ge 2 ] || usage "--repo needs OWNER/NAME"; repo=$2; shift ;;
@@ -404,9 +405,14 @@ first=$(touched | CAPS=$caps awk -v d="$dir/" -v a="$adir/" '
 # Anything else (a flow mapping, an indented or tab-separated line, a second
 # document, a repeated key) is reported as unreadable, exit 3, rather than
 # guessed, so the check never passes or fails where the gate would not.
+# A file larger than 64 KB (65536 bytes, Reeve's REPO_YAML_MAX_BYTES) is not
+# parsed at all: the gate parks the PR as unreadable, so this stops at exit 3
+# too, before the session opens a PR the gate would park.
 meta=$scratch/meta.yaml
 skip=false retire=false
 if show "$base_sha" "$dir/.openspec.yaml" "$meta"; then
+  [ "$(wc -c <"$meta" | tr -d ' ')" -le 65536 ] ||
+    unreadable "$dir/.openspec.yaml on the base branch ($base) is larger than 64 KB, the most repository YAML Reeve parses; Reeve's gate parks the archive PR as unreadable, so shorten the file on the base branch first"
   flags=$(LC_ALL=C awk '
     function bad(why) { printf "E\tline %d: %s\n", NR, why; failed = 1; exit }
     {
