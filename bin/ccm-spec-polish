@@ -94,7 +94,7 @@ fi
 change=$1
 shift
 # A plain folder name only, so it is never used as a path outside the changes folder.
-[[ $change =~ ^[A-Za-z0-9._-]+$ ]] && [ "$change" != . ] && [ "$change" != .. ] || usage
+if ! { [[ $change =~ ^[A-Za-z0-9._-]+$ ]] && [ "$change" != . ] && [ "$change" != .. ]; }; then usage; fi
 case $cmd in
   hash | check | preflight) [ $# -eq 0 ] || usage ;;
   write) [ $# -eq 3 ] || usage ;;
@@ -115,7 +115,7 @@ kept_files() {
     if [ -d "$dir/specs" ]; then
       shopt -s dotglob nullglob
       for p in "$dir"/specs/*/spec.md; do
-        [ -f "$p" ] && [ ! -L "$p" ] && [ ! -L "${p%/spec.md}" ] || continue
+        if ! { [ -f "$p" ] && [ ! -L "$p" ] && [ ! -L "${p%/spec.md}" ]; }; then continue; fi
         printf '%s\t%s\n' "${p#"$dir"/}" "$(git hash-object -- "$p")"
       done
     fi
@@ -133,7 +133,7 @@ kept_links() {
     if [ -d "$dir/specs" ]; then
       shopt -s dotglob nullglob
       for p in "$dir"/specs/*/spec.md; do
-        [ -L "$p" ] && [ ! -L "${p%/spec.md}" ] || continue
+        if ! { [ -L "$p" ] && [ ! -L "${p%/spec.md}" ]; }; then continue; fi
         printf '%s\n' "${p#"$dir"/}"
       done
     fi
@@ -142,7 +142,7 @@ kept_links() {
 files_hash() { kept_files | jq -Rnc '[inputs | split("\t")]' | tr -d '\n' | sha256 | cut -c1-16; }
 files_json() { kept_files | jq -Rn '[inputs | split("\t") | {(.[0]): .[1]}] | add // {}'; }
 
-need_folder() { [ -d "$dir" ] && [ "$change" != archive ] || fail3 "no change folder $dir"; }
+need_folder() { if ! { [ -d "$dir" ] && [ "$change" != archive ]; }; then fail3 "no change folder $dir"; fi; }
 
 case $cmd in
   hash)
@@ -182,9 +182,9 @@ case $cmd in
   write)
     need_folder
     rounds=$1 clean=$2 rubric=$3
-    [[ $rounds =~ ^[0-9]{1,9}$ ]] && [[ $clean =~ ^[0-9]{1,9}$ ]] || usage
+    if ! { [[ $rounds =~ ^[0-9]{1,9}$ ]] && [[ $clean =~ ^[0-9]{1,9}$ ]]; }; then usage; fi
     rounds=$((10#$rounds)) clean=$((10#$clean))
-    [ "$rounds" -ge 1 ] && [ "$clean" -le "$rounds" ] || usage
+    if ! { [ "$rounds" -ge 1 ] && [ "$clean" -le "$rounds" ]; }; then usage; fi
     [[ $rubric =~ ^[A-Za-z0-9._-]+$ ]] || usage
     [ ! -L "$dir/$RECORD" ] || fail3 "$dir/$RECORD is a symlink"
     link=$(kept_links | head -1)
@@ -201,7 +201,7 @@ case $cmd in
     malformed() { jq -n --arg r "$1" '{status: "malformed", reason: $r}'; exit 1; }
     links=$(kept_links | jq -Rrn '[inputs] | join(", ")')
     [ -z "$links" ] || malformed "a kept file is a symlink: $links"
-    [ -f "$dir/$RECORD" ] && [ ! -L "$dir/$RECORD" ] || malformed "the record is not a regular file"
+    if ! { [ -f "$dir/$RECORD" ] && [ ! -L "$dir/$RECORD" ]; }; then malformed "the record is not a regular file"; fi
     # The flat form write produces: "polish:" then two-space-indented "key: value" lines.
     vals=$(awk '
       /^polish:[[:space:]]*$/ { inside = 1; next }
@@ -216,8 +216,8 @@ case $cmd in
     dups=$(grep -oE '^  [a-z_]+:' "$dir/$RECORD" | sort | uniq -d | head -1)
     [ -z "$dups" ] || malformed "the record repeats ${dups#  }"
     rounds=$(get rounds) clean=$(get clean_rounds) fh=$(get files_hash) rubric=$(get rubric_hash)
-    [[ $rounds =~ ^[0-9]{1,9}$ ]] && [ "$((10#$rounds))" -ge 1 ] || malformed "polish.rounds is not a whole number of at least 1"
-    [[ $clean =~ ^[0-9]{1,9}$ ]] && [ "$((10#$clean))" -le "$((10#$rounds))" ] || malformed "polish.clean_rounds is not a whole number between 0 and polish.rounds"
+    if ! { [[ $rounds =~ ^[0-9]{1,9}$ ]] && [ "$((10#$rounds))" -ge 1 ]; }; then malformed "polish.rounds is not a whole number of at least 1"; fi
+    if ! { [[ $clean =~ ^[0-9]{1,9}$ ]] && [ "$((10#$clean))" -le "$((10#$rounds))" ]; }; then malformed "polish.clean_rounds is not a whole number between 0 and polish.rounds"; fi
     [[ $fh =~ ^[0-9a-f]{16}$ ]] || malformed "polish.files_hash is not 16 lowercase hex characters"
     [ -n "$rubric" ] || malformed "polish.rubric_hash is missing"
     rounds=$((10#$rounds)) clean=$((10#$clean))
