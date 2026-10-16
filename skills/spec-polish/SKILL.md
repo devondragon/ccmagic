@@ -67,6 +67,8 @@ Write it only after every check passed on the last round, and make it the last w
 - Converged (two consecutive clean rounds): `"${CLAUDE_PLUGIN_ROOT}/bin/ccm-spec-polish" write <change> <rounds> <clean rounds> <rubric hash>`, where `<clean rounds>` is the count of consecutive clean rounds at the end and `<rubric hash>` is the hash from the last render.
 - Stopped at `--max-rounds` without converging: use `AskUserQuestion` to ask whether to write the record anyway (Reeve reads fewer than two clean rounds as `unconverged`, so it counts as unpolished) or to stop without one.
 
+`write` exits 3 when a kept file (`tasks.md`, `proposal.md`, `.openspec.yaml`, or a `specs/<capability>/spec.md`) is a symlink: git commits the link's target path, not the content Reeve plans from, so no record can cover it and Reeve never counts the change as polished. Stop and name the file; replacing the link with a regular file is the owner's call.
+
 Then confirm it, each as its own Bash call:
 
 ```bash

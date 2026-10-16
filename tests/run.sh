@@ -4734,6 +4734,45 @@ specpolish_hash_matches_reeve() {
   [ "$(jqval .files_hash)" != "$SP_FIXTURE_HASH" ]
 }
 
+# A symlinked kept file is a blob of its target's path in git, so Reeve never
+# counts the change as polished: hash lists it, write refuses, check is malformed.
+specpolish_symlinked_kept_file() {
+  pr_repo
+  mkdir -p "$T/elsewhere"
+  command cp -f "$SP/specs/resetting/spec.md" "$T/elsewhere/spec.md"
+  command rm -f "$SP/specs/resetting/spec.md"
+  ln -s "$T/elsewhere/spec.md" "$SP/specs/resetting/spec.md"
+  sp hash add-reset
+  check "$RC,$(jq -c .links <<<"$OUT"),$(jqval '.files | has("specs/resetting/spec.md")')" '0,["specs/resetting/spec.md"],false'
+  sp write add-reset 3 2 abcd1234abcd1234
+  check "$RC,$(jqval .unreadable),$([ -e "$SP/.reeve.yml" ] && echo written || echo none)" \
+    "3,kept file specs/resetting/spec.md is a symlink, which a polish record cannot cover,none"
+  sp check add-reset
+  check "$RC,$(jqval .status)" "1,none"
+  printf 'polish:\n  rounds: 3\n  clean_rounds: 2\n  files_hash: %s\n  rubric_hash: r\n' "$SP_FIXTURE_HASH" >"$SP/.reeve.yml"
+  sp check add-reset
+  check "$RC,$(jqval .status),$(jqval .reason)" "1,malformed,a kept file is a symlink: specs/resetting/spec.md"
+  # Two links, joined in path order.
+  command cp -f "$SP/tasks.md" "$T/elsewhere/tasks.md"
+  command rm -f "$SP/tasks.md"
+  ln -s "$T/elsewhere/tasks.md" "$SP/tasks.md"
+  sp hash add-reset
+  check "$RC,$(jq -c .links <<<"$OUT")" '0,["specs/resetting/spec.md","tasks.md"]'
+  sp check add-reset
+  check "$(jqval .reason)" "a kept file is a symlink: specs/resetting/spec.md, tasks.md"
+  # A symlinked capability folder is not a kept file, so it is no link.
+  command rm -f "$SP/tasks.md" "$SP/specs/resetting/spec.md" "$SP/.reeve.yml"
+  command cp -f "$T/elsewhere/tasks.md" "$SP/tasks.md"
+  command cp -f "$T/elsewhere/spec.md" "$SP/specs/resetting/spec.md"
+  mkdir -p "$T/elsewhere/linked" && echo s >"$T/elsewhere/linked/spec.md"
+  ln -s "$T/elsewhere/linked" "$SP/specs/linked"
+  sp hash add-reset
+  check "$RC,$(jq -c .links <<<"$OUT"),$(jqval .files_hash)" "0,[],$SP_FIXTURE_HASH"
+  sp write add-reset 3 2 abcd1234abcd1234
+  sp check add-reset
+  check "$RC,$(jqval .status)" "0,polished"
+}
+
 specpolish_write_and_check() {
   pr_repo
   sp check add-reset
