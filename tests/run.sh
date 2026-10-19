@@ -353,6 +353,141 @@ ci_watch_returns_when_settled() {
   check "$(jqval .status),$RC" "green,0"
 }
 
+# ci.ignore in .reeve/policy.yml on the base branch (RV-74): advisory checks.
+COPILOT_POLICY='version: 1
+tiers:
+  reviewed: {default: true}
+ci:
+  required:
+    - { name: test, app: github-actions }
+  ignore:
+    - { name: Running Copilot Code Review, app: github-actions }  # advisory
+'
+
+ci_ignore_failed_advisory_check_is_green() {
+  pr_open
+  fx pr-checks '[{"name":"test","state":"SUCCESS","bucket":"pass"},{"name":"Running Copilot Code Review","state":"FAILURE","bucket":"fail"}]' 1
+  fx policy "$COPILOT_POLICY"
+  fx check-runs '{"check_runs":[{"name":"test","app":{"slug":"github-actions"}},{"name":"Running Copilot Code Review","app":{"slug":"github-actions"}}]}'
+  run "$BIN/ccm-ci-status" 7
+  check "$(jqval .status),$RC,$(jqval .reason)" "green,0,all counted checks passed; advisory, not counted (ci.ignore): Running Copilot Code Review: FAILURE"
+  check "$(jqval '.advisory | length'),$(jqval '.checks | length'),$(jqval '.checks[1].advisory')" "1,2,true"
+  # The policy is read from the PR's base branch, not the working tree.
+  grep -q 'contents/.reeve/policy.yml?ref=main' "$GH_FIXTURES/calls.log"
+}
+
+ci_ignore_unlisted_failure_still_fails() {
+  pr_open
+  fx pr-checks '[{"name":"lint","state":"FAILURE","bucket":"fail"},{"name":"Running Copilot Code Review","state":"FAILURE","bucket":"fail"}]' 1
+  fx policy "$COPILOT_POLICY"
+  fx check-runs '{"check_runs":[{"name":"lint","app":{"slug":"github-actions"}},{"name":"Running Copilot Code Review","app":{"slug":"github-actions"}}]}'
+  run "$BIN/ccm-ci-status" 7
+  check "$(jqval .status),$RC,$(jqval .reason)" "failed,1,failing: lint; advisory, not counted (ci.ignore): Running Copilot Code Review: FAILURE"
+}
+
+ci_ignore_pending_advisory_check_is_not_waited_on() {
+  pr_open
+  fx pr-checks '[{"name":"test","state":"SUCCESS","bucket":"pass"},{"name":"Running Copilot Code Review","state":"IN_PROGRESS","bucket":"pending"}]' 8
+  fx policy "$COPILOT_POLICY"
+  fx check-runs '{"check_runs":[{"name":"Running Copilot Code Review","app":{"slug":"github-actions"}}]}'
+  run "$BIN/ccm-ci-status" 7 --watch --wait-key k --timeout-minutes 30 --interval 0
+  check "$(jqval .status),$RC" "green,0"
+}
+
+ci_ignore_other_app_is_counted() {
+  pr_open
+  fx pr-checks '[{"name":"test","state":"SUCCESS","bucket":"pass"},{"name":"Running Copilot Code Review","state":"FAILURE","bucket":"fail"}]' 1
+  fx policy "$COPILOT_POLICY"
+  fx check-runs '{"check_runs":[{"name":"Running Copilot Code Review","app":{"slug":"someone-else"}}]}'
+  run "$BIN/ccm-ci-status" 7
+  check "$(jqval .status),$(jqval .reason),$(jqval '.advisory // "none"')" "failed,failing: Running Copilot Code Review,none"
+}
+
+ci_ignore_unreadable_app_matches_by_name_and_says_so() {
+  pr_open
+  fx pr-checks '[{"name":"test","state":"SUCCESS","bucket":"pass"},{"name":"Running Copilot Code Review","state":"FAILURE","bucket":"fail"}]' 1
+  fx policy "$COPILOT_POLICY"
+  fx_err check-runs 'Resource not accessible by personal access token (HTTP 403)' 1
+  run "$BIN/ccm-ci-status" 7
+  check "$(jqval .status),$(jqval '.advisory[0].owner_unverified')" "green,true"
+}
+
+ci_ignore_status_creator_is_checked() {
+  pr_open
+  fx pr-checks '[{"name":"test","state":"SUCCESS","bucket":"pass"},{"name":"ext/advice","state":"FAILURE","bucket":"fail"}]' 1
+  fx policy 'ci:
+  ignore:
+    - context: ext/advice
+      creator: bot
+'
+  fx statuses '[{"context":"ext/advice","creator":{"login":"Bot"}}]'
+  run "$BIN/ccm-ci-status" 7
+  check "$(jqval .status)" "green"
+  fx statuses '[{"context":"ext/advice","creator":{"login":"bot"}},{"context":"ext/advice","creator":{"login":"mallory"}}]'
+  run "$BIN/ccm-ci-status" 7
+  check "$(jqval .status)" "failed"
+}
+
+ci_ignore_no_policy_changes_nothing() {
+  pr_open
+  fx pr-checks '[{"name":"test","state":"SUCCESS","bucket":"pass"},{"name":"Running Copilot Code Review","state":"FAILURE","bucket":"fail"}]' 1
+  fx_err policy 'gh: Not Found (HTTP 404)' 1
+  run "$BIN/ccm-ci-status" 7
+  check "$(jqval .status),$(jqval '.policy_note // "none"')" "failed,none"
+}
+
+ci_ignore_policy_in_both_lists_ignores_nothing() {
+  pr_open
+  fx pr-checks '[{"name":"test","state":"SUCCESS","bucket":"pass"},{"name":"copilot","state":"FAILURE","bucket":"fail"}]' 1
+  fx policy 'ci:
+  required:
+    - { name: copilot }
+  ignore:
+    - { name: copilot, app: github-actions }
+'
+  run "$BIN/ccm-ci-status" 7
+  check "$(jqval .status),$(jqval .policy_note)" "failed,ci.ignore not applied: listed in both ci.required and ci.ignore: copilot; Reeve refuses this policy"
+}
+
+ci_ignore_unparseable_list_ignores_nothing() {
+  pr_open
+  fx pr-checks '[{"name":"test","state":"SUCCESS","bucket":"pass"},{"name":"copilot","state":"FAILURE","bucket":"fail"}]' 1
+  fx policy 'ci:
+  ignore: [{ name: copilot }]
+'
+  run "$BIN/ccm-ci-status" 7
+  check "$(jqval .status),$(jqval .policy_note)" "failed,ci.ignore not applied: ci.ignore is not a block list"
+}
+
+ci_ignore_only_advisory_checks_is_not_green() {
+  pr_open
+  workflows
+  fx pr-checks '[{"name":"copilot","state":"FAILURE","bucket":"fail"}]' 1
+  fx policy 'ci:
+  ignore:
+    - name: copilot
+'
+  fx_err protection 'gh: Branch not protected (HTTP 404)' 1
+  run "$BIN/ccm-ci-status" 7
+  check "$(jqval .status),$RC,$(jqval '.advisory[0].name')" "not-registered,2,copilot"
+}
+
+ci_ignore_green_reads_no_policy() {
+  pr_open
+  fx pr-checks '[{"name":"test","state":"SUCCESS","bucket":"pass"}]'
+  run "$BIN/ccm-ci-status" 7
+  check "$(jqval .status),$(grep -c 'policy.yml' "$GH_FIXTURES/calls.log" || true)" "green,0"
+}
+
+merge_gate_passes_with_failed_advisory_check() {
+  pr_open
+  fx pr-checks '[{"name":"test","state":"SUCCESS","bucket":"pass"},{"name":"Running Copilot Code Review","state":"FAILURE","bucket":"fail"}]' 1
+  fx policy "$COPILOT_POLICY"
+  fx check-runs '{"check_runs":[{"name":"Running Copilot Code Review","app":{"slug":"github-actions"}}]}'
+  run "$BIN/ccm-merge-gate" 7
+  check "$(jqval .pass),$RC,$(jqval '.ci.advisory[0].name')" "true,0,Running Copilot Code Review"
+}
+
 # ---- ccm-merge-gate --------------------------------------------------------
 
 merge_gate_passes() {

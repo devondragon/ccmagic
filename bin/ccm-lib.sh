@@ -304,3 +304,78 @@ ccm_text_findings() {
   { LC_ALL=C grep -n -e $'\xe2\x80\x93' -e $'\xe2\x80\x94' "$1" || true; } | cut -d: -f1 | awk '{ print "dash\t" $0 }'
   { grep -n -i -E -e "$CCM_EMAIL_RE" -e "$CCM_SPELLED_EMAIL_RE" "$1" || true; } | cut -d: -f1 | awk '{ print "personal-identifier\t" $0 }'
 }
+
+# ---- Reeve policy: ci.required and ci.ignore (RV-74) -------------------------
+
+# ccm_policy_ci_json: read a .reeve/policy.yml on stdin and print
+# {"required": [...], "ignore": [...]} for its `ci` block, each entry an object
+# with `name` and optional `app` (a check run) or `context` and optional
+# `creator` (a commit status), the shape Reeve's policy schema takes. Only the
+# block form is read: `ci:` at the top level, `required:` or `ignore:` under
+# it, and list items written `- { key: value, ... }` or `- key: value` with
+# further `key: value` lines; `[]` is an empty list. Anything else under those
+# keys, an unknown key, an entry with both `name` and `context` or neither,
+# Reeve's own `reeve/gate` context, or an ignore entry that could match a
+# required one (Reeve refuses that policy, so it ignores nothing) prints
+# {"error": "..."} instead, and the caller treats nothing as advisory.
+ccm_policy_ci_json() {
+  local rows
+  rows=$(tr -d '\r' | awk '
+    function trim(s) { sub(/^[ \t]+/, "", s); sub(/[ \t]+$/, "", s); return s }
+    function unq(s) { s = trim(s); if (s ~ /^".*"$/ || s ~ /^\047.*\047$/) s = substr(s, 2, length(s) - 2); return s }
+    function err(m) { print "ERR\t" m; bad = 1; exit }
+    function pair(p,   k, v, i) {
+      i = index(p, ":"); if (!i) err("cannot read entry " NR ": " p)
+      k = trim(substr(p, 1, i - 1)); v = unq(substr(p, i + 1))
+      if (k !~ /^(name|app|context|creator)$/) err("unknown key " k " in ci." list)
+      if (v == "") err("empty " k " in ci." list)
+      print list "\t" idx "\t" k "\t" v
+    }
+    { sub(/(^|[ \t])#.*$/, "") }
+    /^[ \t]*$/ { next }
+    {
+      match($0, /^ */); ind = RLENGTH; line = substr($0, ind + 1)
+      if (ind == 0) { top = line; list = ""; cind = ""; if (top ~ /^ci:/ && trim(substr(top, 4)) != "") err("ci is not a block mapping"); next }
+      if (top !~ /^ci:[ \t]*$/) next
+      if (cind == "" || ind <= cind) {
+        if (line !~ /^(required|ignore):/) { list = ""; cind = ind; next }
+        cind = ind; list = (line ~ /^required/ ? "required" : "ignore"); idx = -1
+        rest = trim(substr(line, index(line, ":") + 1))
+        if (rest == "[]") list = ""
+        else if (rest != "") err("ci." list " is not a block list")
+        next
+      }
+      if (list == "") next
+      if (line ~ /^- /) {
+        idx++; item = trim(substr(line, 3)); iind = ind + 2
+        if (item ~ /^\{.*\}$/) {
+          n = split(substr(item, 2, length(item) - 2), parts, ",")
+          for (j = 1; j <= n; j++) if (trim(parts[j]) != "") pair(parts[j])
+        } else if (item ~ /^[A-Za-z_]+:/) pair(item)
+        else err("ci." list " entry " idx + 1 " is not a mapping")
+        next
+      }
+      if (idx >= 0 && ind == iind) { pair(line); next }
+      err("cannot read line " NR " under ci." list)
+    }
+  ')
+  if grep -q '^ERR' <<<"$rows"; then
+    jq -n --arg e "$(grep -m1 '^ERR' <<<"$rows" | cut -f2-)" '{error: $e}'
+    return
+  fi
+  jq -R -s '
+    [split("\n")[] | select(length > 0) | split("\t") | {list: .[0], idx: (.[1] | tonumber), k: .[2], v: .[3]}]
+    | def entries(l): [map(select(.list == l)) | group_by(.idx)[] | map({(.k): .v}) | add];
+      {required: entries("required"), ignore: entries("ignore")}
+    | . as $p
+    | ([.required[], .ignore[]] | map(select((has("name") and has("context")) or ((has("name") or has("context")) | not) or (has("name") and has("creator")) or (has("context") and has("app"))))) as $odd
+    | ([.required[], .ignore[]] | map(select(.context == "reeve/gate"))) as $own
+    | def open(a; b): a == null or b == null or (a | ascii_downcase) == (b | ascii_downcase);
+      def overlaps(a; b): (a.name != null and a.name == b.name and open(a.app; b.app)) or (a.context != null and a.context == b.context and open(a.creator; b.creator));
+      ([$p.ignore[] as $i | $p.required[] as $r | select(overlaps($i; $r)) | ($i.name // $i.context)] | unique) as $both
+    | if ($odd | length) > 0 then {error: "an entry in ci.required or ci.ignore is neither { name, app? } nor { context, creator? }"}
+      elif ($own | length) > 0 then {error: "reeve/gate cannot be listed under ci"}
+      elif ($both | length) > 0 then {error: ("listed in both ci.required and ci.ignore: " + ($both | join(", ")) + "; Reeve refuses this policy")}
+      else $p end
+  ' <<<"$rows"
+}
