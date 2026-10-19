@@ -7,7 +7,9 @@ on:
 
 jobs:
   scripts:
-    runs-on: ubuntu-latest
+    # Pinned: ubuntu-latest moved to 26.04 on 2026-10-19 and the ccm-validate run tests fail there.
+    # Cyrus runs ccmagic on Debian bookworm (GNU coreutils 9.1), which 24.04 matches.
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
         with:

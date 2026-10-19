@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Test stub for gh. Answers from files in $GH_FIXTURES, named after the
 # subcommand: pr-view, pr-checks, pr-diff, pr-comment, run-list, repo-view,
-# protection, status, graphql, graphql-resolve, reply.
+# protection, status, graphql, graphql-resolve, reply, policy (the raw
+# .reeve/policy.yml), check-runs, statuses, jobs-ID (a run's jobs).
 # For each name: NAME.json is printed to stdout, NAME.err to stderr, and
 # NAME.rc (default 0) is the exit code. -q/--jq is applied with jq -r.
 # Every call is appended to $GH_FIXTURES/calls.log. For pr-comment with
@@ -30,6 +31,10 @@ case "$1 ${2:-}" in
   "api "*)
     case $2 in
       */protection/required_status_checks) name=protection ;;
+      */contents/.reeve/policy.yml*) name=policy ;;
+      */commits/*/check-runs*) name=check-runs ;;
+      */actions/runs/*/jobs*) id=${2#*/actions/runs/}; name=jobs-${id%%/*} ;;
+      */commits/*/statuses*) name=statuses ;;
       */commits/*/status) name=status ;;
       */comments/*/replies) name=reply ;;
     esac

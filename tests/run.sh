@@ -353,6 +353,206 @@ ci_watch_returns_when_settled() {
   check "$(jqval .status),$RC" "green,0"
 }
 
+# ci.ignore in .reeve/policy.yml on the base branch (RV-74): advisory checks.
+COPILOT_POLICY='version: 1
+tiers:
+  reviewed: {default: true}
+ci:
+  required:
+    - { name: test, app: github-actions }
+  ignore:
+    - { name: copilot-pull-request-reviewer, app: github-actions }  # advisory
+'
+
+ci_ignore_failed_advisory_check_is_green() {
+  pr_open
+  fx pr-checks '[{"name":"test","state":"SUCCESS","bucket":"pass"},{"name":"copilot-pull-request-reviewer","state":"FAILURE","bucket":"fail"}]' 1
+  fx policy "$COPILOT_POLICY"
+  fx check-runs '{"check_runs":[{"name":"test","app":{"slug":"github-actions"}},{"name":"copilot-pull-request-reviewer","app":{"slug":"github-actions"}}]}'
+  run "$BIN/ccm-ci-status" 7
+  check "$(jqval .status),$RC,$(jqval .reason)" "green,0,all counted checks passed; advisory, not counted (ci.ignore): copilot-pull-request-reviewer: FAILURE"
+  check "$(jqval '.advisory | length'),$(jqval '.checks | length'),$(jqval '.checks[1].advisory')" "1,2,true"
+  # The policy is read from the PR's base branch, not the working tree.
+  grep -q 'contents/.reeve/policy.yml?ref=main' "$GH_FIXTURES/calls.log"
+}
+
+ci_ignore_unlisted_failure_still_fails() {
+  pr_open
+  fx pr-checks '[{"name":"lint","state":"FAILURE","bucket":"fail"},{"name":"copilot-pull-request-reviewer","state":"FAILURE","bucket":"fail"}]' 1
+  fx policy "$COPILOT_POLICY"
+  fx check-runs '{"check_runs":[{"name":"lint","app":{"slug":"github-actions"}},{"name":"copilot-pull-request-reviewer","app":{"slug":"github-actions"}}]}'
+  run "$BIN/ccm-ci-status" 7
+  check "$(jqval .status),$RC,$(jqval .reason)" "failed,1,failing: lint; advisory, not counted (ci.ignore): copilot-pull-request-reviewer: FAILURE"
+}
+
+ci_ignore_pending_advisory_check_is_not_waited_on() {
+  pr_open
+  fx pr-checks '[{"name":"test","state":"SUCCESS","bucket":"pass"},{"name":"copilot-pull-request-reviewer","state":"IN_PROGRESS","bucket":"pending"}]' 8
+  fx policy "$COPILOT_POLICY"
+  fx check-runs '{"check_runs":[{"name":"copilot-pull-request-reviewer","app":{"slug":"github-actions"}}]}'
+  run "$BIN/ccm-ci-status" 7 --watch --wait-key k --timeout-minutes 30 --interval 0
+  check "$(jqval .status),$RC" "green,0"
+}
+
+ci_ignore_other_app_is_counted() {
+  pr_open
+  fx pr-checks '[{"name":"test","state":"SUCCESS","bucket":"pass"},{"name":"copilot-pull-request-reviewer","state":"FAILURE","bucket":"fail"}]' 1
+  fx policy "$COPILOT_POLICY"
+  fx check-runs '{"check_runs":[{"name":"copilot-pull-request-reviewer","app":{"slug":"someone-else"}}]}'
+  run "$BIN/ccm-ci-status" 7
+  check "$(jqval .status),$(jqval .reason),$(jqval '.advisory // "none"')" "failed,failing: copilot-pull-request-reviewer,none"
+}
+
+ci_ignore_unreadable_app_matches_by_name_and_says_so() {
+  pr_open
+  fx pr-checks '[{"name":"test","state":"SUCCESS","bucket":"pass"},{"name":"copilot-pull-request-reviewer","state":"FAILURE","bucket":"fail"}]' 1
+  fx policy "$COPILOT_POLICY"
+  fx_err check-runs 'Resource not accessible by personal access token (HTTP 403)' 1
+  run "$BIN/ccm-ci-status" 7
+  check "$(jqval .status),$(jqval '.advisory[0].owner_unverified')" "green,true"
+}
+
+ci_ignore_status_creator_is_checked() {
+  pr_open
+  fx pr-checks '[{"name":"test","state":"SUCCESS","bucket":"pass"},{"name":"ext/advice","state":"FAILURE","bucket":"fail"}]' 1
+  fx policy 'ci:
+  ignore:
+    - context: ext/advice
+      creator: bot
+'
+  fx statuses '[{"context":"ext/advice","creator":{"login":"Bot"}}]'
+  run "$BIN/ccm-ci-status" 7
+  check "$(jqval .status)" "green"
+  fx statuses '[{"context":"ext/advice","creator":{"login":"bot"}},{"context":"ext/advice","creator":{"login":"mallory"}}]'
+  run "$BIN/ccm-ci-status" 7
+  check "$(jqval .status)" "failed"
+}
+
+ci_ignore_no_policy_changes_nothing() {
+  pr_open
+  fx pr-checks '[{"name":"test","state":"SUCCESS","bucket":"pass"},{"name":"copilot-pull-request-reviewer","state":"FAILURE","bucket":"fail"}]' 1
+  fx_err policy 'gh: Not Found (HTTP 404)' 1
+  run "$BIN/ccm-ci-status" 7
+  check "$(jqval .status),$(jqval '.policy_note // "none"')" "failed,none"
+}
+
+ci_ignore_policy_in_both_lists_ignores_nothing() {
+  pr_open
+  fx pr-checks '[{"name":"test","state":"SUCCESS","bucket":"pass"},{"name":"copilot","state":"FAILURE","bucket":"fail"}]' 1
+  fx policy 'ci:
+  required:
+    - { name: copilot }
+  ignore:
+    - { name: copilot, app: github-actions }
+'
+  run "$BIN/ccm-ci-status" 7
+  check "$(jqval .status),$(jqval .policy_note)" "failed,ci.ignore not applied: listed in both ci.required and ci.ignore: copilot; Reeve refuses this policy"
+}
+
+ci_ignore_unparseable_list_ignores_nothing() {
+  pr_open
+  fx pr-checks '[{"name":"test","state":"SUCCESS","bucket":"pass"},{"name":"copilot","state":"FAILURE","bucket":"fail"}]' 1
+  fx policy 'ci:
+  ignore: [{ name: copilot }]
+'
+  run "$BIN/ccm-ci-status" 7
+  check "$(jqval .status),$(jqval .policy_note)" "failed,ci.ignore not applied: ci.ignore is not a block list"
+}
+
+ci_ignore_only_advisory_checks_is_not_green() {
+  pr_open
+  workflows
+  fx pr-checks '[{"name":"copilot","state":"FAILURE","bucket":"fail"}]' 1
+  fx policy 'ci:
+  ignore:
+    - name: copilot
+'
+  fx_err protection 'gh: Branch not protected (HTTP 404)' 1
+  run "$BIN/ccm-ci-status" 7
+  check "$(jqval .status),$RC,$(jqval '.advisory[0].name')" "not-registered,2,copilot"
+}
+
+ci_ignore_green_reads_no_policy() {
+  pr_open
+  fx pr-checks '[{"name":"test","state":"SUCCESS","bucket":"pass"}]'
+  run "$BIN/ccm-ci-status" 7
+  check "$(jqval .status),$(grep -c 'policy.yml' "$GH_FIXTURES/calls.log" || true)" "green,0"
+}
+
+# The Actions fallback (a fine-grained token gets 403 on check runs, as in Cyrus
+# sessions) names a check after its workflow; ci.ignore names jobs.
+ci_ignore_fallback_matches_jobs_not_workflows() {
+  pr_open
+  fx_err pr-checks 'GraphQL: Resource not accessible by personal access token (HTTP 403)' 1
+  fx run-list '[{"databaseId":11,"workflowName":"CI","status":"completed","conclusion":"success"},{"databaseId":12,"workflowName":"Copilot","status":"completed","conclusion":"failure"}]'
+  fx status '{"state":"pending","total_count":0,"statuses":[]}'
+  fx policy "$COPILOT_POLICY"
+  fx jobs-12 '{"jobs":[{"name":"copilot-pull-request-reviewer","status":"completed","conclusion":"failure"}]}'
+  run "$BIN/ccm-ci-status" 7
+  check "$(jqval .status),$RC,$(jqval .source),$(jqval '.advisory[0].name'),$(jqval '.advisory[0].owner_unverified // false')" "green,0,actions-fallback,copilot-pull-request-reviewer,false"
+  # The check-runs API is not read: a job's App is github-actions.
+  check "$(grep -c 'check-runs' "$GH_FIXTURES/calls.log" || true)" "0"
+}
+
+ci_ignore_fallback_counts_other_jobs_of_the_workflow() {
+  pr_open
+  fx_err pr-checks 'HTTP 403' 1
+  fx run-list '[{"databaseId":12,"workflowName":"Copilot","status":"completed","conclusion":"failure"}]'
+  fx status '{"state":"pending","total_count":0,"statuses":[]}'
+  fx policy "$COPILOT_POLICY"
+  fx jobs-12 '{"jobs":[{"name":"copilot-pull-request-reviewer","status":"completed","conclusion":"failure"},{"name":"other","status":"completed","conclusion":"failure"}]}'
+  run "$BIN/ccm-ci-status" 7
+  check "$(jqval .status),$(jqval .reason)" "failed,failing: other; advisory, not counted (ci.ignore): copilot-pull-request-reviewer: failure"
+}
+
+ci_ignore_fallback_never_matches_a_workflow_name() {
+  pr_open
+  fx_err pr-checks 'HTTP 403' 1
+  fx run-list '[{"databaseId":12,"workflowName":"Copilot","status":"completed","conclusion":"failure"}]'
+  fx status '{"state":"pending","total_count":0,"statuses":[]}'
+  fx policy 'ci:
+  ignore:
+    - name: Copilot
+'
+  fx_err jobs-12 'HTTP 403' 1
+  run "$BIN/ccm-ci-status" 7
+  check "$(jqval .status),$(jqval .reason)" "failed,failing: Copilot"
+}
+
+ci_ignore_fallback_job_from_listed_app_only() {
+  pr_open
+  fx_err pr-checks 'HTTP 403' 1
+  fx run-list '[{"databaseId":12,"workflowName":"Copilot","status":"in_progress","conclusion":null}]'
+  fx status '{"state":"pending","total_count":0,"statuses":[]}'
+  fx policy 'ci:
+  ignore:
+    - { name: copilot-pull-request-reviewer, app: some-other-app }
+'
+  fx jobs-12 '{"jobs":[{"name":"copilot-pull-request-reviewer","status":"in_progress","conclusion":null}]}'
+  run "$BIN/ccm-ci-status" 7
+  check "$(jqval .status),$(jqval .reason)" "pending,running: copilot-pull-request-reviewer"
+}
+
+ci_ignore_parses_quoted_commas_in_flow_entries() {
+  pr_open
+  fx pr-checks '[{"name":"test","state":"SUCCESS","bucket":"pass"},{"name":"lint, strict","state":"FAILURE","bucket":"fail"}]' 1
+  fx policy 'ci:
+  ignore:
+    - { name: "lint, strict" }
+'
+  run "$BIN/ccm-ci-status" 7
+  check "$(jqval .status),$(jqval '.advisory[0].name')" "green,lint, strict"
+}
+
+merge_gate_passes_with_failed_advisory_check() {
+  pr_open
+  fx pr-checks '[{"name":"test","state":"SUCCESS","bucket":"pass"},{"name":"copilot-pull-request-reviewer","state":"FAILURE","bucket":"fail"}]' 1
+  fx policy "$COPILOT_POLICY"
+  fx check-runs '{"check_runs":[{"name":"copilot-pull-request-reviewer","app":{"slug":"github-actions"}}]}'
+  run "$BIN/ccm-merge-gate" 7
+  check "$(jqval .pass),$RC,$(jqval '.ci.advisory[0].name')" "true,0,copilot-pull-request-reviewer"
+}
+
 # ---- ccm-merge-gate --------------------------------------------------------
 
 merge_gate_passes() {

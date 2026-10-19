@@ -214,15 +214,17 @@
  
  **4c. Wait for CI and new reviews.** This pass's push(es) already happened (in 4a via `pr-feedback`, and possibly again in 4b); `H` was captured before them at the top of the pass. Now that they've landed:
    - **Wait for CI to settle** with one command, repeated only while it says so:
-@@ -166,6 +182,7 @@ Everything this pass pushes is measured against `H`, so bot reviews triggered *b
+@@ -165,7 +181,9 @@ Everything this pass pushes is measured against `H`, so bot reviews triggered *b
+     Run it as a single Bash call with the maximum tool timeout (600000 ms). Each call returns within ten minutes. If the output has `"call_again": true`, run the identical command again. The wait-key's deadline file bounds the total wait at `ci_timeout_minutes`, so do not count calls yourself. Act on the final `status`:
      - `green` or `no-ci` → CI is settled and green (record "no CI configured" in the run summary for `no-ci`).
      - `failed` → settled, not green. Carry `reason` and `checks` into 4d.
++    - A check listed under `ci.ignore` in `.reeve/policy.yml` on the base branch is advisory: the script sets it aside, so it never decides the status, and lists it in `advisory`. Do not treat it as a failure in 4d.
      - `timeout` → **route-and-stop** (reason: "CI did not complete within the timeout", plus the script's `reason`; a `not-registered` timeout means CI is configured but no run appeared for the head SHA).
 +    - `conflicting` → **route-and-stop** (reason: "PR has merge conflicts with its base, so CI cannot run: {reason}"). GitHub runs no `pull_request` workflows on a conflicting PR, so there is nothing to wait for; the conflicts need resolving first.
      - `unreadable` → **route-and-stop** (reason: "cannot read CI status: {reason}").
  
      The script handles what this step used to spell out: the fine-grained-PAT 403 fallback to the Actions and commit-status APIs, the "no checks at all" case (no workflows and no required checks means `no-ci`; otherwise it keeps waiting for a run to register), and quick transient `gh` failures. Don't re-derive CI state from `gh pr checks` output.
-@@ -198,11 +215,13 @@ Each 4f follows a feedback pass that pushed, so a run makes at most `max_feedbac
+@@ -198,11 +216,13 @@ Each 4f follows a feedback pass that pushed, so a run makes at most `max_feedbac
  
  Only 4e (with the PR head still at `reviewed_head`) and 4f (with a clean re-review of the PR head) lead here, so the last clean review read the commit the gate will merge. Never run this step while the PR head differs from `reviewed_head`: that is a stale review, which Reeve parks as `review-not-clean`; route-and-stop instead (stage = `review-ticket`).
  
@@ -238,7 +240,7 @@
  
  ---
  
-@@ -210,10 +229,13 @@ Run the finish-ticket step via `run_step` — `/ccmagic:finish-ticket` with the
+@@ -210,10 +230,13 @@ Run the finish-ticket step via `run_step` — `/ccmagic:finish-ticket` with the
  
  Whatever the outcome, record it on the PR and the ticket so the unattended run leaves an audit trail.
  
@@ -255,7 +257,7 @@
  
  Under prompt-relay there is no create API, so list every item under "to file" for a human. Every item appears in the summary's Follow-ups section; "none" is correct only when the list is empty. A parked run does the same before route-and-stop posts its note.
  
-@@ -243,6 +265,15 @@ Under prompt-relay there is no create API, so list every item under "to file" fo
+@@ -243,6 +266,15 @@ Under prompt-relay there is no create API, so list every item under "to file" fo
  - To file (prompt-relay): {item} (from {step})
  - {or "none" when no step reported a follow-up}
  
@@ -271,7 +273,7 @@
  ### If parked
  **Waiting on:** {the reason}. Nothing was merged. Resolve it, then re-run `/ccmagic:auto-ticket {TICKET-ID}`.
  
-@@ -252,6 +283,10 @@ Under prompt-relay there is no create API, so list every item under "to file" fo
+@@ -252,6 +284,10 @@ Under prompt-relay there is no create API, so list every item under "to file" fo
  ```
  ````
  
@@ -282,7 +284,7 @@
  `steps` lists every sub-skill invocation of this run in order, one entry each, with the handshake `status` it returned; include `reason` whenever the sub-skill emitted one. Repeated review passes are separate entries, and each fix pass is a `work-ticket` entry whose `reason` starts with `fix pass {n} ({fix_source})`. `review_passes` is the total number of review-ticket calls in the run, 4f re-reviews included: the final `review_pass`, or 1 when there was no re-review. `follow_ups` has one entry per item on the run's follow-up list (empty array when there were none): `ticket` is the filed ID or null, and `reason` says why it wasn't filed (null when filed). The block is emitted on every outcome and under every transport. It is the machine-readable record an external gate reads, so its keys are fixed and must not be renamed; `follow_ups` was added in 3.13.0 as an additive key, and readers that don't know it ignore it.
  
  `version: 2` binds the record to what it describes, and Reeve treats a record whose binding doesn't match the PR it located as no record at all (RV-1). A version 2 record carries `repo`, `pr`, and `head_sha` on every outcome, never omitted (the one exception is the version 1 fallback below):
-@@ -311,8 +346,12 @@ There is no stalled outcome. Never hang waiting for input.
+@@ -311,8 +347,12 @@ There is no stalled outcome. Never hang waiting for input.
  | A sub-skill emits no handshake (crash/tool error) | Treat as `needs-human` → route-and-stop with reason "{skill} produced no handshake". |
  | `work-ticket` → `needs-human` | route-and-stop (stage `work-ticket`). |
  | `review-ticket` → `needs-human`, or `fixable-findings` unresolved after the bounded loop | route-and-stop (stage `review-ticket`). |
@@ -297,7 +299,7 @@
  | `pr-feedback` → `needs-human` (genuine reviewer tie) | route-and-stop (stage `pr-feedback`). |
  | Local `/ccmagic:validate` can't be made green within the bounded attempts | route-and-stop (reason: validation failures). |
  | CI never settles within `ci_timeout_minutes` (watch loop cap) | route-and-stop (reason: CI timeout). |
-@@ -320,7 +359,7 @@ There is no stalled outcome. Never hang waiting for input.
+@@ -320,7 +360,7 @@ There is no stalled outcome. Never hang waiting for input.
  | Step 4 pushed after the last clean review (4a or 4b) | Re-review the pushed head (4f). A stale review never reaches finish: a clean re-review of another head, an unreadable PR head, or findings with no review fix or feedback passes left → route-and-stop (stage `review-ticket`), before any fix is pushed. |
  | `finish-ticket` merge gate not satisfied | It returns `needs-human` and does not merge → route-and-stop (stage `finish-ticket`). |
  | `requested_state: {merge_handoff_state}` and no state of that exact name exists | route-and-stop (stage `finish-ticket`); nothing was merged on the hand-off path. |
@@ -476,7 +478,7 @@
  - `blockers`: each reason the PR can't merge. It covers: the PR isn't `OPEN`; it is `CONFLICTING`, or GitHub still reports `UNKNOWN` mergeability after a few re-reads; CI isn't green; a reviewer's latest review is `CHANGES_REQUESTED`.
  - `warnings`: currently only "no approving review". A PR can proceed without an approval; show the warning.
 -- `ci`: the full `ccm-ci-status` result. `ci.status` is `green`, `no-ci` (no workflows and no required checks), `failed`, `pending`, `not-registered` (CI configured but nothing has reported for this commit yet), or `unreadable`. `ci.checks` lists each check with its bucket, for the report. The script already falls back to the Actions and commit-status APIs when a fine-grained PAT gets HTTP 403 on check runs, so a 403 is never on its own a reason to call CI failed or to ask anyone to look at the checks.
-+- `ci`: the full `ccm-ci-status` result. `ci.status` is `green`, `no-ci` (no workflows and no required checks), `failed`, `pending`, `not-registered` (CI configured but nothing has reported for this commit yet), `conflicting` (nothing has reported and the PR conflicts with its base, so GitHub will not run its `pull_request` workflows; the conflict is already a blocker, so do not wait), or `unreadable`. `ci.checks` lists each check with its bucket, for the report. The script already falls back to the Actions and commit-status APIs when a fine-grained PAT gets HTTP 403 on check runs, so a 403 is never on its own a reason to call CI failed or to ask anyone to look at the checks.
++- `ci`: the full `ccm-ci-status` result. `ci.status` is `green`, `no-ci` (no workflows and no required checks), `failed`, `pending`, `not-registered` (CI configured but nothing has reported for this commit yet), `conflicting` (nothing has reported and the PR conflicts with its base, so GitHub will not run its `pull_request` workflows; the conflict is already a blocker, so do not wait), or `unreadable`. `ci.checks` lists each check with its bucket, for the report. The script already falls back to the Actions and commit-status APIs when a fine-grained PAT gets HTTP 403 on check runs, so a 403 is never on its own a reason to call CI failed or to ask anyone to look at the checks. Checks the repository's `.reeve/policy.yml` lists under `ci.ignore` on the PR's base branch are advisory (the rule Reeve's merge gate applies): the script sets them aside, so a listed check that failed or is still running is neither a blocker nor waited on, and lists them in `ci.advisory` for the report. Any unlisted red check is still a blocker. Do not re-judge an advisory check as failing CI.
  
  If `ci.status` is `pending` or `not-registered`, wait for CI rather than reporting it as a blocker yet:
  

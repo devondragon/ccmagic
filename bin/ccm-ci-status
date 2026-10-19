@@ -30,6 +30,23 @@
 # GitHub cannot build the merge ref for a CONFLICTING PR, so its pull_request
 # workflows never start, and waiting out the timeout would only hide that.
 #
+# Advisory checks (RV-74): when a check is not passing, it reads
+# .reeve/policy.yml from the PR's base branch (never the working tree, which is
+# the PR head) and sets aside every check its `ci.ignore` lists, the rule
+# Reeve's merge gate applies: a listed check that failed or is still running
+# neither fails nor holds the result, and an unlisted failure still does. A
+# check is matched by its exact name (a check run's `name` or a status's
+# `context`; on the Actions fallback, a run that is not passing is replaced by
+# its jobs, whose names are the check-run names, and a whole workflow run never
+# matches); an entry's `app` or `creator` is checked against the check-runs or
+# statuses API, and when that is unreadable (HTTP 403) the check is set aside
+# by name with `owner_unverified: true`, since Reeve checks the App again before
+# it merges. Set-aside checks that had not passed are listed in `advisory` and
+# named in `reason`. A missing policy lists nothing; one that cannot be read or
+# parsed, or that lists a check under both `ci.required` and `ci.ignore`, also
+# lists nothing and says why in `policy_note`. With nothing counted left, the
+# result is decided as if no check had reported.
+#
 # --watch polls until the status leaves pending/not-registered. One call never
 # runs longer than --max-call-seconds (default 540, under the Bash tool's
 # 10-minute limit). --wait-key names a deadline file under the git dir, so the
@@ -49,7 +66,7 @@ while [ $# -gt 0 ]; do
     --timeout-minutes) timeout_min=${2:?}; shift ;;
     --interval) interval=${2:?}; shift ;;
     --max-call-seconds) max_call=${2:?}; shift ;;
-    -h|--help) sed -n '2,38p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,55p' "$0"; exit 0 ;;
     -*) echo "ccm-ci-status: unknown flag $1" >&2; exit 4 ;;
     *) pr=${1#\#} ;;
   esac
@@ -65,7 +82,11 @@ slug=$(ccm_repo_slug)
 # there is no CI.
 checks_hidden=false
 errf=$(mktemp)
-trap 'rm -f "$errf"' EXIT
+# Per-call cache: the base branch's policy (read once per call) and, per
+# snapshot, the check-run Apps and status creators.
+cache=$(mktemp -d)
+trap 'rm -f "$errf"; rm -rf "$cache"' EXIT
+ADVISORY='[]' POLICY_NOTE=""
 
 # Resolve PR, head SHA, and base branch once.
 pr_json=$(gh pr view ${pr:+"$pr"} --json number,headRefOid,baseRefName 2>/dev/null || echo null)
@@ -85,10 +106,112 @@ fi
 # Emit a result object. Args: status source reason checks_json
 result() {
   jq -n --arg status "$1" --arg source "$2" --arg reason "$3" --argjson checks "${4:-[]}" \
-    --arg pr "$pr" --arg sha "$sha" --arg base "$base" \
-    '{status: $status, source: $source, reason: $reason,
+    --arg pr "$pr" --arg sha "$sha" --arg base "$base" --argjson adv "$ADVISORY" --arg note "$POLICY_NOTE" \
+    '{status: $status, source: $source,
+      reason: ($reason + (if ($adv | length) > 0 then "; advisory, not counted (ci.ignore): " + ($adv | map(.name + ": " + .state) | join(", ")) else "" end)),
       pr: (if $pr == "" then null else ($pr | tonumber) end), sha: $sha, base: $base,
-      checks: $checks}'
+      checks: $checks}
+     + (if ($adv | length) > 0 then {advisory: $adv} else {} end)
+     + (if $note != "" then {policy_note: $note} else {} end)'
+}
+
+# The `ci` block of .reeve/policy.yml on the base branch, read once per call:
+# {required, ignore}, {none: why} when there is no policy, or {error: why}.
+policy_ci() {
+  local f="$cache/policy" text
+  if [ ! -f "$f" ]; then
+    if [ -z "$slug" ]; then
+      echo '{"none":"repository unknown"}' >"$f"
+    elif text=$(gh api "repos/$slug/contents/.reeve/policy.yml?ref=$base" -H "Accept: application/vnd.github.raw" 2>"$cache/policy.err"); then
+      ccm_policy_ci_json <<<"$text" >"$f"
+    elif grep -q 'HTTP 404' "$cache/policy.err"; then
+      echo '{"none":"no .reeve/policy.yml"}' >"$f"
+    else
+      jq -n --arg e "$(tr '\n' ' ' <"$cache/policy.err")" '{error: ("cannot read .reeve/policy.yml on the base branch: " + $e)}' >"$f"
+    fi
+  fi
+  cat "$f"
+}
+
+# The Apps of the head's check runs (KIND check-runs) or the creators of its
+# statuses (KIND statuses), as [{name, owner}], or null when unreadable.
+# Cached for one snapshot.
+owners() {
+  local f="$cache/$1" out q
+  if [ ! -f "$f" ]; then
+    if [ "$1" = check-runs ]; then q='.check_runs[] | {name, owner: .app.slug}'; else q='.[] | {name: .context, owner: .creator.login}'; fi
+    if out=$(gh api "repos/$slug/commits/$sha/$1?per_page=100" --paginate --jq "$q" 2>/dev/null); then
+      jq -s . <<<"$out" >"$f"
+    else
+      echo null >"$f"
+    fi
+  fi
+  cat "$f"
+}
+
+# On the Actions fallback a check is a whole workflow run, named after the
+# workflow, while ci.ignore names check runs, which are jobs. When the policy
+# lists a check-run entry and a run is not passing, replace that run by its
+# jobs (actions/runs/ID/jobs, readable with Actions: read), each owned by the
+# github-actions App, so an entry sets aside only the job it names. A run whose
+# jobs cannot be read stays one check, which no entry matches.
+expand_jobs() {
+  local checks=$1 id jobs out
+  if ! jq -e 'any(.[]; .run_id != null and (.bucket | IN("pass", "skipping") | not))' <<<"$checks" >/dev/null ||
+    ! policy_ci | jq -e 'any(.ignore[]?; .name != null)' >/dev/null; then
+    echo "$checks"
+    return
+  fi
+  for id in $(jq -r '.[] | select(.run_id != null and (.bucket | IN("pass", "skipping") | not)) | .run_id' <<<"$checks"); do
+    if out=$(gh api "repos/$slug/actions/runs/$id/jobs?per_page=100" --paginate --jq '.jobs[] | {name, status, conclusion}' 2>/dev/null) &&
+      jobs=$(jq -s -c '[.[] | {name, state: (.conclusion // .status), owner: "github-actions",
+        bucket: (if .status != "completed" then "pending"
+                 elif (.conclusion | IN("success","skipped","neutral")) then "pass"
+                 else "fail" end)}]' <<<"$out") && [ "$jobs" != '[]' ]; then
+      checks=$(jq -c --argjson id "$id" --argjson jobs "$jobs" '[.[] | if .run_id == $id then $jobs[] else . end]' <<<"$checks")
+    fi
+  done
+  echo "$checks"
+}
+
+# Mark the checks ci.ignore sets aside with "advisory": true. Prints the checks;
+# writes the policy note, if any, to $cache/note.
+mark_advisory() {
+  local checks=$1 pol ign runs=null sts=null
+  : >"$cache/note"
+  pol=$(policy_ci)
+  if jq -e 'has("error")' <<<"$pol" >/dev/null; then
+    jq -r '"ci.ignore not applied: " + .error' <<<"$pol" >"$cache/note"
+    echo "$checks"
+    return
+  fi
+  ign=$(jq -c '.ignore // []' <<<"$pol")
+  if [ "$ign" = '[]' ]; then
+    echo "$checks"
+    return
+  fi
+  if jq -e --argjson ign "$ign" 'any(.[]; .owner == null and .run_id == null and (.name as $n | any($ign[]; .name == $n and .app != null)))' <<<"$checks" >/dev/null; then
+    runs=$(owners check-runs)
+  fi
+  if jq -e --argjson ign "$ign" 'any(.[]; .name as $n | any($ign[]; .context == $n and .creator != null))' <<<"$checks" >/dev/null; then
+    sts=$(owners statuses)
+  fi
+  jq --argjson ign "$ign" --argjson runs "$runs" --argjson sts "$sts" '
+    def own(list; n): [list[] | select(.name == n) | .owner];
+    def held(list; n; $want): (own(list; n)) as $o | ($o | length) > 0 and all($o[]; (. // "" | ascii_downcase) == ($want | ascii_downcase));
+    map(. as $c | [$ign[] |
+        if $c.run_id != null then "no"
+        elif .name == $c.name then
+          (if .app == null then "yes"
+           elif $c.owner != null then (if ($c.owner | ascii_downcase) == (.app | ascii_downcase) then "yes" else "no" end)
+           elif $runs == null then "unverified" elif held($runs; $c.name; .app) then "yes" else "no" end)
+        elif .context == $c.name then
+          (if .creator == null then "yes" elif $sts == null then "unverified" elif held($sts; $c.name; .creator) then "yes" else "no" end)
+        else "no" end] as $m
+      | if any($m[]; . == "yes") then . + {advisory: true}
+        elif any($m[]; . == "unverified") then . + {advisory: true, owner_unverified: true}
+        else . end)
+  ' <<<"$checks"
 }
 
 # No check or run for this SHA: is there CI that should have produced one?
@@ -141,7 +264,7 @@ actions_verdict() {
   [ -n "$statuses" ] || statuses='{"state":"pending","total_count":0,"statuses":[]}'
   local checks
   checks=$(jq -n --argjson runs "$runs" --argjson st "$statuses" '
-    ($runs | map({name: .workflowName, state: (.conclusion // .status),
+    ($runs | map({name: .workflowName, run_id: .databaseId, state: (.conclusion // .status),
       bucket: (if .status != "completed" then "pending"
                elif (.conclusion | IN("success","skipped","neutral")) then "pass"
                else "fail" end)}))
@@ -151,23 +274,36 @@ actions_verdict() {
   if [ "$(jq length <<<"$checks")" -eq 0 ]; then
     no_checks_verdict
   else
-    verdict_from_buckets actions-fallback "$checks"
+    verdict_from_buckets actions-fallback "$(expand_jobs "$checks")"
   fi
 }
 
 verdict_from_buckets() {
-  local source=$1 checks=$2
+  local source=$1 checks=$2 shown=$2
+  # Only a check that is not passing can change the verdict, so the policy is
+  # read only then. `shown` keeps every check, the advisory ones marked.
+  if jq -e 'any(.[]; .bucket | IN("pass", "skipping") | not)' <<<"$checks" >/dev/null; then
+    shown=$(mark_advisory "$checks")
+    POLICY_NOTE=$(cat "$cache/note")
+    ADVISORY=$(jq -c '[.[] | select(.advisory and (.bucket | IN("pass", "skipping") | not)) | {name, state, bucket} + (if .owner_unverified then {owner_unverified: true} else {} end)]' <<<"$shown")
+    checks=$(jq -c 'map(select(.advisory | not))' <<<"$shown")
+    if [ "$checks" = '[]' ]; then
+      no_checks_verdict
+      return
+    fi
+  fi
   if jq -e 'any(.bucket == "fail" or .bucket == "cancel")' <<<"$checks" >/dev/null; then
-    result failed "$source" "failing: $(jq -r '[.[] | select(.bucket == "fail" or .bucket == "cancel") | .name] | join(", ")' <<<"$checks")" "$checks"
+    result failed "$source" "failing: $(jq -r '[.[] | select(.bucket == "fail" or .bucket == "cancel") | .name] | join(", ")' <<<"$checks")" "$shown"
   elif jq -e 'any(.bucket == "pending")' <<<"$checks" >/dev/null; then
-    result pending "$source" "running: $(jq -r '[.[] | select(.bucket == "pending") | .name] | join(", ")' <<<"$checks")" "$checks"
+    result pending "$source" "running: $(jq -r '[.[] | select(.bucket == "pending") | .name] | join(", ")' <<<"$checks")" "$shown"
   else
-    result green "$source" "all checks passed" "$checks"
+    result green "$source" "$(if [ "$ADVISORY" = '[]' ]; then echo "all checks passed"; else echo "all counted checks passed"; fi)" "$shown"
   fi
 }
 
 snapshot() {
   local out _
+  rm -f "$cache/check-runs" "$cache/statuses"
   if [ -z "$pr" ]; then
     actions_verdict
     return
