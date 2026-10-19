@@ -313,11 +313,15 @@ ccm_text_findings() {
 # `creator` (a commit status), the shape Reeve's policy schema takes. Only the
 # block form is read: `ci:` at the top level, `required:` or `ignore:` under
 # it, and list items written `- { key: value, ... }` or `- key: value` with
-# further `key: value` lines; `[]` is an empty list. Anything else under those
-# keys, an unknown key, an entry with both `name` and `context` or neither,
+# further `key: value` lines; `[]` is an empty list. A comma or `}` inside a
+# quoted value is part of the value. Anything else under those keys, a key
+# inside an entry other than name, app, context, and creator, an entry with
+# both `name` and `context` or neither,
 # Reeve's own `reeve/gate` context, or an ignore entry that could match a
 # required one (Reeve refuses that policy, so it ignores nothing) prints
-# {"error": "..."} instead, and the caller treats nothing as advisory.
+# {"error": "..."} instead, and the caller treats nothing as advisory. Other keys
+# under `ci:` are skipped here although Reeve refuses the policy for them; both
+# fail safe, since a refused policy sets nothing aside in Reeve.
 ccm_policy_ci_json() {
   local rows
   rows=$(tr -d '\r' | awk '
@@ -349,8 +353,16 @@ ccm_policy_ci_json() {
       if (line ~ /^- /) {
         idx++; item = trim(substr(line, 3)); iind = ind + 2
         if (item ~ /^\{.*\}$/) {
-          n = split(substr(item, 2, length(item) - 2), parts, ",")
-          for (j = 1; j <= n; j++) if (trim(parts[j]) != "") pair(parts[j])
+          # Split on commas outside quotes.
+          body = substr(item, 2, length(item) - 2); cur = ""; q = ""
+          for (j = 1; j <= length(body); j++) {
+            ch = substr(body, j, 1)
+            if (q != "") { if (ch == q) q = ""; cur = cur ch; continue }
+            if (ch == "\"" || ch == "\047") { q = ch; cur = cur ch; continue }
+            if (ch == ",") { if (trim(cur) != "") pair(cur); cur = ""; continue }
+            cur = cur ch
+          }
+          if (trim(cur) != "") pair(cur)
         } else if (item ~ /^[A-Za-z_]+:/) pair(item)
         else err("ci." list " entry " idx + 1 " is not a mapping")
         next
