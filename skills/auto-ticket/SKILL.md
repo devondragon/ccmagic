@@ -199,6 +199,7 @@ Everything this pass pushes is measured against `H`, so bot reviews triggered *b
     Run it as a single Bash call with the maximum tool timeout (600000 ms). Each call returns within ten minutes. If the output has `"call_again": true`, run the identical command again. The wait-key's deadline file bounds the total wait at `ci_timeout_minutes`, so do not count calls yourself. Act on the final `status`:
     - `green` or `no-ci` → CI is settled and green (record "no CI configured" in the run summary for `no-ci`).
     - `failed` → settled, not green. Carry `reason` and `checks` into 4d.
+    - A check listed under `ci.ignore` in `.reeve/policy.yml` on the base branch is advisory: the script sets it aside, so it never decides the status, and lists it in `advisory`. Do not treat it as a failure in 4d.
     - `timeout` → **route-and-stop** (reason: "CI did not complete within the timeout", plus the script's `reason`; a `not-registered` timeout means CI is configured but no run appeared for the head SHA).
     - `conflicting` → **route-and-stop** (reason: "PR has merge conflicts with its base, so CI cannot run: {reason}"). GitHub runs no `pull_request` workflows on a conflicting PR, so there is nothing to wait for; the conflicts need resolving first.
     - `unreadable` → **route-and-stop** (reason: "cannot read CI status: {reason}").

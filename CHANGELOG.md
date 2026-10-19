@@ -2,6 +2,13 @@
 
 All notable changes to ccmagic are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- `ccm-ci-status` (and so `ccm-merge-gate`, `finish-ticket`, the merge guard hook, and auto-ticket's CI wait) applies the advisory-check list `ci.ignore` from a repository's `.reeve/policy.yml`, the rule Reeve's merge gate follows since RV-74. When a check is not passing, it reads the policy from the PR's base branch (never the working tree, which is the PR head) and sets aside each check the list names by exact name (a check run's `name`, a status's `context`): a listed check that failed or is still running neither fails nor holds the result, and an unlisted failure still does. An entry's `app` or `creator` is checked against the check-runs or statuses API; when that read is refused (HTTP 403 for a fine-grained token) the check is set aside by name and marked `owner_unverified`, since Reeve checks the App again before it merges. Set-aside checks that had not passed are listed in a new `advisory` field and named in `reason`. A repository without the policy is unaffected, and a policy whose `ci` block cannot be read or parsed (only the block form is read), or that lists a check under both `ci.required` and `ci.ignore` (which Reeve refuses), sets nothing aside and says why in `policy_note`. With only advisory checks left, the result is decided as if no check had reported. A run whose only red check was GitHub's Copilot code review used to park on it (RV-74).
+- `bin/ccm-lib.sh` has `ccm_policy_ci_json`, which reads a policy's `ci.required` and `ci.ignore`.
+
 ## [3.23.0] - 2026-10
 
 ### Added
