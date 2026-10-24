@@ -9,6 +9,7 @@
 #        ccm-spec-delta check [--worktree] NAME BASE
 #        ccm-spec-delta scope [--worktree] TICKET BASE
 #        ccm-spec-delta reopen BASE
+#        ccm-spec-delta approval BASE  (the ticket description on stdin)
 #
 # TICKET is a tracker key (BMC-430; a key whose letters Reeve's change-name rule
 # refuses, such as one with an underscore, fails change-name in name mode) or a GitHub issue number (42 or #42);
@@ -60,6 +61,19 @@
 #   Output: {pass, mode, delta, spec_delta, folder, capabilities, rule, detail,
 #            file, base, merge_base}
 #
+# approval: whether the ticket is the archive ticket of a Reeve requirements
+#   approval (RV-136), which Reeve's gate judges by the archive rules instead
+#   of the plain-delta rules. Reads the ticket description on stdin. It is,
+#   when one or more lines of the description are exactly
+#     Run `openspec archive <change> --yes` at the repository root.
+#   (after optional indentation and a "*", "-", or "+" list marker, with
+#   trailing spaces and a carriage return ignored), every such line names the
+#   same <change>, <change> is kebab-case, and openspec/changes/<change>/ is
+#   an active change at BASE's tip. A description that only mentions
+#   openspec archive in other words is not.
+#   Output: {pass, mode, approval, change, detail} (pass is always true; exit
+#   0 either way; change is null unless approval is true).
+#
 # reopen: undo the archive in the working tree for a fix pass. The archive
 #   folder the branch adds goes back to openspec/changes/<name>/, and each
 #   capability's spec.md is restored from the merge base.
@@ -83,8 +97,8 @@ usage() { echo "ccm-spec-delta: $1" >&2; exit 4; }
 mode=${1:-}
 case $mode in
   -h|--help) sed -n '2,/^set -euo/p' "$0" | sed '$d'; exit 0 ;;
-  applies|name|collision|check|scope|reopen) shift ;;
-  "") usage "name a mode: applies, name, collision, check, scope, or reopen" ;;
+  applies|name|collision|check|scope|reopen|approval) shift ;;
+  "") usage "name a mode: applies, name, collision, check, scope, reopen, or approval" ;;
   *) usage "unknown mode $mode" ;;
 esac
 
@@ -107,7 +121,7 @@ case $mode in
   name) need 3 "TICKET, TITLE, and BASE" ;;
   collision|check) need 2 "NAME and BASE" ;;
   scope) need 2 "TICKET and BASE" ;;
-  applies|reopen) need 1 "BASE" ;;
+  applies|reopen|approval) need 1 "BASE" ;;
 esac
 
 # ticket_key TICKET: the lowercased key a change name starts with.
@@ -181,6 +195,28 @@ if [ "$mode" = applies ]; then
   { git ls-tree -r --name-only "$base_sha" -- openspec/specs/ || unreadable "cannot list openspec/specs at $base"; } |
     awk -F/ 'NF == 4 && $4 == "spec.md" { print $3 }' | LC_ALL=C sort -u >"$scratch/caps"
   jq -R . "$scratch/caps" | jq -s '{pass: true, mode: "applies", applies: (length > 0), capabilities: .}'
+  exit 0
+fi
+
+# ---- approval -------------------------------------------------------------------
+
+if [ "$mode" = approval ]; then
+  # The step line Reeve's archiveTicket writes (src/requirements/approve.ts).
+  # shellcheck disable=SC2016 # literal backticks
+  LC_ALL=C sed -n 's/\r$//; s/^[[:space:]]*\([*+-][[:space:]][[:space:]]*\)\{0,1\}Run `openspec archive \([^`[:space:]][^`[:space:]]*\) --yes` at the repository root\.[[:space:]]*$/\2/p' >"$scratch/named" ||
+    unreadable "cannot read the description on stdin"
+  not() { jq -n --arg d "$1" '{pass: true, mode: "approval", approval: false, change: null, detail: $d}'; exit 0; }
+  LC_ALL=C sort -u "$scratch/named" >"$scratch/changes"
+  n=$(grep -c . "$scratch/changes" || true)
+  [ "$n" -gt 0 ] || not "the description has no line \"Run \`openspec archive <change> --yes\` at the repository root.\""
+  [ "$n" -eq 1 ] || not "the description's archive step lines name $n changes ($(tr '\n' ' ' <"$scratch/changes" | sed 's/ $//'))"
+  change=$(<"$scratch/changes")
+  if ! [[ $change =~ ^[a-z0-9]+(-[a-z0-9]+)*$ ]] || [ "$change" = archive ]; then
+    not "the archive step names $(printf %q "$change"), which is not a kebab-case change name"
+  fi
+  [ "$(git cat-file -t "$base_sha:openspec/changes/$change" 2>/dev/null)" = tree ] ||
+    not "the archive step names $change, and openspec/changes/$change is not an active change at $base"
+  jq -n --arg c "$change" '{pass: true, mode: "approval", approval: true, change: $c, detail: null}'
   exit 0
 fi
 

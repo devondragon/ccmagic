@@ -3490,6 +3490,37 @@ scope_archive_unchecked_task_fails() {
   check "$(rule),$(jqval .task_id)" "tasks-unchecked,2.2"
 }
 
+# A requirements approval's archive ticket (RV-136): every task stays
+# unchecked, so --approval leaves out tasks-unchecked and keeps every other
+# archive rule; a ticked box fails folder-content.
+scope_archive_approval_skips_unchecked() {
+  seed_spec
+  archive_as 2026-09-30-add-export
+  scope --approval add-export archive main
+  check "$(rule),$RC,$(jqval .approval),$(jqval .folder),$(jq -c .unchecked <<<"$OUT")" \
+    'pass,0,true,openspec/changes/archive/2026-09-30-add-export,["1.1","1.2","2.1","2.2"]'
+  scope add-export archive main
+  check "$(rule),$(jq -c 'has("approval")' <<<"$OUT")" "tasks-unchecked,false"
+  sed -i.bak 's/^- \[ \] 1.1 /- [x] 1.1 /' openspec/changes/archive/2026-09-30-add-export/tasks.md
+  command rm -f openspec/changes/archive/2026-09-30-add-export/tasks.md.bak
+  scope --worktree --approval add-export archive main
+  check "$(rule),$(jqval .file)" "folder-content,openspec/changes/archive/2026-09-30-add-export/tasks.md"
+  g checkout -q -- openspec
+  echo code >>src/app.txt
+  scope --worktree --approval add-export archive main
+  check "$(rule),$(jqval .file)" "outside-archive,src/app.txt"
+  g checkout -q -- src/app.txt
+  # Before the folder is found, folder is null.
+  g reset -q --hard main
+  scope --approval add-export archive main
+  check "$(rule),$(jqval .folder)" "not-moved,null"
+  # --approval is only for the archive scope check.
+  scope --approval add-export 1 main
+  check "$RC" "4"
+  scope --precheck --approval --repo acme/app add-export archive
+  check "$RC" "4"
+}
+
 scope_archive_outside_paths_fail() {
   seed_spec all
   echo code >>src/app.txt
@@ -5346,6 +5377,100 @@ specdelta_unreadable_and_usage() {
   mkdir -p openspec/changes/archive/2026-01-01-rv-12-count-display && command mv "$SDC"/* openspec/changes/archive/2026-01-01-rv-12-count-display/
   echo edit >>openspec/specs/counting/spec.md
   PATH="$T/fake:$PATH" sd scope --worktree RV-12 main; check "$RC" "3"
+}
+
+# sd_archive_ticket CHANGE: the description Reeve's archiveTicket writes for a
+# requirements approval's archive ticket (src/requirements/approve.ts, RV-121).
+sd_archive_ticket() {
+  # shellcheck disable=SC2016 # literal backticks
+  printf '%s\n' "## $1: archive" '' \
+    "This ticket archives the OpenSpec change $1 in acme/app. It starts after every other ticket of the approval has merged, and needs the spec change pull request merged first." \
+    '' '### Steps' '' \
+    "* Run \`openspec archive $1 --yes\` at the repository root." \
+    '* Open a pull request carrying only the result of that command.' '* Change nothing else.' \
+    '' '### Acceptance criteria' '' \
+    "* openspec/changes/$1 has moved to a dated folder under openspec/changes/archive/." \
+    '* `openspec validate --all --strict --no-interactive` passes.' \
+    "* openspec/specs changed to hold the change's requirements." \
+    '' '### From requirements' '' 'Requirements session 7, draft revision 3.'
+}
+sd_approval() { OUT=$("$BIN/ccm-spec-delta" approval "$@" 2>"$T/stderr") && RC=0 || RC=$?; }
+
+# The archive ticket is recognized by its exact step line naming an active
+# change at the base tip (RV-136).
+specdelta_approval_detects_archive_ticket() {
+  sd_repo
+  sd_approval main < <(sd_archive_ticket add-reset)
+  check "$RC,$(jqval .approval),$(jqval .change),$(jqval .detail)" "0,true,add-reset,null"
+  # Linear may turn the "*" list marker into "-", and line endings into CRLF.
+  sd_approval main < <(sd_archive_ticket add-reset | sed 's/^\* /- /; s/$/\r/')
+  check "$RC,$(jqval .approval),$(jqval .change)" "0,true,add-reset"
+  # A step line naming a change that is not active at the base is not it.
+  sd_approval main < <(sd_archive_ticket add-nothing)
+  check "$RC,$(jqval .approval),$(jqval .change)" "0,false,null"
+  [[ $(jqval .detail) == *"openspec/changes/add-nothing is not an active change at main"* ]]
+  # The change is read from the base tip, not the working tree.
+  sd_approval main < <(sd_archive_ticket rv-12-count-display)
+  check "$(jqval .approval)" "false"
+  # Two step lines naming different changes are not it.
+  sd_approval main < <(sd_archive_ticket add-reset; sd_archive_ticket rv-12-count-display)
+  check "$RC,$(jqval .approval)" "0,false"
+  check "$(sd_approval main < <(sd_archive_ticket add-reset; sd_archive_ticket add-reset); jqval .approval)" "true"
+  sd_approval; check "$RC" "4"
+  sd_approval nope </dev/null; check "$RC" "3"
+}
+
+# A plain ticket that only mentions openspec archive keeps the plain-delta
+# path: anything but the exact step line is not the archive ticket.
+specdelta_approval_negative_mentions() {
+  sd_repo
+  local d
+  # shellcheck disable=SC2016 # literal backticks
+  for d in \
+    'Fix the counter, then run openspec archive add-reset --yes once it merges.' \
+    'Run `openspec archive add-reset --yes` at the repository root, then fix the counter.' \
+    'Run `openspec archive add-reset` at the repository root.' \
+    'Run openspec archive add-reset --yes at the repository root.' \
+    '* Do not run `openspec archive add-reset --yes` at the repository root.' \
+    '1. Run `openspec archive add-reset --yes` at the repository root.' \
+    'Run `openspec archive add-reset --yes --skip-specs` at the repository root.' \
+    'Run `openspec archive Add_Reset --yes` at the repository root.' \
+    ''; do
+    sd_approval main <<<"$d"
+    check "$RC,$(jqval .approval),$(jqval .change)" "0,false,null" || { echo "    description: $d"; return 1; }
+  done
+}
+
+# Done-when of ccmagic issue 113: on a repository with openspec/specs/, the
+# archive ticket's branch carries only the archive result, passes strict
+# validation and the gate's archive rules for an approval with every task
+# still unchecked, and its spec_delta is the archive folder; the plain-delta
+# scope rules would have failed it.
+specdelta_approval_archive_end_to_end() {
+  need_openspec || return 0
+  sd_repo
+  sd_reset
+  command rm -rf "$SDC"
+  sd applies main
+  check "$(jqval .applies)" "true"
+  sd_approval main < <(sd_archive_ticket add-reset)
+  check "$(jqval .approval),$(jqval .change)" "true,add-reset"
+  OPENSPEC_TELEMETRY=0 DO_NOT_TRACK=1 openspec archive add-reset --yes >"$T/archive" 2>&1 || { sed 's/^/    /' "$T/archive"; return 1; }
+  OPENSPEC_TELEMETRY=0 DO_NOT_TRACK=1 openspec validate --all --strict --no-interactive >"$T/validate" 2>&1 || { sed 's/^/    /' "$T/validate"; return 1; }
+  local folder
+  folder=openspec/changes/archive/$(command ls openspec/changes/archive | grep -- '-add-reset$')
+  scope --worktree --approval add-reset archive main
+  check "$(rule),$(jqval .folder)" "pass,$folder"
+  # The plain-delta rules would park it.
+  sd scope --worktree RV-12 main
+  check "$RC,$(jqval .rule)" "1,delta-active"
+  # Every task stays unchecked, as approval wrote them.
+  check "$(git show main:openspec/changes/add-reset/tasks.md | shasum)" "$(shasum <"$folder/tasks.md")"
+  g add -A && g commit -qm 'chore: archive add-reset'
+  scope --approval add-reset archive main
+  check "$(rule),$(jqval .folder)" "pass,$folder"
+  # Only the archive result: the change's move and the specs.
+  check "$(git diff --name-only main HEAD | grep -cv -e '^openspec/changes/add-reset/' -e "^$folder/" -e '^openspec/specs/')" "0"
 }
 
 stop_handshake_accepts_spec_delta() {

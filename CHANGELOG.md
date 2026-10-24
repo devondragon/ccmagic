@@ -2,6 +2,15 @@
 
 All notable changes to ccmagic are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.25.0] - 2026-10
+
+### Added
+
+- The archive ticket of a Reeve requirements approval (RV-136, ccmagic issue 113) runs the archive instead of the plain-ticket spec delta. Reeve's `archiveTicket` writes it with no `reeve:spec` block and the step line ``Run `openspec archive <change> --yes` at the repository root.``; since RV-136 Reeve's gate judges its PR by the archive rules without `tasks-unchecked`, and requires the run record's `spec_delta` to name the archive folder. Before, `ccm-spec-delta scope` failed it on `delta-active` and `delta-name`, so the session parked or recorded `spec_delta: none`, which the gate parks as `spec-mismatch`. Now, on a repository with `openspec/specs/`, when the description contains `openspec archive`, `work-ticket` passes it to `ccm-spec-delta approval`; when that finds the step line naming an active change at the base tip, it runs `openspec archive <change> --yes`, `openspec validate --all --strict --no-interactive`, and `ccm-openspec-scope --worktree --approval <change> archive <base>`, leaves every task unchecked, changes nothing else, and reports the archive folder as `spec_delta`. The run record carries that `spec_delta` and no `openspec` key. `review-ticket` and `finish-ticket` run the same `--approval` check in place of `ccm-spec-delta scope`. A description that mentions `openspec archive` in any other form keeps the plain-delta path.
+- `ccm-spec-delta approval BASE` reads a ticket description on stdin and reports `approval` (true only for one or more lines that are exactly the step line, after optional indentation and a `*`, `-`, or `+` marker, all naming one kebab-case change that is a folder under `openspec/changes/` at BASE's tip) and `change`.
+- `ccm-openspec-scope --approval` (archive scope check only) applies the archive rules without `tasks-unchecked`, as Reeve's gate does for an approval's archive ticket, and adds `approval` and `folder` (the archive folder's path) to its output. Without the flag the output is unchanged.
+- `review-ticket` grants `ccm-openspec-scope`.
+
 ## [3.24.0] - 2026-10
 
 ### Changed

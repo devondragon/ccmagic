@@ -2,7 +2,7 @@
 # ccm-openspec-scope: check a Reeve spec ticket's branch against the file rules
 # Reeve's merge gate applies to it, and print the verdict as JSON.
 #
-# Usage: ccm-openspec-scope [--worktree] CHANGE SECTION BASE
+# Usage: ccm-openspec-scope [--worktree] [--approval] CHANGE SECTION BASE
 #        ccm-openspec-scope --precheck --repo OWNER/NAME CHANGE SECTION
 #
 # CHANGE is the OpenSpec change name, SECTION a section number or "archive"
@@ -29,6 +29,13 @@
 #     specs-unchanged, specs-changed, spec-deleted.
 # The gate's record-tasks rule is not here: the run record does not exist yet.
 #
+# --approval (archive only): the archive ticket of a Reeve requirements
+# approval (RV-136), a plain ticket whose description says to run
+# `openspec archive CHANGE --yes`. Reeve's gate judges it by the archive rules
+# except tasks-unchecked: approval writes every task unchecked, no PR ticks
+# them, and folder-content already fails a ticked box. The output's folder is
+# the archive folder, the run record's spec_delta.
+#
 # Precheck mode checks the checkout before any work: section-parent,
 # repo-unknown, repo-mismatch, tasks-missing, archive-exists (archive only),
 # tasks-unreadable, section-missing (sections only).
@@ -37,7 +44,9 @@
 # (or, archive mode, a base .openspec.yaml larger than 64 KB, which Reeve's
 # gate does not parse and parks on, or outside the plain form), 4 usage error.
 # Output: {pass, mode, change, section, rule, detail, file, line, task_id,
-#          tasks, unchecked, tasks_done, base, merge_base}
+#          tasks, unchecked, tasks_done, base, merge_base}, plus, with
+#          --approval only, approval (true) and folder (the archive folder's
+#          path once found, else null)
 
 set -euo pipefail
 here=$(dirname "${BASH_SOURCE[0]}")
@@ -46,12 +55,13 @@ here=$(dirname "${BASH_SOURCE[0]}")
 
 usage() { echo "ccm-openspec-scope: $1" >&2; exit 4; }
 
-precheck=false worktree=false repo="" args=()
+precheck=false worktree=false approval=false repo="" args=()
 while [ $# -gt 0 ]; do
   case $1 in
-    -h|--help) sed -n '2,40p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,/^set -euo/p' "$0" | sed '$d'; exit 0 ;;
     --precheck) precheck=true ;;
     --worktree) worktree=true ;;
+    --approval) approval=true ;;
     --repo) [ $# -ge 2 ] || usage "--repo needs OWNER/NAME"; repo=$2; shift ;;
     --repo=*) repo=${1#--repo=} ;;
     -*) usage "unknown flag $1" ;;
@@ -78,6 +88,7 @@ case $section in
 esac
 
 if [ "$precheck" = true ]; then mode=precheck; elif [ "$section" = archive ]; then mode=archive; else mode=section; fi
+[ "$approval" = false ] || [ "$mode" = archive ] || usage "--approval applies only to the archive scope check"
 dir="openspec/changes/$change"
 tasks_path="$dir/tasks.md"
 
@@ -89,12 +100,13 @@ mkdir -p "$scratch"
 trap 'rm -rf "$scratch"' EXIT
 
 # result PASS RULE DETAIL [FILE] [LINE] [TASK_ID]: print the verdict and exit.
-tasks_json='[]' unchecked_json='[]' done_json='[]' base_sha="" mb_sha=""
+tasks_json='[]' unchecked_json='[]' done_json='[]' base_sha="" mb_sha="" adir=""
 result() {
   jq -n --argjson pass "$1" --arg rule "$2" --arg detail "$3" --arg file "${4:-}" \
     --arg line "${5:-}" --arg task "${6:-}" --arg mode "$mode" --arg change "$change" \
     --arg section "$section" --argjson tasks "$tasks_json" --argjson unchecked "$unchecked_json" \
-    --argjson tdone "$done_json" --arg base "$base_sha" --arg mb "$mb_sha" '
+    --argjson tdone "$done_json" --arg base "$base_sha" --arg mb "$mb_sha" \
+    --argjson approval "$approval" --arg folder "$adir" '
     {pass: $pass, mode: $mode, change: $change,
      section: ($section | if test("^[0-9]+$") then tonumber else . end),
      rule: (if $rule == "" then null else $rule end),
@@ -103,7 +115,8 @@ result() {
      line: (if $line == "" then null else ($line | tonumber) end),
      task_id: (if $task == "" then null else $task end),
      tasks: $tasks, unchecked: $unchecked, tasks_done: $tdone}
-    + (if $mode == "precheck" then {} else {base: $base, merge_base: $mb} end)'
+    + (if $mode == "precheck" then {} else {base: $base, merge_base: $mb} end)
+    + (if $approval then {approval: true, folder: (if $folder == "" then null else $folder end)} else {} end)'
   [ "$1" = true ] && exit 0
   exit 1
 }
@@ -373,7 +386,7 @@ if show "$side" "$adir/tasks.md" "$A"; then
     fail tasks-unreadable "$adir/tasks.md does not parse ($prule): $preason" "$adir/tasks.md" "$pline"
   fi
   tasks_json=$(ids_json "$pa" all all); unchecked_json=$(ids_json "$pa" all unchecked)
-  [ "$unchecked_json" = '[]' ] ||
+  [ "$unchecked_json" = '[]' ] || [ "$approval" = true ] ||
     fail tasks-unchecked "the archived change has unchecked tasks: $(jq -r 'join(", ")' <<<"$unchecked_json")" "$adir/tasks.md" "" "$(jq -r '.[0]' <<<"$unchecked_json")"
 else
   fail tasks-unreadable "$adir/tasks.md is missing" "$adir/tasks.md"
