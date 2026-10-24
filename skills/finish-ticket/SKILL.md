@@ -162,7 +162,9 @@ It judges the branch's HEAD against the base branch tip. Anything but exit 0 is 
 "${CLAUDE_PLUGIN_ROOT}/bin/ccm-spec-delta" scope {TICKET-ID} origin/{baseRefName}
 ```
 
-It judges the branch's HEAD from its merge base with the base branch and replays the archive. Anything but exit 0 is a blocker, `spec delta check failed ({rule}): {detail}` (or `cannot run the spec delta check: {detail}` when it printed no `rule`), listed with the merge gate's blockers; in autonomous mode it is a `needs-human` like any blocker, and the PR is neither merged nor handed off.
+When the ticket description contains `openspec archive`, first pass the description to `"${CLAUDE_PLUGIN_ROOT}/bin/ccm-spec-delta" approval origin/{baseRefName}` on stdin, through a quoted heredoc as work-ticket Step 5 shows (delimiter `CCM_TICKET_EOF`). When its `approval` is `true`, the ticket is a requirements approval's archive ticket (RV-136), which Reeve's gate judges by the archive rules: run `"${CLAUDE_PLUGIN_ROOT}/bin/ccm-openspec-scope" --approval {change} archive origin/{baseRefName}` in place of the `scope` call above. Anything but exit 0 is a blocker, `approval archive check failed ({rule}): {detail}` (or `cannot run the approval archive check: {detail}` when it printed no `rule`), handled like the blocker below.
+
+The `scope` call judges the branch's HEAD from its merge base with the base branch and replays the archive. Anything but exit 0 is a blocker, `spec delta check failed ({rule}): {detail}` (or `cannot run the spec delta check: {detail}` when it printed no `rule`), listed with the merge gate's blockers; in autonomous mode it is a `needs-human` like any blocker, and the PR is neither merged nor handed off.
 <!-- /ccmagic:plain-delta -->
 
 ### 3d. Scope Alignment

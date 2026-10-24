@@ -208,6 +208,26 @@ For the archive (`section: archive`), run the *Archive procedure* below in place
 A stop in any of steps 1 to 6 ends the same way: restore the worktree with two separate Bash calls, `git checkout -- openspec` and then `git clean -fd -- openspec`, open no PR, and return `needs-human` with the reason.
 <!-- /ccmagic:spec-only -->
 
+<!-- ccmagic:plain-delta -->
+**Only when the base has `openspec/specs/` and the grounding block has no `spec:` section, and the ticket description contains `openspec archive`** (it may be the archive ticket of a Reeve requirements approval, RV-136), and not on a fix pass. Run `git fetch origin {base-branch}`, then `"${CLAUDE_PLUGIN_ROOT}/bin/ccm-spec-delta" applies {base-ref}` (`{base-ref}` as in the spec delta block at the end of this step), each as its own Bash call. When its `applies` is `true`, pass the description, as fetched or as `ticket_content:` holds it, to the detector on stdin, as its own Bash call:
+
+```bash
+"${CLAUDE_PLUGIN_ROOT}/bin/ccm-spec-delta" approval {base-ref} <<'CCM_TICKET_EOF'
+{the description, verbatim}
+CCM_TICKET_EOF
+```
+
+Write the description's lines and the closing `CCM_TICKET_EOF` line at the start of the line, without the indentation shown here. When its `approval` is `false`, the ticket is a plain ticket: continue with the paths below and the spec delta block as usual. When it is `true`, the ticket is the approval's archive ticket for `change`, and Reeve's gate judges its PR by the archive rules, not the plain-delta rules. Run the *Approval archive procedure* in place of this step's paths, the spec delta block at the end of this step, and Step 6, running each command as its own Bash call at the repository root:
+
+1. Run `"${CLAUDE_PLUGIN_ROOT}/bin/ccm-openspec-version"` and read its JSON. On `ok`, continue. On `newer`, continue and print one warning line: `OpenSpec {version} is newer than {tested}; the format rules were checked against {tested}.` On anything else, stop: `reason: openspec {version, or "missing or unreadable"}; the archive needs {tested} or a newer 1.x release`.
+2. Run `openspec archive {change} --yes`, with no other flag. It warns that the tasks are incomplete; that is expected.
+3. Run `openspec validate --all --strict --no-interactive`. A failure stops with the validator's first lines, joined into one line, as the reason. Never edit a file to make validation pass.
+4. Run `"${CLAUDE_PLUGIN_ROOT}/bin/ccm-openspec-scope" --worktree --approval {change} archive {base-ref}`. Unless it exits 0, stop: `reason: approval archive check failed ({rule}): {detail}` (or `cannot run the approval archive check: {detail}` when it printed no `rule`). Exit 0: keep its `folder` (`openspec/changes/archive/<date>-{change}`) as the run's `spec_delta`.
+5. Continue with Step 7. The PR carries only the result of the archive: change no code, test, or doc, and leave every task in the archived `tasks.md` unchecked, as the approval wrote it (a ticked box fails the gate's `folder-content`). The ticket's own acceptance criteria are what the archive does, so Step 6's scope comparison is the check in step 4. The handshake carries `spec_delta: {folder}` and no `tasks_done:` line.
+
+A stop in any of steps 1 to 4 restores `openspec/` with two separate Bash calls, `git checkout -- openspec` and then `git clean -fd -- openspec`, opens no PR, and returns `needs-human` with the reason, with no `spec_delta:` line; when running interactively, tell the user instead.
+<!-- /ccmagic:plain-delta -->
+
 ### Quick Fix path
 
 1. Implement the fix directly in this session. Read the relevant files first to understand the codebase. Make the minimal change that addresses the ticket scope. Follow the project's coding standards from `context/conventions.md`.
@@ -254,7 +274,7 @@ On JVM projects each build tool invocation is slow, so keep the count down:
 ---
 
 <!-- ccmagic:plain-delta -->
-**Only when the base has `openspec/specs/` and the grounding block has no `spec:` section** (a plain ticket in a repository with OpenSpec specs), and not on a fix pass (*Fix pass* below says what a fix pass does). A plain ticket that changes specified behavior carries its own spec delta, archived in the same PR as the code, so the reviewer reads both together and the specs never lag behind the default branch. Work that needs more than one PR is a planned OpenSpec change, not a plain ticket.
+**Only when the base has `openspec/specs/` and the grounding block has no `spec:` section** (a plain ticket in a repository with OpenSpec specs), and not on a fix pass (*Fix pass* below says what a fix pass does). A plain ticket that changes specified behavior carries its own spec delta, archived in the same PR as the code, so the reviewer reads both together and the specs never lag behind the default branch. Work that needs more than one PR is a planned OpenSpec change, not a plain ticket. A requirements approval's archive ticket (the approval check at the start of this step returned `approval: true`) skips this block: its *Approval archive procedure* runs instead.
 
 `{base-ref}` is `origin/{base-branch}` after `git fetch origin {base-branch}` (its own Bash call); with no `origin` remote it is `{base-branch}`. Run each command below as its own Bash call, at the repository root. First run `"${CLAUDE_PLUGIN_ROOT}/bin/ccm-spec-delta" applies {base-ref}` (the bare name `ccm-spec-delta` only when the path form is not found or is denied, as for every call below). When its `applies` is `false`, the base has no `openspec/specs/<cap>/spec.md`: skip the rest of this block, and the handshake carries no `spec_delta:` line.
 
@@ -348,6 +368,7 @@ Confirm the PR with the user before creating it.
 
 - `Spec delta: archived as {spec_delta}/.` then one line per capability naming each requirement and its operation (`inbox: MODIFIED "Inbox expiry"`), then `Strict validation passed after the archive (openspec {version}).`
 - `Spec delta: none. No specified behavior changed: {one sentence}.` naming the requirements you checked as `openspec/specs/{cap}/spec.md:{line}`, or `no capability covers {area}`.
+- For a requirements approval's archive ticket: `Approval archive: archived {change} as {spec_delta}/, tasks left unchecked as the approval wrote them.` then `Strict validation passed after the archive (openspec {version}).` The PR body says the PR carries only the result of `openspec archive {change} --yes`.
 <!-- /ccmagic:plain-delta -->
 
 After the PR is created, capture the PR URL returned by `gh pr create`.
@@ -441,7 +462,7 @@ When the grounding block carries `fix_pass:`, `/ccmagic:auto-ticket` is sending 
 - An item saying a delta is missing: run that block's whole procedure, from the version check.
 - An item naming another `scope` rule (`delta-active`, `delta-folders`, and the like): run `reopen` as in the first bullet and then steps 6 to 9. When `reopen` exits 1 (the branch does not add exactly one archive folder), stop with `needs-human` naming the rule: the branch's OpenSpec files need a person.
 
-Either way the handshake carries `spec_delta:` with the new value. Every other fix pass leaves `openspec/` alone and emits no `spec_delta:` line, and the finish step's scope check holds the branch to that.
+Either way the handshake carries `spec_delta:` with the new value. On a requirements approval's archive ticket (Step 5's approval check returned `approval: true`; run it again as there, since a fix pass skips Step 5) none of these bullets apply: the fix pass changes nothing under `openspec/` and no file outside it, since the PR carries only the archive, and before it reports `done` it runs `"${CLAUDE_PLUGIN_ROOT}/bin/ccm-openspec-scope" --worktree --approval {change} archive {base-ref}`; a failure, or an item that needs any change, is a `needs-human` naming it. Every other fix pass leaves `openspec/` alone and emits no `spec_delta:` line, and the finish step's scope check holds the branch to that.
 <!-- /ccmagic:plain-delta -->
 
 <!-- ccmagic:spec-only -->
@@ -493,7 +514,7 @@ On `done` for a section it is the `tasks_done` list from the Step 6 scope check.
 spec_delta: none | openspec/changes/archive/<folder>
 ```
 
-It is the `spec_delta` from the scope check, or `none` when no specified behavior changed. A stop before the decision, a stop after deciding that behavior changed but before the scope check passed, and a fix pass that left `openspec/` alone, emit no such line: never write `none` for a delta that was needed and not archived.
+It is the `spec_delta` from the scope check, or `none` when no specified behavior changed. A stop before the decision, a stop after deciding that behavior changed but before the scope check passed, and a fix pass that left `openspec/` alone, emit no such line: never write `none` for a delta that was needed and not archived. On a requirements approval's archive ticket it is the `folder` from the *Approval archive procedure*'s scope check, on `done` only, since Reeve's gate requires the run record's `spec_delta` to name that folder; a stop in that procedure emits no such line.
 <!-- /ccmagic:plain-delta -->
 
 ---
