@@ -16,6 +16,7 @@ Every finding reported by a review agent MUST use this exact structure. Omitting
 - fixable: <true | false — true if the fix is mechanical and can be auto-applied without judgment>
 - systemic: <optional — present only when the issue is an instance of a repeatable pattern: name the defect class, then enumerate EVERY instance found, searching across all reference mechanisms that could carry the pattern (template attributes, raw attributes, ES-module imports, CSS @import/url(), manifests, service workers, config files — whichever apply). Omit for one-off issues.>
 - reproduction: <optional; present for a security finding, or any finding whose correctness depends on an invariant over untrusted input: the invariant in one line, the exact triggering inputs (escaped so control characters survive), and, if you fuzzed or enumerated, the generator or enumeration rule, the corpus size, and how many inputs failed. Omit otherwise.>
+- pre_existing: <true | false; set by the orchestrator at fan-in, never by a review agent: true when no line of the finding was added or modified by the change under review (the `locate` mode of `ccm-review-guide`). Absent in full mode, which has no diff.>
 ```
 
 Use one block per finding. Separate findings with a blank line.
@@ -23,6 +24,8 @@ Use one block per finding. Separate findings with a blank line.
 The `specialist` field enables multi-specialist confirmation (boosted confidence when 2+ agents flag the same issue). The `fixable` field is a **classification, not an instruction to act** — it marks which findings a `--fix` run may apply to the working tree. Without `--fix`, every finding is reported and nothing is changed.
 
 The `systemic` field prevents whack-a-mole fix loops — a point-fix to the reported line while sibling instances survive to the next review pass. When an issue is one instance of a pattern, the **enumeration is the finding**, not the first hit: search every mechanism that could carry the pattern, not just the syntax the first instance used. And scope your all-clears: a "no other instances" claim MUST state its search scope and the mechanisms covered, or be downgraded to "no other {mechanism} instances found". An unscoped universal claim is more dangerous than silence in an autonomous loop that acts on verdicts.
+
+The `pre_existing` field keeps a defect the change did not introduce from reading as the author's fault, and from pulling an autonomous fix pass into code the PR is not about. A pre-existing finding never fails a review on its own; the one exception is a pre-existing Critical security finding, which still blocks because merging ships it again (`review-guidance.md`). Review agents report the line they see and leave the field out.
 
 The `reproduction` field hands the fixer what you used to find the issue. An autonomous fix step reruns those inputs and that corpus against its fix before pushing (`skills/auto-ticket/autonomous-contract.md` §9); without them it can only check a few cases of its own.
 

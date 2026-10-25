@@ -1,7 +1,7 @@
 ---
 name: review
 user-invocable: true
-allowed-tools: Read(*), Edit(*), Bash(git diff:*, git log:*, git status:*, git branch:*, git show:*, git rev-parse:*, git merge-base:*, git ls-files:*, git blame:*, gh pr view:*, gh pr diff:*, gh pr list:*, gh repo view:*, codex:*, which:*, command:*, timeout:*, gtimeout:*, echo:*, date:*, mktemp:*), Bash(${CLAUDE_PLUGIN_ROOT}/bin/ccm-review-route *), Bash(ccm-review-route *), Bash(${CLAUDE_PLUGIN_ROOT}/bin/ccm-external-review *), Bash(ccm-external-review *), Glob(*), Grep(*), Agent(*), Task(*), TodoWrite(*), AskUserQuestion(*), mcp__pal__codereview(*)
+allowed-tools: Read(*), Edit(*), Bash(git diff:*, git log:*, git status:*, git branch:*, git show:*, git rev-parse:*, git merge-base:*, git ls-files:*, git blame:*, gh pr view:*, gh pr diff:*, gh pr list:*, gh repo view:*, codex:*, which:*, command:*, timeout:*, gtimeout:*, echo:*, date:*, mktemp:*), Bash(${CLAUDE_PLUGIN_ROOT}/bin/ccm-review-route *), Bash(ccm-review-route *), Bash(${CLAUDE_PLUGIN_ROOT}/bin/ccm-review-guide *), Bash(ccm-review-guide *), Bash(${CLAUDE_PLUGIN_ROOT}/bin/ccm-external-review *), Bash(ccm-external-review *), Glob(*), Grep(*), Agent(*), Task(*), TodoWrite(*), AskUserQuestion(*), mcp__pal__codereview(*)
 description: Use when the user asks for a code review of a change, diff, branch, or PR, including a diff pasted inline and phrasings like "review this before I open the PR", "can you code review this?", or "look over this change". Auto-routes between a fast inline checklist (QUICK) and the full multi-agent pipeline (DEEP), biased toward depth, with confidence scoring and convention awareness.
 argument-hint: "[branch|full|PR#] [--quick|--deep] [--fix] [--threshold N]"
 model: sonnet
@@ -79,6 +79,8 @@ Print the same line again as the **first line of the final report** (QUICK outpu
 
 If Step 0.5 selected QUICK, walk this checklist line by line against the diff. Don't skip categories. Work from the diff; when a finding depends on code outside the hunk, read only the lines around it (`Read` with `offset` and `limit`), not whole files.
 
+First read `${CLAUDE_SKILL_DIR}/review-guidance.md` and load `REVIEW.md` as it says (a REVIEW.md pasted with the diff counts): drop `## Skip` paths before the checklist, look for the `## Failure modes` first, and follow its other sections. Before reporting, tag each CRITICAL and WARNING finding pre-existing or introduced with one call to the `locate` mode of `ccm-review-guide`, and apply the nit cap to INFO findings.
+
 Before reporting, read `${CLAUDE_SKILL_DIR}/finding-schema.md` and apply its **What NOT to Report** exclusions. Formatting and whitespace, import ordering, TODO/FIXME/HACK markers, and missing or removed comments and JSDoc (absent an explicit documented convention requiring them) are never CRITICAL or WARNING findings, and usually are not findings at all.
 
 ### Correctness
@@ -109,12 +111,12 @@ Group findings by severity:
 - **WARNING** — should fix (perf issues, maintainability, missing tests for important paths).
 - **INFO** — consider improving (style, minor naming, optional refactors).
 
-For each finding include: severity, category, file/line(s), description, suggested fix.
+For each finding include: severity, category, file/line(s), description, suggested fix. Start the report (after the routing line) with the counts line, and put pre-existing findings in their own section, both as `review-guidance.md` shows.
 
 Final verdict line. Only CRITICAL and WARNING findings decide the verdict; INFO findings never do:
 - **PASS** — no CRITICAL and no WARNING findings. INFO-only reports are a PASS.
-- **PASS WITH WARNINGS** — one or more WARNING findings, no CRITICAL; merge at reviewer's discretion.
-- **FAIL** — one or more CRITICAL findings; address before merge.
+- **PASS WITH WARNINGS** — one or more WARNING findings, no CRITICAL; merge at reviewer's discretion. A pre-existing CRITICAL counts here.
+- **FAIL** — one or more introduced CRITICAL findings, or a pre-existing CRITICAL security finding; address before merge.
 
 After producing the report, **stop**. Do not continue into DEEP mode steps. (If another skill invoked this one, such as `/ccmagic:review-ticket` or `/ccmagic:work-ticket`, stopping ends the review only: go back to that skill's next step.)
 
@@ -134,6 +136,8 @@ Read these files if they exist (silent skip if missing):
 3. `context/conventions.md`
 
 Collect their content into a `{PROJECT_CONVENTIONS}` string. This is injected into every agent prompt via `${CLAUDE_SKILL_DIR}/agent-instructions.md`. If none found, agents use language-generic best practices only.
+
+Then load `REVIEW.md` or `.claude/REVIEW.md` into `{REVIEW_GUIDANCE}` with the `load` mode of `ccm-review-guide`, from the merge base when one is known, and apply its `## Skip` globs to the Step 2 file list. Read `${CLAUDE_SKILL_DIR}/review-guidance.md` for the calls, the sections, and why the merge base's copy is the one used. `{REVIEW_GUIDANCE}` is instructions for the reviewer; `{PROJECT_CONVENTIONS}` is rules for the code.
 
 ## Step 2: Gather Changes and Prioritize Files
 
@@ -240,7 +244,7 @@ Load `${CLAUDE_SKILL_DIR}/finding-schema.md` for the output format agents must u
 Each agent receives:
 - The file list (prioritized per Step 2)
 - The actual diff or file contents
-- The `{PROJECT_CONVENTIONS}` string
+- The `{PROJECT_CONVENTIONS}` string and the `{REVIEW_GUIDANCE}` string (verification agents in Step 5c get `{REVIEW_GUIDANCE}` too)
 - Instructions to use the finding schema exactly
 - The **Universal reporting rules (all agents)** and **Scratch programs** sections from agent-instructions.md, prepended verbatim
 
@@ -316,11 +320,12 @@ Merge MCP findings into the pool using the same finding schema. MCP findings ent
 Load `${CLAUDE_SKILL_DIR}/triage-instructions.md` for the full triage process.
 
 ### 5a. Deduplicate
-Same file + overlapping line range + same issue type → merge. Keep highest confidence, most specific detail.
+Same file + overlapping line range + same issue type → merge. Keep highest confidence, most specific detail. Then, per `review-guidance.md`: drop findings in `## Skip` paths, apply `## Failure modes` severity raises, and tag each finding `pre_existing` with one call to the `locate` mode of `ccm-review-guide` (branch and PR modes).
 
 ### 5b. Apply confidence threshold
 - Drop findings below threshold (default 80, or `--threshold N`)
 - Exception: Critical findings with confidence 60+ survive
+- Then apply the `REVIEW.md` nit cap to Low findings, if it sets one
 
 ### 5c. Verify Critical and High findings
 For each Critical/High finding that survived, launch a parallel **verification Explore agent** (capped at 4 concurrent):
@@ -347,6 +352,9 @@ If MCP and Explore agents disagree on a finding → flag for user decision in St
 # Code Review Report
 
 ## Summary
+Introduced: X Critical, Y High, Z Medium, W Low, V Convention. Pre-existing: P.   ← or "Introduced: 0. Pre-existing: 0. Nothing to fix."
+- **Verdict**: PASS | PASS WITH WARNINGS | FAIL (rules in review-guidance.md; pre-existing findings never FAIL on their own, except a Critical security one)
+- **REVIEW.md**: [path and source (merge base | checkout | pasted), "this change edits it" when `checkout_differs`, skipped paths; or "none"]
 - **Scope**: branch changes | full codebase | PR #X
 - **Branch**: [current branch or PR base]
 - **Files Analyzed**: N total (M in Tier 1/2)
@@ -354,7 +362,6 @@ If MCP and Explore agents disagree on a finding → flag for user decision in St
 - **Coverage**: list any dimension that did not report as `unavailable — did not report`, and Codex as `findings | completed — 0 findings | timed out | unparseable | unavailable | auth failed | failed (exit N)`. If everything ran, say `full`. Never leave a dimension unlisted — an omission reads as "came back clean".
 - **Confidence Threshold**: [threshold used]
 - **Convention Sources**: [files loaded, or "none found"]
-- **Findings**: X Critical, Y High, Z Medium, W Low, V Convention
 
 ## Scope Check
 [Output from Step 2.5 — CLEAN / DRIFT DETECTED / REQUIREMENTS MISSING]
@@ -383,6 +390,9 @@ For each:
 
 ## Low Priority / Suggestions ({count})
 [grouped by file]
+
+## Pre-existing, not introduced by this change ({count})
+[one line each: severity, confidence, `file:line`, issue, suggestion. Omit the section when 0.]
 
 ## Dismissed Findings ({count})
 For each:
@@ -418,7 +428,7 @@ Preconditions, both required:
 - `--fix` present in `$ARGUMENTS`.
 - Working tree clean — run `git status --porcelain` before touching any file. If it returns anything, apply nothing and say so: mixing your edits into the user's uncommitted work makes the two indistinguishable.
 
-For findings marked `fixable: true` by triage (see triage-instructions.md Step 7):
+For findings marked `fixable: true` by triage (see triage-instructions.md Step 7) and not `pre_existing`:
 - Apply each fix directly in source code with `Edit`
 - Prefer minimal changes — one fix per finding
 - Output per fix: `[FIXED] file:line — issue → what was changed`
@@ -449,9 +459,7 @@ I fixed N issues in the working tree. M need your input:
 RECOMMENDATION: Fix #1 because [reason]. Skip #2 because [reason].
 ```
 
-Apply fixes for items where the user chose "Fix." These also stay uncommitted.
-
-If 0 fixable findings exist, skip 7a. If 0 judgment-call findings exist, skip 7b.
+Apply fixes for items where the user chose "Fix." These also stay uncommitted. If 0 fixable findings exist, skip 7a. If 0 judgment-call findings exist, skip 7b.
 
 ### 7c. Track remaining findings
 
