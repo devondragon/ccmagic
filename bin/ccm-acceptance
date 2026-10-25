@@ -1,0 +1,293 @@
+#!/usr/bin/env bash
+# ccm-acceptance: the file rules of Reeve's acceptance tests (RV-134), so a
+# work step checks its branch the way Reeve's gate will. Prints JSON.
+#
+# Usage: ccm-acceptance find TICKET BASE
+#        ccm-acceptance build [--worktree] TICKET BASE
+#        ccm-acceptance tests [--worktree] [--ids AC-1,AC-2] DIR MARKER BASE
+#
+# Reeve writes a ticket's acceptance tests under <path>/<TICKET>/ and an empty
+# marker file <pending>/<TICKET>, in a tests ticket that merges before the
+# ticket's build (a ticket whose description carries a reeve:acceptance
+# block). While the marker exists the tests run as expected to fail; the
+# build deletes it, and the tests must then pass, unchanged.
+#
+# <path> and <pending> come from acceptance_path and acceptance_pending in
+# .claude/ccmagic.local.md (both, or neither). Without them, TICKET must be a
+# tracker key (RD-41), and BASE's tip must hold exactly one directory named
+# TICKET that holds files and exactly one file named TICKET, each below a
+# directory of its own; <path> and <pending> are their parent directories.
+#
+# find: whether TICKET has acceptance tests at BASE's tip. Output: {pass,
+#   mode, applies, source (config | detected | null), dir, marker,
+#   marker_present, tests, rule, detail}. A directory named TICKET with no
+#   marker beside it is not taken for acceptance tests without the config
+#   (applies false, detail says why). More than one candidate, or a marker
+#   inside <path>, fails rule ambiguous.
+#
+# build: the build's branch against the gate's rules for a ticket whose tests
+#   merged: tests-changed (the branch adds, changes, renames, or removes a
+#   path under <path>/ or <pending>/, other than removing the marker) and
+#   still-pending (the marker is at BASE's tip and the branch keeps it).
+#   Passes with applies false when find finds no tests. Output: {pass, mode,
+#   applies, dir, marker, rule, detail, file}.
+#
+# tests: a tests ticket's branch. DIR is <path>/<PARENT> and MARKER
+#   <pending>/<PARENT>, as the reeve:acceptance block names them. Rules, in
+#   the gate's order: exists (DIR is already at BASE's tip), scope (a path
+#   the branch changes is anything but an addition under DIR/ or the addition
+#   of MARKER), marker-missing (MARKER is not added), tests-missing (nothing
+#   is added under DIR/). With --ids, uncited lists each criterion id that no
+#   added file under DIR/ names (AC-3, not AC-31); it fails no rule, since a
+#   criterion with no test needs a line in the PR body instead. Output:
+#   {pass, mode, parent, dir, marker, tests, uncited, rule, detail, file}.
+#
+# The branch is HEAD, measured from the merge base of BASE and HEAD, as
+# GitHub lists a PR's files. With --worktree it is the working tree: tracked
+# changes, plus the untracked, not ignored files under <path>/ and
+# <pending>/ as added.
+#
+# Writes: only to a directory from mktemp -d under $TMPDIR, removed on exit.
+#
+# Exit codes: 0 pass, 1 a rule failed, 3 cannot read or run (not a git
+# repository, an unknown BASE, a config value that is not a plain relative
+# directory), 4 usage error.
+
+set -euo pipefail
+here=$(dirname "${BASH_SOURCE[0]}")
+# shellcheck source=bin/ccm-lib.sh
+. "$here/ccm-lib.sh"
+
+usage() { echo "ccm-acceptance: $1" >&2; exit 4; }
+
+mode=${1:-}
+case $mode in
+  -h|--help) sed -n '2,/^set -euo/p' "$0" | sed '$d'; exit 0 ;;
+  find|build|tests) shift ;;
+  "") usage "name a mode: find, build, or tests" ;;
+  *) usage "unknown mode $mode" ;;
+esac
+
+worktree=false ids="" args=()
+while [ $# -gt 0 ]; do
+  if [ ${#args[@]} -gt 0 ]; then args+=("$1"); shift; continue; fi
+  case $1 in
+    --) shift; args+=("$@"); break ;;
+    --worktree) [ "$mode" != find ] || usage "--worktree applies to build and tests"; worktree=true ;;
+    --ids) [ "$mode" = tests ] || usage "--ids applies to tests"; [ $# -ge 2 ] || usage "--ids takes a list"; ids=$2; shift ;;
+    --ids=*) [ "$mode" = tests ] || usage "--ids applies to tests"; ids=${1#--ids=} ;;
+    -*) usage "unknown flag $1" ;;
+    *) args+=("$1") ;;
+  esac
+  shift
+done
+case $mode in
+  find|build) [ ${#args[@]} -eq 2 ] || usage "$mode takes TICKET and BASE" ;;
+  tests) [ ${#args[@]} -eq 3 ] || usage "tests takes DIR, MARKER, and BASE" ;;
+esac
+if [ -n "$ids" ] && ! [[ $ids =~ ^AC-[0-9]+(,AC-[0-9]+)*$ ]]; then
+  usage "--ids takes criterion ids such as AC-1,AC-3"
+fi
+
+unreadable() { jq -n --arg m "$mode" --arg d "$1" '{pass: false, mode: $m, rule: null, detail: $d}'; exit 3; }
+
+top=$(git rev-parse --show-toplevel 2>/dev/null) || unreadable "not inside a git repository"
+cd "$top"
+scratch=$(mktemp -d "${TMPDIR:-/tmp}/ccm-acceptance.XXXXXX" 2>/dev/null) ||
+  unreadable "cannot make a scratch directory under ${TMPDIR:-/tmp}"
+trap 'rm -rf "$scratch"' EXIT
+
+base=${args[${#args[@]}-1]}
+base_sha=$(git rev-parse --verify --quiet "$base^{commit}") || unreadable "cannot resolve base $base to a commit"
+head_sha=$(git rev-parse --verify --quiet "HEAD^{commit}") || unreadable "cannot resolve HEAD to a commit"
+mb_sha=$(git merge-base "$base_sha" "$head_sha") || unreadable "$base and HEAD have no merge base"
+
+# plain_dir VALUE: empty when VALUE is a relative path of plain segments, with
+# no "..", ".", glob character, backslash, or leading or trailing slash.
+plain_dir() {
+  case $1 in
+    "" | /* | */ | *//* | *[\*\?\[\]\\]* ) echo "is not a plain relative path"; return ;;
+  esac
+  local IFS=/ seg
+  for seg in $1; do
+    case $seg in .|..) echo "has a . or .. segment"; return ;; esac
+  done
+}
+# under PATH DIR: whether PATH is DIR or inside it.
+under() { [ "$1" = "$2" ] || [[ $1 == "$2"/* ]]; }
+
+# The branch's changed paths as STATUS<TAB>OLD<TAB>NEW (OLD empty unless
+# renamed), read NUL-separated as ccm-spec-delta does. EXTRA: directories
+# whose untracked files count as added with --worktree.
+branch_changes() {
+  local st old new p
+  if $worktree; then
+    { git diff -z --name-status --find-renames "$mb_sha" -- &&
+      for p in "$@"; do
+        git ls-files -z -o --exclude-standard -- "$p/" | while IFS= read -r -d '' f; do printf 'A\0%s\0' "$f"; done
+      done; } >"$scratch/changes.z" || unreadable "cannot list the paths the working tree changes from the merge base"
+  else
+    git diff -z --name-status --find-renames "$mb_sha" "$head_sha" >"$scratch/changes.z" ||
+      unreadable "cannot list the paths the branch changes from the merge base"
+  fi
+  : >"$scratch/changes"
+  while IFS= read -r -d '' st; do
+    old=""
+    if [[ $st == [RC]* ]]; then IFS= read -r -d '' old || unreadable "cannot read git diff -z output"; fi
+    st=${st:0:1}
+    IFS= read -r -d '' new || unreadable "cannot read git diff -z output"
+    for p in "$old" "$new"; do
+      case $p in *$'\t'* | *$'\n'*) unreadable "the branch changes $(printf %q "$p"), whose name holds a tab or a newline" ;; esac
+    done
+    printf '%s\t%s\t%s\n' "$st" "$old" "$new" >>"$scratch/changes"
+  done <"$scratch/changes.z"
+}
+
+# files_at REV DIR: the files under DIR at REV, one per line.
+files_at() { git ls-tree -r --name-only "$1" -- "$2/" 2>/dev/null || true; }
+# blob_at REV PATH: whether PATH is a file at REV.
+blob_at() { [ "$(git cat-file -t "$1:$2" 2>/dev/null)" = blob ]; }
+
+# ---- tests ----------------------------------------------------------------------
+
+if [ "$mode" = tests ]; then
+  DIR=${args[0]} MARKER=${args[1]}
+  why=$(plain_dir "$DIR"); [ -z "$why" ] || usage "DIR $(printf %q "$DIR") $why"
+  why=$(plain_dir "$MARKER"); [ -z "$why" ] || usage "MARKER $(printf %q "$MARKER") $why"
+  parent=${DIR##*/}
+  [ "${MARKER##*/}" = "$parent" ] || usage "DIR and MARKER must end in the same ticket ($parent, ${MARKER##*/})"
+  if [[ $DIR != */* ]] || [[ $MARKER != */* ]]; then
+    usage "DIR and MARKER each sit below a directory (<path>/<TICKET>, <pending>/<TICKET>)"
+  fi
+  P=${DIR%/*} Q=${MARKER%/*}
+  ! under "$Q" "$P" || usage "the marker's directory $Q is inside the tests' directory $P"
+  branch_changes "$DIR" "$Q"
+  awk -F'\t' -v d="$DIR/" '$1 == "A" && index($3, d) == 1 { print $3 }' "$scratch/changes" | LC_ALL=C sort >"$scratch/tests"
+  result() {
+    jq -n --argjson pass "$1" --arg rule "$2" --arg detail "$3" --arg file "${4:-}" --arg p "$parent" \
+      --arg dir "$DIR" --arg marker "$MARKER" --rawfile tests "$scratch/tests" --rawfile uncited "$scratch/uncited" '
+      {pass: $pass, mode: "tests", parent: $p, dir: $dir, marker: $marker,
+       tests: ($tests | split("\n") | map(select(length > 0))),
+       uncited: ($uncited | split("\n") | map(select(length > 0))),
+       rule: (if $rule == "" then null else $rule end), detail: (if $detail == "" then null else $detail end),
+       file: (if $file == "" then null else $file end)}'
+    [ "$1" = true ] && exit 0
+    exit 1
+  }
+  : >"$scratch/uncited"
+  # exists
+  if [ -n "$(files_at "$base_sha" "$DIR")" ] || blob_at "$base_sha" "$DIR"; then
+    result false exists "$DIR already exists at $base; a tests ticket adds a new directory" "$DIR"
+  fi
+  # scope
+  first=$(awk -F'\t' -v d="$DIR/" -v m="$MARKER" '
+    !($1 == "A" && (index($3, d) == 1 || $3 == m)) { print ($2 != "" ? $2 " -> " $3 : $3) "\t" $1; exit }' "$scratch/changes")
+  if [ -n "$first" ]; then
+    p=${first%$'\t'*} st=${first##*$'\t'}
+    case $st in
+      A) what="adds" ;; M) what="changes" ;; D) what="removes" ;; R) what="renames" ;; *) what="changes ($st)" ;;
+    esac
+    result false scope "the branch $what $p; a tests ticket only adds files under $DIR/ and the marker $MARKER" "${p##* -> }"
+  fi
+  # marker-missing
+  awk -F'\t' -v m="$MARKER" '$1 == "A" && $3 == m { ok = 1 } END { exit !ok }' "$scratch/changes" ||
+    result false marker-missing "the branch does not add the marker $MARKER, so the new tests would run as expected to pass" "$MARKER"
+  # tests-missing
+  [ -s "$scratch/tests" ] || result false tests-missing "the branch adds nothing under $DIR/" "$DIR"
+  # uncited (information, not a rule)
+  if [ -n "$ids" ]; then
+    : >"$scratch/text"
+    while IFS= read -r f; do
+      if $worktree; then command cat -- "$f" >>"$scratch/text" 2>/dev/null || true
+      else git cat-file blob "$head_sha:$f" >>"$scratch/text" 2>/dev/null || true
+      fi
+      echo >>"$scratch/text"
+    done <"$scratch/tests"
+    tr ',' '\n' <<<"$ids" | LC_ALL=C sort -u -t- -k2,2n | while IFS= read -r id; do
+      grep -Eq "(^|[^A-Za-z0-9_-])$id([^0-9]|\$)" "$scratch/text" || echo "$id"
+    done >"$scratch/uncited"
+  fi
+  result true "" ""
+fi
+
+# ---- find and build: where TICKET's tests are -------------------------------------
+
+TICKET=${args[0]}
+cfg_path=$(ccm_config_get acceptance_path) cfg_pending=$(ccm_config_get acceptance_pending)
+source=null DIR="" MARKER="" applies=false detail=""
+if [ -n "$cfg_path$cfg_pending" ]; then
+  if [ -z "$cfg_path" ] || [ -z "$cfg_pending" ]; then
+    unreadable "set both acceptance_path and acceptance_pending in .claude/ccmagic.local.md, or neither"
+  fi
+  why=$(plain_dir "$cfg_path"); [ -z "$why" ] || unreadable "acceptance_path $(printf %q "$cfg_path") $why"
+  why=$(plain_dir "$cfg_pending"); [ -z "$why" ] || unreadable "acceptance_pending $(printf %q "$cfg_pending") $why"
+  ! under "$cfg_pending" "$cfg_path" || unreadable "acceptance_pending $cfg_pending is inside acceptance_path $cfg_path"
+  [[ $TICKET =~ ^[A-Za-z0-9][A-Za-z0-9_-]*$ ]] || usage "ticket $(printf %q "$TICKET") is not a tracker key or an issue number"
+  source='"config"' DIR=$cfg_path/$TICKET MARKER=$cfg_pending/$TICKET
+  if [ -n "$(files_at "$base_sha" "$DIR")" ]; then applies=true
+  else detail="$DIR holds no files at $base"
+  fi
+elif [[ $TICKET =~ ^[A-Za-z][A-Za-z0-9_]*-[0-9]+$ ]]; then
+  git ls-tree -r -z --name-only "$base_sha" >"$scratch/tree.z" || unreadable "cannot list the files at $base"
+  tr '\0' '\n' <"$scratch/tree.z" | LC_ALL=C awk -F/ -v t="$TICKET" -v dirs="$scratch/dirs" -v marks="$scratch/marks" '
+    NF >= 2 && $NF == t { print >marks }
+    { p = $1; for (i = 2; i < NF; i++) { if ($i == t) { print p "/" t >dirs; break } p = p "/" $i } }
+    END { close(dirs); close(marks) }'
+  for f in dirs marks; do touch "$scratch/$f"; LC_ALL=C sort -u -o "$scratch/$f" "$scratch/$f"; done
+  nd=$(grep -c . "$scratch/dirs" || true) nm=$(grep -c . "$scratch/marks" || true)
+  ambiguous() {
+    jq -n --arg d "$1" --arg m "$mode" '{pass: false, mode: $m, applies: false, rule: "ambiguous", detail: $d}'
+    exit 1
+  }
+  if [ "$nd" -gt 1 ]; then ambiguous "$base holds $nd directories named $TICKET ($(tr '\n' ' ' <"$scratch/dirs" | sed 's/ $//')); set acceptance_path and acceptance_pending to name the right one"; fi
+  if [ "$nd" -eq 1 ]; then
+    DIR=$(<"$scratch/dirs")
+    if [ "$nm" -gt 1 ]; then ambiguous "$base holds $nm files named $TICKET ($(tr '\n' ' ' <"$scratch/marks" | sed 's/ $//')); set acceptance_path and acceptance_pending to name the marker"; fi
+    if [ "$nm" -eq 0 ]; then
+      detail="$DIR exists at $base with no marker file named $TICKET beside it; set acceptance_path and acceptance_pending to treat it as acceptance tests"
+      DIR=""
+    else
+      MARKER=$(<"$scratch/marks")
+      ! under "${MARKER%/*}" "${DIR%/*}" || ambiguous "the marker $MARKER is inside ${DIR%/*}, the directory of $DIR; Reeve keeps the marker outside the tests' directory"
+      source='"detected"' applies=true
+    fi
+  fi
+fi
+marker_present=false
+if [ -n "$MARKER" ] && blob_at "$base_sha" "$MARKER"; then marker_present=true; fi
+files_at "$base_sha" "${DIR:-.nonexistent}" >"$scratch/basetests"
+
+out() {
+  jq -n --argjson pass "$1" --arg rule "$2" --arg detail "$3" --arg file "${4:-}" --arg m "$mode" \
+    --argjson applies "$applies" --argjson source "$source" --arg dir "$DIR" --arg marker "$MARKER" \
+    --argjson mp "$marker_present" --rawfile tests "$scratch/basetests" '
+    {pass: $pass, mode: $m, applies: $applies, source: $source,
+     dir: (if $dir == "" then null else $dir end), marker: (if $marker == "" then null else $marker end),
+     marker_present: $mp, tests: ($tests | split("\n") | map(select(length > 0))),
+     rule: (if $rule == "" then null else $rule end), detail: (if $detail == "" then null else $detail end),
+     file: (if $file == "" then null else $file end)}'
+  [ "$1" = true ] && exit 0
+  exit 1
+}
+
+[ "$mode" = find ] && out true "" "$detail"
+$applies || out true "" "$detail"
+
+# ---- build ----------------------------------------------------------------------
+
+P=${DIR%/*} Q=${MARKER%/*}
+branch_changes "$P" "$Q"
+first=$(awk -F'\t' -v p="$P/" -v q="$Q/" -v m="$MARKER" '
+  $1 == "D" && $3 == m { next }
+  { for (i = 2; i <= 3; i++) if ($i != "" && (index($i, p) == 1 || index($i, q) == 1)) { print $1 "\t" $i; exit } }' "$scratch/changes")
+if [ -n "$first" ]; then
+  st=${first%%$'\t'*} p=${first#*$'\t'}
+  case $st in
+    A) what="adds" ;; M) what="changes" ;; D) what="removes" ;; R) what="renames" ;; *) what="changes ($st)" ;;
+  esac
+  out false tests-changed "the branch $what $p; a build leaves every file under $P/ and $Q/ as it is, and only removes its own marker $MARKER" "$p"
+fi
+if $marker_present && ! awk -F'\t' -v m="$MARKER" '$1 == "D" && $3 == m { ok = 1 } END { exit !ok }' "$scratch/changes"; then
+  out false still-pending "the branch keeps $MARKER, so the acceptance tests still run as expected to fail; delete it" "$MARKER"
+fi
+out true "" ""

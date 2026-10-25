@@ -4302,9 +4302,12 @@ STANDALONE_SCRIPTS_SINCE_BASELINE=(ccm-baseline-check ccm-propose-check ccm-spec
 ADDED_AGENTS_SINCE_BASELINE=(agents/auto-visual.md)
 # Skill support files added since $SPEC_BASELINE, new for every ticket, so the
 # comparison has no baseline for them either; the SKILL.md lines that load them
-# are in $EVERY_TICKET_DIFF. review-guidance.md: REVIEW.md and pre-existing
-# findings (issue 109).
-ADDED_SKILL_FILES_SINCE_BASELINE=(skills/review/review-guidance.md)
+# are in $EVERY_TICKET_DIFF or in spec-only and plain-delta blocks. work-ticket's
+# spec-delta.md holds the plain-delta rules its SKILL.md blocks point to (moved
+# there to keep SKILL.md under 500 lines) and acceptance.md the acceptance-test
+# rules (issue 111); review-guidance.md holds REVIEW.md and pre-existing findings
+# (issue 109).
+ADDED_SKILL_FILES_SINCE_BASELINE=(skills/work-ticket/spec-delta.md skills/work-ticket/acceptance.md skills/review/review-guidance.md)
 
 spec_prompt_files() {
   { git -C "$ROOT" ls-tree -r --name-only "$SPEC_BASELINE" -- skills agents
@@ -4476,6 +4479,106 @@ skills_standalone_not_on_ticket_path() {
     for f in $(git -C "$ROOT" grep -lF "${pat[@]}" -- "${paths[@]}" || true); do hits+=" $name:$f"; done
   done
   check "${hits# }" ""
+}
+
+# ---- ccm-followup-check (issue 112) -----------------------------------------
+
+fu_check() { OUT=$("$BIN/ccm-followup-check" "$@" 2>"$T/stderr") && RC=0 || RC=$?; }
+fu_rules() { jq -r '[.problems[].rule] | join(",")' <<<"$OUT"; }
+
+# fu_decision: a follow-up that needs a decision, in the q1/A/B shape.
+fu_decision() {
+  printf '%s\n' 'Raised by the review step on PR #7 (ENG-1).' '' \
+    '**q1.** Should the auth guard cover GET /api/me?' \
+    '- A: Intercept GET /api/me in the guard (for: one place to enforce; against: one more request per page)' \
+    '- B: Reword the rule to exclude it (for: no code change; against: the route stays unguarded)' \
+    'Recommended: A. The guard already sees every other route.' '' \
+    'Follow-up key: AuthGuard.canActivate'
+}
+
+# fu_change: a follow-up with no open decision: one finding, a change, and
+# acceptance criteria.
+fu_change() {
+  # shellcheck disable=SC2016 # literal backticks
+  printf '%s\n' 'Raised by the review step on PR #7 (ENG-1).' '' '## Change' '' \
+    '`src/net/abuse.ts`: make `AbuseManager.ipMatchesCIDR` reject a prefix length over 32.' '' \
+    '## Acceptance criteria' '' '- [ ] `ipMatchesCIDR("10.0.0.1", "10.0.0.0/33")` returns false.' '' \
+    'Follow-up key: AbuseManager.ipMatchesCIDR'
+}
+
+followup_decision_shape_passes() {
+  fu_check < <(fu_decision)
+  check "$RC,$(jqval .pass),$(jqval .shape),$(jqval .questions),$(fu_rules)" "0,true,decision,1,"
+  # Linear may turn line endings into CRLF; a second question is q2.
+  fu_check < <(fu_decision | sed '$d'; printf '%s\n' '**q2.** Keep the old route?' \
+    '- A: Yes (for: clients use it; against: two paths)' '- B: No (for: one path; against: a breaking change)' \
+    'Recommended: B. Nothing calls it.' 'Follow-up key: AuthGuard.canActivate' | sed 's/$/\r/')
+  check "$RC,$(jqval .questions),$(fu_rules)" "0,2,"
+}
+
+followup_change_shape_passes() {
+  fu_check < <(fu_change)
+  check "$RC,$(jqval .pass),$(jqval .shape),$(fu_rules)" "0,true,change,"
+  # Any list marker counts as a checkable item.
+  fu_check < <(fu_change | sed 's/^- \[ \] /1. /')
+  check "$RC" "0"
+}
+
+followup_decision_problems() {
+  # One option, no recommendation.
+  fu_check < <(fu_decision | sed '/^- B:/d; /^Recommended:/d')
+  check "$RC,$(fu_rules)" "1,options-too-few,recommended-missing"
+  # A recommendation naming no option; an option without for/against.
+  fu_check < <(fu_decision | sed 's/^Recommended: A\./Recommended: C./; s/ (for: no code.*$//')
+  check "$RC,$(fu_rules)" "1,option-shape,recommended-unknown"
+  # Options out of order, a question numbered wrong, a bare recommendation.
+  fu_check < <(fu_decision | sed 's/^- B:/- C:/; s/^\*\*q1\./**q2./; s/^Recommended: A\..*/Recommended: A/')
+  check "$RC,$(fu_rules)" "1,question-order,option-order,recommended-shape"
+  # The options of RD-107, written as one sentence, are not a decision block.
+  fu_check <<<'Options: intercept GET /api/me, or reword the rule. Needs a human decision.
+Follow-up key: AuthGuard.canActivate'
+  check "$RC,$(jqval .shape),$(fu_rules)" "1,change,change-missing,criteria-missing"
+}
+
+followup_change_problems() {
+  # RD-108: extra findings, and no acceptance criteria.
+  fu_check < <(fu_change | sed '/^## Acceptance criteria/,/^- \[ \]/d' | sed '$i\
+Low-priority also: rename x; drop y.')
+  check "$RC,$(fu_rules)" "1,extra-findings,criteria-missing"
+  # Empty sections.
+  fu_check < <(fu_change | sed '/^`src/d; /^- \[ \]/d')
+  check "$RC,$(fu_rules)" "1,change-empty,criteria-empty"
+  # The key line: missing, repeated, not last.
+  fu_check < <(fu_change | sed '$d')
+  check "$RC,$(fu_rules)" "1,key-missing"
+  fu_check < <(fu_change; echo 'Follow-up key: other')
+  check "$RC,$(fu_rules)" "1,key-repeated"
+  fu_check < <(fu_change; echo 'Thanks.')
+  check "$RC,$(fu_rules)" "1,key-not-last"
+  # Trailing blank lines are fine.
+  fu_check < <(fu_change; printf '\n\n')
+  check "$RC" "0"
+  fu_check extra </dev/null
+  check "$RC" "4"
+}
+
+# SKILL.md states both shapes, files a decision in the decision state, and
+# checks each description with ccm-followup-check; its two examples pass.
+# shellcheck disable=SC2016 # literal backticks in the markdown being matched
+skills_auto_ticket_follow_up_shapes() {
+  local f="$ROOT/skills/auto-ticket/SKILL.md" missing='' ex shapes=''
+  grep -qF '`Needs Decision`' "$f" || missing+=" decision-state"
+  grep -qF '`## Acceptance criteria`' "$f" || missing+=" criteria"
+  grep -qF '`**q1.** <question>`' "$f" || missing+=" q1"
+  grep -qF 'bin/ccm-followup-check' "$f" || missing+=" helper"
+  grep -qF 'Low-priority also' "$f" || missing+=" one-finding"
+  grep -qF 'ccm-followup-check' "$ROOT/skills/auto-ticket/autonomous-contract.md" || missing+=" contract"
+  # Each example is a ```text fence holding a Follow-up key line.
+  while IFS= read -r -d '' ex; do
+    OUT=$(printf '%s' "$ex" | "$BIN/ccm-followup-check") || missing+=" example:$(fu_rules)"
+    shapes+=" $(jqval .shape)"
+  done < <(awk '/^```text$/ { inb = 1; b = ""; next } inb && /^```$/ { inb = 0; if (b ~ /\nFollow-up key: /) printf "%s%c", b, 0; next } inb { b = b $0 "\n" }' "$f")
+  check "${missing# },${shapes# }" ",decision change"
 }
 
 # ---- ccm-baseline-check and /ccmagic:spec-baseline (RV-84) ------------------
@@ -5643,6 +5746,205 @@ specdelta_approval_archive_end_to_end() {
   check "$(git diff --name-only main HEAD | grep -cv -e '^openspec/changes/add-reset/' -e "^$folder/" -e '^openspec/specs/')" "0"
 }
 
+# sd_hand_archive FOLDER: archive the rv-12 delta by hand (no openspec CLI):
+# move it under openspec/changes/archive/FOLDER and edit the capability spec,
+# as openspec archive does, then commit it with a code change.
+sd_hand_archive() {
+  mkdir -p "openspec/changes/archive/$1"
+  command mv "$SDC"/* "openspec/changes/archive/$1/"
+  rmdir "$SDC"
+  echo 'Shown as "no items" at zero.' >>openspec/specs/counting/spec.md
+  echo '// zero reads "no items"' >>src/counter.js
+  gcommit 'fix: zero items'
+}
+
+# Ccmagic issue 111, RD-42: a second run resumes a branch whose archive an
+# earlier run made, archives nothing itself, and its run record still names
+# the archive folder the PR head carries.
+specdelta_record_names_archive_from_an_earlier_run() {
+  sd_repo
+  local folder=openspec/changes/archive/2026-10-24-rv-12-count-display first
+  sd_hand_archive 2026-10-24-rv-12-count-display
+  first=$(git rev-parse HEAD)
+  sd record "$first" main
+  check "$RC,$(jqval .touches_openspec),$(jqval .spec_delta),$(jqval .detail)" "0,true,$folder,null"
+  # Attempt 1 parked. main moves on; the second run merges it into the
+  # branch and changes only code.
+  git checkout -q main
+  echo 'unrelated' >README.md && gcommit 'docs: readme'
+  git checkout -q fix/rv-12
+  g merge -q --no-edit main
+  echo '// retry' >>src/counter.js && gcommit 'fix: retry'
+  check "$(git diff --name-only "$first" HEAD -- openspec)" ""
+  sd record "$(git rev-parse HEAD)" main
+  check "$RC,$(jqval .spec_delta),$(jqval .head)" "0,$folder,$(git rev-parse HEAD)"
+  # The record reads the commit it is given, not the checkout.
+  git checkout -q main
+  sd record "$first" main
+  check "$RC,$(jqval .spec_delta)" "0,$folder"
+}
+
+specdelta_record_without_one_added_folder() {
+  sd_repo
+  command rm -rf "$SDC"
+  echo '// refactor' >>src/counter.js && gcommit 'refactor: counter'
+  sd record HEAD main
+  check "$RC,$(jqval .touches_openspec),$(jqval .spec_delta)" "0,false,null"
+  echo 'hand edit' >>openspec/specs/counting/spec.md && gcommit 'spec edit'
+  sd record HEAD main
+  check "$RC,$(jqval .touches_openspec),$(jqval .spec_delta),$(jqval .detail)" "0,true,null,the PR changes openspec/ and touches no archive folder"
+  mkdir -p openspec/changes/archive/2026-01-01-rv-12-a openspec/changes/archive/2026-01-02-rv-12-b
+  echo a >openspec/changes/archive/2026-01-01-rv-12-a/proposal.md
+  echo b >openspec/changes/archive/2026-01-02-rv-12-b/proposal.md
+  gcommit 'two archives'
+  sd record HEAD main
+  check "$RC,$(jqval .spec_delta)" "0,null"
+  [[ $(jqval .detail) == "the PR touches 2 archive folders"* ]]
+  # An archive folder the base already has, edited, is not this PR's archive.
+  git checkout -q main && git merge -q --ff-only fix/rv-12 && git checkout -q -b fix/rv-13
+  echo edit >>openspec/changes/archive/2026-01-01-rv-12-a/proposal.md && gcommit 'edit old archive'
+  sd record HEAD main
+  check "$RC,$(jqval .spec_delta),$(jqval .detail)" "0,null,openspec/changes/archive/2026-01-01-rv-12-a/proposal.md is not added; the PR changes an archive folder the base already has"
+  sd record nope main; check "$RC" "3"
+  sd record main; check "$RC" "4"
+  sd record --worktree HEAD main; check "$RC" "4"
+}
+
+# The orchestrator sets the run record's spec_delta from the PR head with
+# ccm-spec-delta record, for a run that archived nothing itself (issue 111).
+skills_run_record_spec_delta_from_pr_head() {
+  local f missing=
+  for f in skills/auto-ticket/SKILL.md skills/auto-ticket/autonomous-contract.md; do
+    awk '$0 == "<!-- ccmagic:plain-delta -->" { b = 1 } $0 == "<!-- /ccmagic:plain-delta -->" { b = 0 } b' "$ROOT/$f" |
+      grep -qF 'ccm-spec-delta" record' || missing+=" $f"
+  done
+  # shellcheck disable=SC2016 # a literal ${CLAUDE_PLUGIN_ROOT}
+  grep -qF 'Bash(${CLAUDE_PLUGIN_ROOT}/bin/ccm-spec-delta *), Bash(ccm-spec-delta *)' "$ROOT/skills/auto-ticket/SKILL.md" || missing+=" auto-ticket-grant"
+  grep -qF 'whichever run archived it' "$ROOT/skills/work-ticket/spec-delta.md" || missing+=" work-ticket-resume"
+  check "${missing# }" ""
+}
+
+# ---- ccm-acceptance: Reeve's acceptance tests (RV-134, ccmagic issue 111) ------
+
+acc() { run "$BIN/ccm-acceptance" "$@"; }
+AD=e2e/acceptance/RD-41 AM=acceptance-pending/RD-41
+# acc_repo: main with an app file.
+acc_repo() { mkdir -p src && echo 'export const paused = false' >src/app.js && gcommit base; }
+# acc_write_tests: what RD-41's tests ticket adds: tests citing AC-1 and AC-3,
+# and the marker.
+acc_write_tests() {
+  mkdir -p "$AD" acceptance-pending
+  printf '%s\n' 'acceptance("RD-41", "AC-1", "shows the pause confirmation", async ({ page }) => {})' \
+    'acceptance("RD-41", "AC-3", "lists each tripped repo", async ({ page }) => {})' >"$AD/pause.spec.ts"
+  echo '{"repos": []}' >"$AD/breakers.json"
+  : >"$AM"
+}
+
+# Mode 1: the tests ticket (a reeve:acceptance block) adds only the tests and
+# the marker, with a test title per criterion.
+acceptance_tests_ticket_mode() {
+  acc_repo
+  git checkout -q -b feature/RD-50-acceptance-tests
+  acc_write_tests
+  acc tests --worktree --ids AC-1,AC-2,AC-3,AC-31 "$AD" "$AM" main
+  check "$RC,$(jqval .pass),$(jqval .parent),$(jq -c .uncited <<<"$OUT")" '0,true,RD-41,["AC-2","AC-31"]'
+  check "$(jq -c .tests <<<"$OUT")" "[\"$AD/breakers.json\",\"$AD/pause.spec.ts\"]"
+  gcommit 'test: RD-41 acceptance tests'
+  acc tests --ids AC-1,AC-3 "$AD" "$AM" main
+  check "$RC,$(jq -c .uncited <<<"$OUT")" "0,[]"
+  # Anything outside the directory and the marker breaks scope.
+  echo 'export const paused = true' >src/app.js
+  acc tests --worktree "$AD" "$AM" main
+  check "$RC,$(jqval .rule),$(jqval .file)" "1,scope,src/app.js"
+  git checkout -q -- src/app.js
+  mkdir -p acceptance-pending && : >acceptance-pending/RD-77
+  acc tests --worktree "$AD" "$AM" main
+  check "$RC,$(jqval .rule),$(jqval .file)" "1,scope,acceptance-pending/RD-77"
+  command rm -f acceptance-pending/RD-77
+  # No marker: the tests would run as expected to pass against main.
+  git rm -q "$AM"
+  acc tests --worktree "$AD" "$AM" main
+  check "$RC,$(jqval .rule)" "1,marker-missing"
+  git checkout -q HEAD -- "$AM"
+  # A marker alone is not a tests PR.
+  git checkout -q main && git checkout -q -b feature/RD-51-empty
+  mkdir -p acceptance-pending && : >"$AM"
+  acc tests --worktree "$AD" "$AM" main
+  check "$RC,$(jqval .rule)" "1,tests-missing"
+  command rm -f "$AM"
+  # Once the tests are on main, a second tests ticket for RD-41 is refused.
+  git checkout -q main && git merge -q --ff-only feature/RD-50-acceptance-tests && git checkout -q -b feature/RD-52-again
+  acc tests "$AD" "$AM" main
+  check "$RC,$(jqval .rule)" "1,exists"
+  acc tests "$AD" acceptance-pending/RD-42 main; check "$RC" "4"
+  acc tests ../x/RD-41 acceptance-pending/RD-41 main; check "$RC" "4"
+  acc tests e2e/acceptance/RD-41 e2e/acceptance/RD-41/RD-41 main; check "$RC" "4"
+  acc tests --ids 3 "$AD" "$AM" main; check "$RC" "4"
+}
+
+# Mode 2: the build of a ticket whose tests merged deletes the marker, edits
+# no test, and fails while the marker stays.
+acceptance_build_mode() {
+  acc_repo
+  acc_write_tests
+  gcommit 'test: RD-41 acceptance tests'
+  git checkout -q -b feature/RD-41-pause-confirmation
+  acc find RD-41 main
+  check "$RC,$(jqval .applies),$(jqval .source),$(jqval .dir),$(jqval .marker),$(jqval .marker_present)" "0,true,detected,$AD,$AM,true"
+  check "$(jq -c .tests <<<"$OUT")" "[\"$AD/breakers.json\",\"$AD/pause.spec.ts\"]"
+  echo 'export const paused = true' >src/app.js
+  acc build --worktree RD-41 main
+  check "$RC,$(jqval .rule),$(jqval .file)" "1,still-pending,$AM"
+  git rm -q "$AM"
+  acc build --worktree RD-41 main
+  check "$RC,$(jqval .pass)" "0,true"
+  # Loosening a test, or touching another ticket's tests or marker, fails.
+  echo 'test.skip("AC-1")' >>"$AD/pause.spec.ts"
+  acc build --worktree RD-41 main
+  check "$RC,$(jqval .rule),$(jqval .file)" "1,tests-changed,$AD/pause.spec.ts"
+  git checkout -q -- "$AD/pause.spec.ts"
+  mkdir -p e2e/acceptance/RD-60 && echo x >e2e/acceptance/RD-60/new.spec.ts
+  acc build --worktree RD-41 main
+  check "$RC,$(jqval .rule),$(jqval .file)" "1,tests-changed,e2e/acceptance/RD-60/new.spec.ts"
+  command rm -rf e2e/acceptance/RD-60
+  gcommit 'feat: pause confirmation'
+  acc build RD-41 main
+  check "$RC,$(jqval .pass)" "0,true"
+  # Another ticket has no tests; its build is unaffected.
+  acc find RD-99 main; check "$RC,$(jqval .applies)" "0,false"
+  acc build RD-99 main; check "$RC,$(jqval .applies),$(jqval .pass)" "0,false,true"
+  acc find 41 main; check "$RC,$(jqval .applies)" "0,false"
+}
+
+acceptance_find_needs_marker_or_config() {
+  acc_repo
+  mkdir -p docs/RD-60 && echo notes >docs/RD-60/notes.md && gcommit 'docs: RD-60 notes'
+  acc find RD-60 main
+  check "$RC,$(jqval .applies)" "0,false"
+  [[ $(jqval .detail) == "docs/RD-60 exists at main with no marker file named RD-60 beside it"* ]]
+  # Two candidate directories are ambiguous.
+  acc_write_tests
+  mkdir -p docs/RD-41 && echo notes >docs/RD-41/notes.md && gcommit 'tests and notes'
+  acc find RD-41 main
+  check "$RC,$(jqval .rule)" "1,ambiguous"
+  # The config names the directories, and wins over detection; a built
+  # ticket (no marker) still has its tests, read-only.
+  config $'acceptance_path: e2e/acceptance\nacceptance_pending: acceptance-pending'
+  git rm -q "$AM" && git rm -rq docs/RD-41 && gcommit 'feat: RD-41 built'
+  git checkout -q -b feature/RD-41-follow-up
+  acc find RD-41 main
+  check "$RC,$(jqval .applies),$(jqval .source),$(jqval .marker_present)" "0,true,config,false"
+  acc build RD-41 main; check "$RC" "0"
+  echo 'loosened' >>"$AD/pause.spec.ts"
+  acc build --worktree RD-41 main; check "$RC,$(jqval .rule)" "1,tests-changed"
+  config 'acceptance_path: e2e/acceptance'
+  acc find RD-41 main; check "$RC" "3"
+  config $'acceptance_path: e2e/acceptance\nacceptance_pending: e2e/acceptance/pending'
+  acc find RD-41 main; check "$RC" "3"
+  acc frob; check "$RC" "4"
+  acc find RD-41; check "$RC" "4"
+}
+
 stop_handshake_accepts_spec_delta() {
   run_stop_hook $'Opened PR #7.\n\n```\nstatus: done\nreason: https://github.com/acme/app/pull/7\nfollow_ups: []\nspec_delta: openspec/changes/archive/2026-10-14-eng-1-fix\nrequested_state: In Review\n```' ccmagic:auto-work
   check "$(blocked)" "allow"
@@ -6382,7 +6684,7 @@ harness_docker_env_passes_proxy_not_secrets() {
 MIRRORS=$(mktemp -d)
 trap 'rm -rf "$MIRRORS"' EXIT
 
-for fn in $(declare -F | awk '{print $3}' | grep -E '^(context|ci|merge_gate|guard|post|postreview|stop|threads|reply|validate|route|guide|doctor|extreview|skills|spec_block|scope|finish|baseline|propose|specpolish|specdelta|openspecver|harness)_'); do
+for fn in $(declare -F | awk '{print $3}' | grep -E '^(context|ci|merge_gate|guard|post|postreview|stop|threads|reply|validate|route|guide|doctor|extreview|skills|spec_block|scope|finish|baseline|propose|specpolish|specdelta|openspecver|harness|followup|acceptance)_'); do
   t "$fn" "$fn"
 done
 

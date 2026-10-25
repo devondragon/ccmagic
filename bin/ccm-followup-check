@@ -1,0 +1,117 @@
+#!/usr/bin/env bash
+# ccm-followup-check: read a follow-up ticket description on stdin and say,
+# as JSON, whether it has one of the two shapes auto-ticket files follow-ups
+# in (skills/auto-ticket/SKILL.md Step 6, ccmagic issue 112).
+#
+# Usage: ccm-followup-check < description
+#
+# A decision follow-up holds one or more question blocks:
+#   **q1.** <question>
+#   - A: <option> (for: <reasons>; against: <reasons>)
+#   - B: <option> (for: <reasons>; against: <reasons>)
+#   Recommended: A. <why>
+# Questions are numbered q1, q2, ... in order; each has at least two options,
+# lettered A, B, ... in order, and exactly one Recommended line naming one of
+# its options.
+#
+# Any other follow-up is a change follow-up: a `## Change` section with at
+# least one non-blank line (the file and what to do), and a
+# `## Acceptance criteria` section with at least one list item (`- [ ] `,
+# `- `, `* `, or `1. `).
+#
+# Both shapes end with exactly one `Follow-up key: <key>` line, the last
+# non-blank line. A line starting `Low-priority also` (any case) holds extra
+# findings, which belong in their own tickets.
+#
+# Output: {pass, shape: "decision" | "change", questions, problems: [{rule, detail}]}
+#   rule  key-missing | key-repeated | key-not-last | extra-findings |
+#         question-order | options-too-few | option-order | option-shape |
+#         recommended-missing | recommended-repeated | recommended-shape |
+#         recommended-unknown | change-missing |
+#         change-empty | criteria-missing | criteria-empty
+#
+# Exit codes: 0 pass, 1 problems found, 4 usage error.
+
+set -euo pipefail
+
+for a in "$@"; do
+  case $a in
+    -h|--help) sed -n '2,32p' "$0"; exit 0 ;;
+    *) echo "ccm-followup-check: unexpected argument $a" >&2; exit 4 ;;
+  esac
+done
+
+# awk prints "shape<TAB>decision|change", "questions<TAB>N", and one
+# "rule<TAB>detail" line per problem.
+lines=$(tr -d '\r' | awk '
+  function problem(r, d) { print r "\t" d }
+  function letter(i) { return substr("ABCDEFGHIJKLMNOPQRSTUVWXYZ", i, 1) }
+  function close_question() {
+    if (!q) return
+    if (opts < 2) problem("options-too-few", "q" q " has " opts " option(s); a decision needs at least two")
+    if (recs == 0) problem("recommended-missing", "q" q " has no \"Recommended: X. <why>\" line")
+    if (recs > 1) problem("recommended-repeated", "q" q " has " recs " Recommended lines")
+    if (rec != "" && !(rec in offered)) problem("recommended-unknown", "q" q " recommends " rec ", which is not one of its options")
+  }
+  function close_section() {
+    if (sec == "change" && !body) problem("change-empty", "## Change names no file and no change")
+    if (sec == "criteria" && !items) problem("criteria-empty", "## Acceptance criteria has no list item")
+    sec = ""
+  }
+  { line[NR] = $0 }
+  $0 ~ /[^[:space:]]/ { last = NR }
+  /^Follow-up key: [^[:space:]]/ { keys++; keyline = NR }
+  tolower($0) ~ /^[[:space:]]*(\*\*)?low[- ]priority also/ { problem("extra-findings", "line " NR " lists other findings; file each in its own ticket or drop it with a reason") }
+  /^## / {
+    close_section()
+    if ($0 ~ /^## Change[[:space:]]*$/) { sec = "change"; changes++; body = 0 }
+    else if ($0 ~ /^## Acceptance criteria[[:space:]]*$/) { sec = "criteria"; criteria++; items = 0 }
+    next
+  }
+  /^Follow-up key:/ { close_section(); next }
+  sec == "change" && /[^[:space:]]/ { body = 1 }
+  sec == "criteria" && /^[[:space:]]*(- \[[ xX]\] |- |\* |[0-9]+\. )[^[:space:]]/ { items = 1 }
+  /^\*\*q[0-9]+\.\*\* [^[:space:]]/ {
+    close_question()
+    n = $0; sub(/^\*\*q/, "", n); sub(/\..*/, "", n)
+    q++; opts = 0; recs = 0; rec = ""; delete offered
+    if (n + 0 != q) problem("question-order", "question q" n " should be q" q)
+    next
+  }
+  q && /^- [A-Z]: / {
+    l = substr($0, 3, 1); opts++
+    if (l != letter(opts)) problem("option-order", "q" q " option " l " should be " letter(opts))
+    offered[l] = 1
+    if ($0 !~ /\(for: [^;]*[^[:space:];][^;]*; against: .*[^[:space:])].*\)[[:space:]]*$/)
+      problem("option-shape", "q" q " option " l " does not end with (for: ...; against: ...)")
+    next
+  }
+  q && /^Recommended: / {
+    recs++
+    if ($0 ~ /^Recommended: [A-Z]\. [^[:space:]]/) rec = substr($0, 14, 1)
+    else problem("recommended-shape", "q" q ": write the line as \"Recommended: X. <why>\"")
+    next
+  }
+  END {
+    close_section(); close_question()
+    if (keys == 0) problem("key-missing", "no \"Follow-up key: <key>\" line")
+    if (keys > 1) problem("key-repeated", keys " Follow-up key lines; a follow-up has exactly one")
+    if (keys >= 1 && keyline != last) problem("key-not-last", "the Follow-up key line is not the last line")
+    if (q) { print "shape\tdecision"; print "questions\t" q }
+    else {
+      print "shape\tchange"; print "questions\t0"
+      if (!changes) problem("change-missing", "no decision block (**q1.** ...) and no ## Change section")
+      if (!criteria) problem("criteria-missing", "no ## Acceptance criteria section")
+    }
+  }')
+
+result=$(jq -Rn '
+  [inputs | split("\t") | {rule: .[0], detail: (.[1:] | join("\t"))}] as $all
+  | ($all | map(select(.rule == "shape")) | .[0].detail) as $shape
+  | ($all | map(select(.rule == "questions")) | .[0].detail | tonumber) as $q
+  | ($all | map(select(.rule != "shape" and .rule != "questions"))) as $problems
+  | {pass: ($problems | length == 0), shape: $shape, questions: $q, problems: $problems}
+' <<<"$lines")
+
+echo "$result"
+[ "$(jq -r .pass <<<"$result")" = true ]
