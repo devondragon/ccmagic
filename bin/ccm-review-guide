@@ -1,0 +1,335 @@
+#!/usr/bin/env bash
+# ccm-review-guide: a repository's REVIEW.md, and whether review findings sit
+# on lines the change under review touched, as JSON. Used by /ccmagic:review.
+#
+# Usage:
+#   ccm-review-guide load [--base REF | --file FILE|-]
+#   ccm-review-guide skip [--base REF | --file FILE|-] PATH...
+#   ccm-review-guide locate [--range RANGE | --pr N | --diff-file FILE|-] LOCATION...
+#
+# load finds REVIEW.md, else .claude/REVIEW.md (first found wins). It reads the
+# file from the merge base of REF (default main) and HEAD, with
+# `git show <merge-base>:<path>`, so a change cannot edit REVIEW.md to soften
+# its own review. When there is no merge base (no such ref, not a git
+# repository) it reads the checkout instead and says why in `note`. --file
+# reads the given file (- is stdin), for a REVIEW.md pasted with a diff.
+#
+# Sections are level-2 headings, matched case-insensitively:
+#   ## Failure modes   what a bad change looks like here (text)
+#   ## Skip            paths the reviewer does not read: one glob per list item,
+#                      the first `backticked` text of the item, else its first
+#                      word. * and ? stay within a path segment, ** crosses
+#                      segments, a trailing / means everything under that
+#                      directory, and a glob without a / (other than a trailing
+#                      one) matches at any depth, as in .gitignore. A leading /
+#                      anchors at the repository root.
+#   ## Nit cap         the first whole number in the section
+#   ## Evidence        what a finding must show (text)
+# Every other section, and any text before the first section, is guidance
+# passed through in `other_sections`.
+#
+# load prints {source, path, ref, note?, text, failure_modes, skip, nit_cap,
+# evidence, other_sections: [{heading, text}], checkout_differs, warnings}.
+# `source` is merge-base, checkout, file, or none. `checkout_differs` is true
+# when the checkout's copy differs from the one read (or the checkout has one
+# and the merge base has none): the change edits REVIEW.md, and the review
+# used the merge base's copy.
+#
+# skip loads REVIEW.md the same way and prints {source, skip, skipped:
+# [{path, glob}], kept: [path]} for the PATH arguments.
+#
+# locate reads the diff under review: --range (default main...HEAD, read with
+# -U0), --pr (`gh pr diff N`), or --diff-file. A LOCATION is
+# path:LINE, path:START-END, or a bare path. A location is pre-existing when
+# no line of it is an added line or sits next to removed lines, or its file is
+# not in the diff. A bare path in the diff, a deleted file, and a binary file
+# count as introduced. Prints {source, files: [{path, changed_lines, whole}],
+# findings: [{location, file, start, end, pre_existing, reason}],
+# introduced, pre_existing}.
+#
+# Exit codes:
+#   0  done
+#   3  couldn't read the diff or the --file, or a LOCATION has no path
+#   4  usage error
+
+set -euo pipefail
+# shellcheck source=bin/ccm-lib.sh
+. "$(dirname "${BASH_SOURCE[0]}")/ccm-lib.sh"
+
+usage() { echo "ccm-review-guide: $1" >&2; exit 4; }
+fail() { jq -n --arg e "$1" --arg d "${2:-}" '{error: $e} + (if $d == "" then {} else {detail: $d} end)'; exit 3; }
+
+mode=${1:-}
+case $mode in
+  load|skip|locate) shift ;;
+  -h|--help) sed -n '2,52p' "$0"; exit 0 ;;
+  "") usage "give a mode: load, skip, or locate" ;;
+  *) usage "unknown mode $mode" ;;
+esac
+
+# ---- REVIEW.md ---------------------------------------------------------------
+
+# parse_guide: REVIEW.md text on stdin; prints the parsed sections as JSON.
+parse_guide() {
+  jq -R -s '
+    def trim: sub("^\\s+"; "") | sub("\\s+$"; "");
+    def key: ascii_downcase | gsub("\\s+"; " ") | trim;
+    (gsub("\r"; "") | split("\n")
+     | reduce .[] as $l ({sections: [], cur: {heading: "", lines: []}, fence: false};
+         if ($l | test("^\\s*(```|~~~)")) then .fence = (.fence | not) | .cur.lines += [$l]
+         elif (.fence | not) and ($l | test("^## +[^#]")) then
+           .sections += [.cur]
+           | .cur = {heading: ($l | sub("^## +"; "") | sub("\\s+#+\\s*$"; "") | trim), lines: []}
+         else .cur.lines += [$l] end)
+     | (.sections + [.cur])
+     | map({heading, text: (.lines | join("\n") | trim)})
+     | map(select(.heading != "" or .text != ""))) as $secs
+    | def section($k): [$secs[] | select((.heading | key) == $k) | .text] | join("\n\n");
+    (section("skip") | split("\n")
+     | map(select(test("^\\s*[-*+]\\s+\\S"))
+           | sub("^\\s*[-*+]\\s+"; "")
+           | if test("`[^`]+`") then capture("`(?<g>[^`]+)`").g else (split(" ")[0]) end
+           | trim | select(. != ""))) as $skip
+    | (section("nit cap")) as $cap_text
+    | ($cap_text | [scan("[0-9]+")] | first) as $cap
+    | {failure_modes: section("failure modes"), skip: $skip,
+       nit_cap: (if $cap == null then null else ($cap | tonumber) end),
+       evidence: section("evidence"),
+       other_sections: [$secs[] | select((.heading | key) as $k
+         | ["failure modes", "skip", "nit cap", "evidence"] | index($k) | not)],
+       warnings: ([if ($secs | any(.heading | key == "nit cap")) and $cap == null
+                   then "## Nit cap has no whole number; no cap applied" else empty end]
+                  + [if ($secs | any(.heading | key == "skip")) and ($skip | length) == 0
+                     then "## Skip has no list items; nothing skipped" else empty end])}'
+}
+
+# load_guide ARGS...: sets GUIDE to the load output.
+load_guide() {
+  local base=main file="" have_base=false
+  PATHS=()
+  while [ $# -gt 0 ]; do
+    case $1 in
+      --base) [ -n "${2:-}" ] || usage "--base needs a ref"; base=$2; have_base=true; shift ;;
+      --file) [ -n "${2:-}" ] || usage "--file needs a file or -"; file=$2; shift ;;
+      -h|--help) sed -n '2,52p' "$0"; exit 0 ;;
+      -*) usage "unknown flag $1" ;;
+      *) PATHS+=("$1") ;;
+    esac
+    shift
+  done
+  if [ -n "$file" ] && $have_base; then usage "give --base or --file, not both"; fi
+
+  local text="" source=none path="" ref="" note="" differs=false root mb="" p
+  if [ -n "$file" ]; then
+    if [ "$file" = - ]; then text=$(cat)
+    elif [ -f "$file" ]; then text=$(cat "$file")
+    else fail "REVIEW.md file not found" "$file"; fi
+    source=file path=$file
+  else
+    root=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
+    if git rev-parse --git-dir >/dev/null 2>&1; then
+      mb=$(git merge-base "$base" HEAD 2>/dev/null) || {
+        mb=""
+        note="no merge base of $base and HEAD; read the checkout"
+      }
+    else
+      note="not a git repository; read the checkout"
+    fi
+    if [ -n "$mb" ]; then
+      ref=$mb
+      for p in REVIEW.md .claude/REVIEW.md; do
+        if git cat-file -e "$mb:$p" 2>/dev/null; then
+          text=$(git show "$mb:$p") source=merge-base path=$p
+          break
+        fi
+      done
+      if [ "$source" = merge-base ]; then
+        if [ ! -f "$root/$path" ] || [ "$(cat "$root/$path")" != "$text" ]; then differs=true; fi
+      else
+        for p in REVIEW.md .claude/REVIEW.md; do
+          [ -f "$root/$p" ] && { differs=true; path=$p; break; }
+        done
+      fi
+    else
+      for p in REVIEW.md .claude/REVIEW.md; do
+        if [ -f "$root/$p" ]; then text=$(cat "$root/$p") source=checkout path=$p; break; fi
+      done
+    fi
+  fi
+
+  local parsed
+  parsed=$(printf '%s' "$text" | parse_guide)
+  GUIDE=$(jq -n --arg source "$source" --arg path "$path" --arg ref "$ref" --arg note "$note" \
+    --arg text "$text" --argjson differs "$differs" --argjson p "$parsed" '
+    {source: $source,
+     path: (if $source == "none" then null else $path end),
+     ref: (if $ref == "" then null else $ref end)}
+    + (if $note == "" then {} else {note: $note} end)
+    + {text: $text} + ($p | del(.warnings))
+    + {checkout_differs: $differs,
+       warnings: ($p.warnings
+         + (if $differs and $source == "merge-base" then
+              ["the checkout edits \($path); the merge base copy was used"]
+            elif $differs then
+              ["the checkout adds \($path), which the merge base does not have; it was not used"]
+            else [] end))}')
+}
+
+if [ "$mode" = load ]; then
+  load_guide "$@"
+  [ ${#PATHS[@]} -eq 0 ] || usage "load takes no paths"
+  printf '%s\n' "$GUIDE"
+  exit 0
+fi
+
+if [ "$mode" = skip ]; then
+  load_guide "$@"
+  printf '%s\n' "${PATHS[@]+"${PATHS[@]}"}" | jq -R -s --argjson g "$GUIDE" '
+    def glob_re:
+      sub("^\\./"; "") as $raw
+      | ($raw | startswith("/")) as $lead
+      | ($raw | ltrimstr("/") | rtrimstr("/")) as $p
+      | ($lead or ($p | contains("/"))) as $anchored
+      | ($p
+         | gsub("(?<c>[.+^$(){}|\\[\\]\\\\])"; "\\\(.c)")
+         | gsub("\\*\\*/"; "\u0001") | gsub("\\*\\*"; "\u0002")
+         | gsub("\\?"; "[^/]") | gsub("\\*"; "[^/]*")
+         | gsub("\u0001"; "(.*/)?") | gsub("\u0002"; ".*")) as $re
+      | (if $anchored then "^" else "(^|/)" end) + $re + "(/.*)?$";
+    ($g.skip | map({glob: ., re: glob_re})) as $globs
+    | (split("\n") | map(select(. != "") | sub("^\\./"; ""))) as $paths
+    | [ $paths[] as $path
+        | {path: $path, glob: (first($globs[] | select(.re as $re | $path | test($re)) | .glob) // null)} ] as $all
+    | {source: $g.source, skip: $g.skip,
+       skipped: [$all[] | select(.glob != null)],
+       kept: [$all[] | select(.glob == null) | .path]}'
+  exit 0
+fi
+
+# ---- locate ------------------------------------------------------------------
+
+target="" kind="" diff_file="" sources=0
+locs=()
+while [ $# -gt 0 ]; do
+  case $1 in
+    --range|--pr) [ -n "${2:-}" ] || usage "$1 needs a value"
+      [ "$1" = --pr ] && { [[ $2 =~ ^#?[0-9]+$ ]] || usage "--pr needs a number"; }
+      kind=${1#--} target=$2 sources=$((sources + 1)); shift ;;
+    --diff-file) [ -n "${2:-}" ] || usage "--diff-file needs a file or -"; diff_file=$2; sources=$((sources + 1)); shift ;;
+    -h|--help) sed -n '2,52p' "$0"; exit 0 ;;
+    -) usage "use --diff-file - to read a diff from stdin" ;;
+    -*) usage "unknown flag $1" ;;
+    *) locs+=("$1") ;;
+  esac
+  shift
+done
+[ "$sources" -le 1 ] || usage "give one of --range, --pr, or --diff-file"
+
+if [ -n "$diff_file" ]; then
+  source_kind=file source_value=$diff_file
+  if [ "$diff_file" = - ]; then diff=$(cat)
+  elif [ -f "$diff_file" ]; then diff=$(cat "$diff_file")
+  else fail "diff file not found" "$diff_file"; fi
+elif [ "$kind" = pr ]; then
+  source_kind=pr source_value=${target#\#}
+  diff=$(gh pr diff "$source_value" 2>/dev/null) ||
+    fail "gh pr diff $source_value failed" "$(gh pr diff "$source_value" 2>&1 >/dev/null || true)"
+else
+  source_kind=range source_value=${target:-main...HEAD}
+  git rev-parse --git-dir >/dev/null 2>&1 || fail "not a git repository" "$PWD"
+  diff=$(git diff -U0 --no-color --no-ext-diff "$source_value" -- 2>/dev/null) ||
+    fail "git diff $source_value failed" "$(git diff -U0 --no-color --no-ext-diff "$source_value" -- 2>&1 >/dev/null || true)"
+fi
+
+# Emits "F<TAB>path" per file in the diff, "W<TAB>path" for a file whose every
+# line counts as changed (deleted or binary), and "L<TAB>path<TAB>n" for each
+# changed line on the new side: an added line, or the two lines around a run of
+# removed lines with no added line after it. Hunk counts decide where a hunk
+# ends, so a removed line that starts with "--" is not read as a header.
+changed=$(printf '%s\n' "$diff" | awk '
+  { sub(/\r$/, ""); L[++n] = $0 }
+  function strip(p) {
+    sub(/\t.*$/, "", p)
+    if (p == "/dev/null") return ""
+    sub(/^[ab]\//, "", p)
+    return p
+  }
+  function start_file(path) { cur = path; if (!(path in seen)) { seen[path] = 1; print "F\t" path } }
+  function mark(x) { if (cur != "" && x >= 1) print "L\t" cur "\t" x }
+  function flush_del() { if (pend) { mark(ln - 1); mark(ln) } pend = 0 }
+  END {
+    inh = 0; orem = 0; nrem = 0; pend = 0
+    for (i = 1; i <= n; i++) {
+      s = L[i]
+      if (inh && (orem > 0 || nrem > 0)) {
+        c = substr(s, 1, 1)
+        if (c == "+") { pend = 0; mark(ln); ln++; nrem--; continue }
+        if (c == "-") { pend = 1; orem--; continue }
+        if (c == " " || s == "") { flush_del(); ln++; orem--; nrem--; continue }
+        if (c == "\\") continue
+      }
+      if (inh) { flush_del(); inh = 0 }
+      if (s ~ /^diff --git /) {
+        p = substr(s, 12); q = p
+        sub(/ b\/.*$/, "", p); sub(/^a\//, "", p); sub(/^.* b\//, "", q)
+        oldp = p; newp = q; start_file(newp)
+        continue
+      }
+      if (s ~ /^Binary files /) { print "W\t" cur; continue }
+      if (s ~ /^--- / && L[i + 1] ~ /^\+\+\+ /) {
+        o = strip(substr(s, 5)); w = strip(substr(L[i + 1], 5))
+        if (w != "") start_file(w)
+        else if (o != "") { start_file(o); print "W\t" o }
+        i++
+        continue
+      }
+      if (s ~ /^@@ /) {
+        split(s, a, " ")
+        b = a[2]; sub(/^-/, "", b); orem = (b ~ /,/) ? substr(b, index(b, ",") + 1) + 0 : 1
+        b = a[3]; sub(/^\+/, "", b)
+        ns = (b ~ /,/) ? substr(b, 1, index(b, ",") - 1) + 0 : b + 0
+        nrem = (b ~ /,/) ? substr(b, index(b, ",") + 1) + 0 : 1
+        ln = (nrem == 0) ? ns + 1 : ns
+        inh = 1; pend = 0
+        continue
+      }
+      if (s ~ /^deleted file mode/ && cur != "") { print "W\t" cur; continue }
+      if (s ~ /^rename to /) { start_file(substr(s, 11)); continue }
+    }
+    if (inh) flush_del()
+  }')
+
+for l in "${locs[@]+"${locs[@]}"}"; do
+  case $l in :*) fail "location has no path" "$l" ;; esac
+done
+
+printf '%s\n' "$changed" | jq -R -s \
+  --arg kind "$source_kind" --arg value "$source_value" \
+  --args '
+  (split("\n") | map(select(. != "") | split("\t"))) as $rows
+  | (reduce $rows[] as $r ({};
+      if $r[0] == "F" then .[$r[1]] //= {lines: {}, whole: false}
+      elif $r[0] == "W" then .[$r[1]].whole = true | .[$r[1]].lines //= {}
+      elif $r[0] == "L" then .[$r[1]].lines[$r[2]] = true
+      else . end)) as $files
+  | [ $ARGS.positional[] as $loc
+      | ($loc | capture("^(?<file>.*):(?<s>[0-9]+)(-(?<e>[0-9]+))?$")
+         // {file: $loc, s: null, e: null}) as $c
+      | ($c.file | sub("^\\./"; "") | sub("^[ab]/"; "")) as $f
+      | ($c.s | if . == null then null else tonumber end) as $s
+      | (if $c.e == null then $s else ($c.e | tonumber) end) as $e
+      | $files[$f] as $info
+      | (if $info == null then {pre: true, why: "file not in the diff"}
+         elif $info.whole then {pre: false, why: "the change deletes or replaces the whole file"}
+         elif $s == null then {pre: false, why: "no line given; the file is in the diff"}
+         else
+           ([range([$s, $e] | min; ([$s, $e] | max) + 1)] | map(select($info.lines[tostring])) | first) as $hit
+           | if $hit != null then {pre: false, why: "line \($hit) is added or next to removed lines"}
+             else {pre: true, why: "outside every changed hunk"} end
+         end) as $v
+      | {location: $loc, file: $f, start: $s, end: $e, pre_existing: $v.pre, reason: $v.why} ] as $found
+  | {source: {kind: $kind, value: $value},
+     files: [$files | to_entries[] | {path: .key, changed_lines: (.value.lines | length), whole: .value.whole}],
+     findings: $found,
+     introduced: [$found[] | select(.pre_existing | not)] | length,
+     pre_existing: [$found[] | select(.pre_existing)] | length}' "${locs[@]+"${locs[@]}"}"

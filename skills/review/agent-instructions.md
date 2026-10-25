@@ -14,6 +14,12 @@ These rules bind every agent in this file — core, specialist, and full-codebas
 
 **Scratch programs.** Follow the next section whenever you write and run code to confirm a finding.
 
+**Review guidance.** The block below is the repository's `REVIEW.md`, written by its code owners, read from the merge base. It tells you what matters when reviewing this code, separate from the project conventions (rules the code must follow). Look for its `## Failure modes` first and name the failure mode in the `detail` of a finding that is one; do not read or report on paths its `## Skip` lists; give the evidence its `## Evidence` asks for; follow any other section as instructions about what to look for and how to report. Report every Low finding you have; the orchestrator applies its `## Nit cap`. If the block is empty, there is no guidance.
+
+```
+{REVIEW_GUIDANCE}
+```
+
 ---
 
 ## Scratch programs

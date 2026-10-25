@@ -1,0 +1,46 @@
+# REVIEW.md
+
+<!--
+Template for a repository's REVIEW.md. Copy it to REVIEW.md (or
+.claude/REVIEW.md) at the repository root and edit it. /ccmagic:review reads
+it from the merge base of the change under review, so an edit to this file
+takes effect for changes made after it merges, never for the PR that makes it.
+
+CLAUDE.md says how to write code here. REVIEW.md says what matters when
+reviewing it. Keep it short: the good ones fit on one screen.
+
+The four sections below are the ones the review skill acts on. Any other
+section is passed to every reviewer as guidance, as written.
+-->
+
+## Failure modes
+
+What a bad change looks like in this repository. Reviewers look for these
+first. A finding that is one of them is raised to the severity named here, or
+one level when none is named.
+
+- Docs: it lies. A doc, comment, or help text that describes behavior the
+  code does not have is High.
+- Config: it misroutes. A route, queue name, or environment key that sends
+  traffic or data to the wrong place is Critical.
+- Migrations: they lock or lose data on a large table.
+
+## Skip
+
+Paths the reviewer does not read. One glob per list item. `*` stays within a
+directory, `**` crosses directories, a trailing `/` means everything under that
+directory, and a glob without a `/` matches at any depth.
+
+- `src/generated/**` generated API client
+- `vendor/`
+- `*.snap`
+- `package-lock.json`
+
+## Nit cap
+
+3
+
+## Evidence
+
+Every finding cites a file and line, never a guess from a name. A Critical
+finding also gives the command or input that reproduces it.

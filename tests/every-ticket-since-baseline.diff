@@ -193,7 +193,14 @@
  ---
  
  ## Step 3: Ticket-grounded review
-@@ -126,11 +142,11 @@ Run the review-ticket step via `run_step` — `/ccmagic:review-ticket {TICKET-ID
+@@ -120,17 +136,17 @@ Run the review-ticket step via `run_step` — `/ccmagic:review-ticket {TICKET-ID
+ - `clean` → record the handshake's `head:` as `reviewed_head`, the commit the last clean review read, and continue to Step 4.
+ - `needs-human` → **route-and-stop** (stage = `review-ticket`).
+ - `fixable-findings` → run a **bounded fix loop** (max `max_review_fix_passes` passes, default **3**). Do not edit the code yourself; the fixes run on the work step's model:
+-  1. **Build the fix grounding.** Copy each CRITICAL finding and each listed fixable missing-AC item from the review report into a `findings_to_fix:` section, exactly as written: id, title, file and line, detail, the `systemic:` tag and its enumeration, and the **Reproduction** when there is one. A delta report (pass 2 on) lists a finding that is still not fixed as a one-liner, so for that finding copy its full text from the earlier report that first raised it; keep each report's findings in your context until the loop ends. Add `fix_pass: {n}` (1 on the first pass, incrementing) and `fix_source: review` to the grounding block (contract §2).
++  1. **Build the fix grounding.** Copy each CRITICAL finding and each listed fixable missing-AC item from the review report into a `findings_to_fix:` section, exactly as written (never a pre-existing finding, one on a line the PR did not touch; those reach the follow-up list through the review's `follow_ups:`, and a pre-existing Critical security finding comes back as `needs-human`, which parks the run): id, title, file and line, detail, the `systemic:` tag and its enumeration, and the **Reproduction** when there is one. A delta report (pass 2 on) lists a finding that is still not fixed as a one-liner, so for that finding copy its full text from the earlier report that first raised it; keep each report's findings in your context until the loop ends. Add `fix_pass: {n}` (1 on the first pass, incrementing) and `fix_source: review` to the grounding block (contract §2).
+   2. **Apply the fixes** via `run_step` on the work step (`auto-work`) with that grounding. It follows `work-ticket`'s *Fix pass*: it fixes a `systemic:` finding as a class and re-runs the enumeration search, applies contract §9 to a security or invariant finding, and leaves its changes uncommitted. Run the **fix-pass git check** (below) around it. On `needs-human` → **route-and-stop** (stage = `review-ticket`) with its reason; for a §9 fix that still fails, the reason names the finding and the first failing input, and nothing is pushed. On `done`, read the `applied_findings:` and `commit_notes:` sections above its handshake (contract §3). If `applied_findings:` is missing or leaves out an item you sent, **route-and-stop** (reason: "fix pass {n} (review) did not report {item}").
+   3. **Commit and push** via `/ccmagic:push` (run this via `run_step`), appending the work step's `commit_notes:` section to the push grounding when it reported one. This is the pass's only commit and push. If push returns `needs-human`, **route-and-stop**.
    4. **Re-review.** Re-invoke the review-ticket step via `run_step`, adding `review_pass: {review_pass}` to the grounding block (the run-wide review counter below, so 2 on the run's first re-review) so the reviewer produces a delta report (contract §2), and a `previous_findings:` section that copies the fix pass's `applied_findings:` list as reported, including the invariant test named for each finding fixed under contract §9, so the fresh review subagent knows what to verify.
    5. `clean` → record its `head:` as `reviewed_head` and continue to Step 4. `fixable-findings` again and passes remain → repeat from item 1 with the new report's findings. Passes exhausted still not clean, or `needs-human` → **route-and-stop** (reason: the outstanding findings).
  
@@ -672,16 +679,92 @@
  ---
  
  ## Step 4: Run ticket-scope drift analysis
-@@ -234,6 +236,7 @@ Absent all three, run the interactive path exactly as documented above. Also rea
+@@ -234,7 +236,9 @@ Absent all three, run the interactive path exactly as documented above. Also rea
  - **Step 7 (Drift handling):** apply rules instead of asking:
    - **Out-of-scope changes** stay, but flag each one — leave the out-of-scope table populated and post a PR comment listing them — unless this pass's report is being posted as a PR comment (the *Report posting* rule below): a full report carries the out-of-scope table itself, and a delta report carries net-new out-of-scope items plus the reference to the prior report's table; either way, don't post both. Do not revert.
    - **Missing AC** → treat as *not-done*: `fixable-findings` if the caller can close it in-scope; `needs-human` if it can't.
 +  - A visual criterion (one that asks for a screenshot or names a visible UI state) is not missing AC when the code implements what it describes; auto-ticket's visual check or UAT checklist covers the looking. Report it as missing only when the code does not implement it.
    - **CRITICAL findings** from `/ccmagic:review` must be fixed before proceeding → return them under `fixable-findings` (the caller fixes and re-reviews). A CRITICAL finding that needs human judgment → `needs-human`.
++  - **Pre-existing findings** (`pre_existing: true`, on lines this change did not add or modify) never make the verdict `fixable-findings` or `needs-human` and are never listed for a fix. Put them under `follow_ups:`, one entry per `systemic:` group (a finding without `systemic:` is its own group), naming the file, line, and issue. The exception is a pre-existing Critical security finding: it still blocks, since merging ships it again, but it is never sent for a fix. The verdict is `needs-human`, and `reason` names the finding (`pre-existing Critical security: {file}:{line} {issue}`).
  - **Report posting:** if a PR exists for the branch, post the Step 6 combined report (or the delta report on re-review passes) as a PR comment. Every posted report, full or delta, begins with the `# Ticket-Grounded Review: {TICKET-ID}` heading line with no preamble before it, and in autonomous mode ends with the handshake shown under *Verdict → handshake mapping*: the same keys in the same order, the actual verdict filled into `status:`, inside a code fence, as the last thing in the comment body (an external merge gate selects the comment by that heading and reads the handshake block that ends it; a fenced block is the rendering it reads without ambiguity); with no PR (e.g. a standalone pre-PR review), skip — the report in your output is the artifact.
  
+   Post it with `ccm-post-review`, never with `gh pr comment` directly. It reads the report on stdin, checks the heading and the fenced handshake (including that `head:` is the checkout's HEAD), and only then posts. Pass the PR number from the Step 0 `ccm-context` output (`pr.number`), or omit it to use the current branch's PR:
+@@ -248,7 +252,7 @@ Absent all three, run the interactive path exactly as documented above. Also rea
+   - **0:** posted; the JSON has the comment `url`.
+   - **1:** refused, nothing posted. `problems` lists what is wrong with the report's format. Fix the report and run it again; do not post it any other way.
+   - **3:** the post itself failed (HEAD unreadable or not a 40-character SHA, no PR for the branch, GitHub error). Say so in your output and continue. A later delta pass then leans on the grounding block's `previous_findings:` alone (the prior-comment reference is a convenience, not a dependency).
+-- **Re-review passes (`review_pass:` ≥ 2 in the grounding block):** post a **delta report** instead of a full fresh one, under the same `# Ticket-Grounded Review: {TICKET-ID}` heading line and ending with the same fenced handshake: each entry in the grounding block's `previous_findings:` list verified and reported fixed / not-fixed as one-liners, net-new findings in full (schema unchanged), and a reference to the previous pass's report comment on the PR (fetch via `gh pr view --json comments` if needed) instead of repeating unchanged sections. Verdict and handshake semantics are unchanged, and the systemic-enumeration and scoped-all-clear rules apply in full on every pass. On the orchestrator's re-review after a late push (its Step 4f), `previous_findings:` may also list commits (`- {short sha} {subject}`) pushed since the last clean review: review each commit's changes as new code and report its findings in full, since no earlier pass read them.
++- **Re-review passes (`review_pass:` ≥ 2 in the grounding block):** post a **delta report** instead of a full fresh one, under the same `# Ticket-Grounded Review: {TICKET-ID}` heading line and ending with the same fenced handshake: each entry in the grounding block's `previous_findings:` list verified and reported fixed / not-fixed as one-liners, net-new findings in full (schema unchanged), and a reference to the previous pass's report comment on the PR (fetch via `gh pr view --json comments` if needed) instead of repeating unchanged sections. A pre-existing finding verified unchanged is one line ("pre-existing, unchanged: `file:line` issue") and is never re-raised as new. Verdict and handshake semantics are unchanged, and the systemic-enumeration and scoped-all-clear rules apply in full on every pass. On the orchestrator's re-review after a late push (its Step 4f), `previous_findings:` may also list commits (`- {short sha} {subject}`) pushed since the last clean review: review each commit's changes as new code and report its findings in full, since no earlier pass read them.
+ 
+ ### Verdict → handshake mapping
+ 
+@@ -263,9 +267,9 @@ follow_ups: [<any tickets or deferrals noted>]
+ 
+ `head:` names the commit the review read, so an external merge gate can accept the verdict only for a PR whose head is that commit (Reeve parks any other head as `review-not-clean`). Write it on every pass, every verdict, and every transport (mcp and prompt-relay), in the posted report and in the handshake you return: all 40 lowercase hex characters, at the start of its line, with nothing after the SHA. Never a short SHA or a placeholder. `ccm-post-review` refuses a report whose `head:` is missing or is not the checkout's HEAD, and its refusal names the SHA to use.
+ 
+-- **clean** — no CRITICAL findings and no missing AC (out-of-scope items, if any, are flagged only).
+-- **fixable-findings** — one or more CRITICAL findings and/or missing-AC items that are mechanically fixable in-scope. **List them** in the report so the caller can address them.
+-- **needs-human** — a finding or missing AC needs human judgment or can't be closed in-scope; `reason` names it. If top-level, route-and-stop (park to `needs_human_state`, or `needs_human_label` if that state doesn't exist — on GitHub create the label first if missing; comment on the PR + ticket) before emitting the handshake. **Under prompt-relay** (contract §7), that top-level park applies contract §4's *Under the prompt-relay transport* adjustments — no state move or label, parked note to the PR only, emitted (with `Requested state: {needs_human_state}`) wrapped in the §7 final-message delimiters as your final output.
++- **clean** — no CRITICAL findings and no missing AC (out-of-scope items, if any, are flagged only). Pre-existing findings do not count; they go in `follow_ups:` (a pre-existing Critical security finding makes the verdict `needs-human` instead).
++- **fixable-findings** — one or more introduced CRITICAL findings and/or missing-AC items that are mechanically fixable in-scope. **List them** in the report so the caller can address them.
++- **needs-human** — a finding or missing AC needs human judgment or can't be closed in-scope, or a pre-existing Critical security finding was found; `reason` names it. If top-level, route-and-stop (park to `needs_human_state`, or `needs_human_label` if that state doesn't exist — on GitHub create the label first if missing; comment on the PR + ticket) before emitting the handshake. **Under prompt-relay** (contract §7), that top-level park applies contract §4's *Under the prompt-relay transport* adjustments — no state move or label, parked note to the PR only, emitted (with `Requested state: {needs_human_state}`) wrapped in the §7 final-message delimiters as your final output.
+ 
+ ---
+ 
 ### skills/review/SKILL.md
-@@ -290,7 +290,7 @@ After the review completes, record the counts as in Step 7d.
+@@ -1,7 +1,7 @@
+ ---
+ name: review
+ user-invocable: true
+-allowed-tools: Read(*), Edit(*), Bash(git diff:*, git log:*, git status:*, git branch:*, git show:*, git rev-parse:*, git merge-base:*, git ls-files:*, git blame:*, gh pr view:*, gh pr diff:*, gh pr list:*, gh repo view:*, codex:*, which:*, command:*, timeout:*, gtimeout:*, echo:*, date:*, mktemp:*), Bash(${CLAUDE_PLUGIN_ROOT}/bin/ccm-review-route *), Bash(ccm-review-route *), Bash(${CLAUDE_PLUGIN_ROOT}/bin/ccm-external-review *), Bash(ccm-external-review *), Glob(*), Grep(*), Agent(*), Task(*), TodoWrite(*), AskUserQuestion(*), mcp__pal__codereview(*)
++allowed-tools: Read(*), Edit(*), Bash(git diff:*, git log:*, git status:*, git branch:*, git show:*, git rev-parse:*, git merge-base:*, git ls-files:*, git blame:*, gh pr view:*, gh pr diff:*, gh pr list:*, gh repo view:*, codex:*, which:*, command:*, timeout:*, gtimeout:*, echo:*, date:*, mktemp:*), Bash(${CLAUDE_PLUGIN_ROOT}/bin/ccm-review-route *), Bash(ccm-review-route *), Bash(${CLAUDE_PLUGIN_ROOT}/bin/ccm-review-guide *), Bash(ccm-review-guide *), Bash(${CLAUDE_PLUGIN_ROOT}/bin/ccm-external-review *), Bash(ccm-external-review *), Glob(*), Grep(*), Agent(*), Task(*), TodoWrite(*), AskUserQuestion(*), mcp__pal__codereview(*)
+ description: Use when the user asks for a code review of a change, diff, branch, or PR, including a diff pasted inline and phrasings like "review this before I open the PR", "can you code review this?", or "look over this change". Auto-routes between a fast inline checklist (QUICK) and the full multi-agent pipeline (DEEP), biased toward depth, with confidence scoring and convention awareness.
+ argument-hint: "[branch|full|PR#] [--quick|--deep] [--fix] [--threshold N]"
+ model: sonnet
+@@ -79,6 +79,8 @@ Print the same line again as the **first line of the final report** (QUICK outpu
+ 
+ If Step 0.5 selected QUICK, walk this checklist line by line against the diff. Don't skip categories. Work from the diff; when a finding depends on code outside the hunk, read only the lines around it (`Read` with `offset` and `limit`), not whole files.
+ 
++First read `${CLAUDE_SKILL_DIR}/review-guidance.md` and load `REVIEW.md` as it says (a REVIEW.md pasted with the diff counts): drop `## Skip` paths before the checklist, look for the `## Failure modes` first, and follow its other sections. Before reporting, tag each CRITICAL and WARNING finding pre-existing or introduced with one call to the `locate` mode of `ccm-review-guide`, and apply the nit cap to INFO findings.
++
+ Before reporting, read `${CLAUDE_SKILL_DIR}/finding-schema.md` and apply its **What NOT to Report** exclusions. Formatting and whitespace, import ordering, TODO/FIXME/HACK markers, and missing or removed comments and JSDoc (absent an explicit documented convention requiring them) are never CRITICAL or WARNING findings, and usually are not findings at all.
+ 
+ ### Correctness
+@@ -109,12 +111,12 @@ Group findings by severity:
+ - **WARNING** — should fix (perf issues, maintainability, missing tests for important paths).
+ - **INFO** — consider improving (style, minor naming, optional refactors).
+ 
+-For each finding include: severity, category, file/line(s), description, suggested fix.
++For each finding include: severity, category, file/line(s), description, suggested fix. Start the report (after the routing line) with the counts line, and put pre-existing findings in their own section, both as `review-guidance.md` shows.
+ 
+ Final verdict line. Only CRITICAL and WARNING findings decide the verdict; INFO findings never do:
+ - **PASS** — no CRITICAL and no WARNING findings. INFO-only reports are a PASS.
+-- **PASS WITH WARNINGS** — one or more WARNING findings, no CRITICAL; merge at reviewer's discretion.
+-- **FAIL** — one or more CRITICAL findings; address before merge.
++- **PASS WITH WARNINGS** — one or more WARNING findings, no CRITICAL; merge at reviewer's discretion. A pre-existing CRITICAL counts here.
++- **FAIL** — one or more introduced CRITICAL findings, or a pre-existing CRITICAL security finding; address before merge.
+ 
+ After producing the report, **stop**. Do not continue into DEEP mode steps. (If another skill invoked this one, such as `/ccmagic:review-ticket` or `/ccmagic:work-ticket`, stopping ends the review only: go back to that skill's next step.)
+ 
+@@ -135,6 +137,8 @@ Read these files if they exist (silent skip if missing):
+ 
+ Collect their content into a `{PROJECT_CONVENTIONS}` string. This is injected into every agent prompt via `${CLAUDE_SKILL_DIR}/agent-instructions.md`. If none found, agents use language-generic best practices only.
+ 
++Then load `REVIEW.md` or `.claude/REVIEW.md` into `{REVIEW_GUIDANCE}` with the `load` mode of `ccm-review-guide`, from the merge base when one is known, and apply its `## Skip` globs to the Step 2 file list. Read `${CLAUDE_SKILL_DIR}/review-guidance.md` for the calls, the sections, and why the merge base's copy is the one used. `{REVIEW_GUIDANCE}` is instructions for the reviewer; `{PROJECT_CONVENTIONS}` is rules for the code.
++
+ ## Step 2: Gather Changes and Prioritize Files
+ 
+ ### Branch mode
+@@ -240,7 +244,7 @@ Load `${CLAUDE_SKILL_DIR}/finding-schema.md` for the output format agents must u
+ Each agent receives:
+ - The file list (prioritized per Step 2)
+ - The actual diff or file contents
+-- The `{PROJECT_CONVENTIONS}` string
++- The `{PROJECT_CONVENTIONS}` string and the `{REVIEW_GUIDANCE}` string (verification agents in Step 5c get `{REVIEW_GUIDANCE}` too)
+ - Instructions to use the finding schema exactly
+ - The **Universal reporting rules (all agents)** and **Scratch programs** sections from agent-instructions.md, prepended verbatim
+ 
+@@ -290,7 +294,7 @@ After the review completes, record the counts as in Step 7d.
  
  Load `${CLAUDE_SKILL_DIR}/codex-pass.md` and follow it. It covers running the pass with `ccm-external-review` and acting on the status it reports.
  
@@ -690,7 +773,69 @@
  
  ---
  
-@@ -462,7 +462,7 @@ Create **TodoWrite** entries for all remaining (unfixed) findings, grouped by se
+@@ -316,11 +320,12 @@ Merge MCP findings into the pool using the same finding schema. MCP findings ent
+ Load `${CLAUDE_SKILL_DIR}/triage-instructions.md` for the full triage process.
+ 
+ ### 5a. Deduplicate
+-Same file + overlapping line range + same issue type → merge. Keep highest confidence, most specific detail.
++Same file + overlapping line range + same issue type → merge. Keep highest confidence, most specific detail. Then, per `review-guidance.md`: drop findings in `## Skip` paths, apply `## Failure modes` severity raises, and tag each finding `pre_existing` with one call to the `locate` mode of `ccm-review-guide` (branch and PR modes).
+ 
+ ### 5b. Apply confidence threshold
+ - Drop findings below threshold (default 80, or `--threshold N`)
+ - Exception: Critical findings with confidence 60+ survive
++- Then apply the `REVIEW.md` nit cap to Low findings, if it sets one
+ 
+ ### 5c. Verify Critical and High findings
+ For each Critical/High finding that survived, launch a parallel **verification Explore agent** (capped at 4 concurrent):
+@@ -347,6 +352,9 @@ If MCP and Explore agents disagree on a finding → flag for user decision in St
+ # Code Review Report
+ 
+ ## Summary
++Introduced: X Critical, Y High, Z Medium, W Low, V Convention. Pre-existing: P.   ← or "Introduced: 0. Pre-existing: 0. Nothing to fix."
++- **Verdict**: PASS | PASS WITH WARNINGS | FAIL (rules in review-guidance.md; pre-existing findings never FAIL on their own, except a Critical security one, which `review-ticket` turns into `needs-human`)
++- **REVIEW.md**: [path and source (merge base | checkout | pasted), "this change edits it" when `checkout_differs`, skipped paths; or "none"]
+ - **Scope**: branch changes | full codebase | PR #X
+ - **Branch**: [current branch or PR base]
+ - **Files Analyzed**: N total (M in Tier 1/2)
+@@ -354,7 +362,6 @@ If MCP and Explore agents disagree on a finding → flag for user decision in St
+ - **Coverage**: list any dimension that did not report as `unavailable — did not report`, and Codex as `findings | completed — 0 findings | timed out | unparseable | unavailable | auth failed | failed (exit N)`. If everything ran, say `full`. Never leave a dimension unlisted — an omission reads as "came back clean".
+ - **Confidence Threshold**: [threshold used]
+ - **Convention Sources**: [files loaded, or "none found"]
+-- **Findings**: X Critical, Y High, Z Medium, W Low, V Convention
+ 
+ ## Scope Check
+ [Output from Step 2.5 — CLEAN / DRIFT DETECTED / REQUIREMENTS MISSING]
+@@ -384,6 +391,9 @@ For each:
+ ## Low Priority / Suggestions ({count})
+ [grouped by file]
+ 
++## Pre-existing, not introduced by this change ({count})
++[one line each: severity, confidence, `file:line`, issue, suggestion. Omit the section when 0.]
++
+ ## Dismissed Findings ({count})
+ For each:
+ > ~~`file:line` — [original issue]~~
+@@ -418,7 +428,7 @@ Preconditions, both required:
+ - `--fix` present in `$ARGUMENTS`.
+ - Working tree clean — run `git status --porcelain` before touching any file. If it returns anything, apply nothing and say so: mixing your edits into the user's uncommitted work makes the two indistinguishable.
+ 
+-For findings marked `fixable: true` by triage (see triage-instructions.md Step 7):
++For findings marked `fixable: true` by triage (see triage-instructions.md Step 7) and not `pre_existing`:
+ - Apply each fix directly in source code with `Edit`
+ - Prefer minimal changes — one fix per finding
+ - Output per fix: `[FIXED] file:line — issue → what was changed`
+@@ -449,9 +459,7 @@ I fixed N issues in the working tree. M need your input:
+ RECOMMENDATION: Fix #1 because [reason]. Skip #2 because [reason].
+ ```
+ 
+-Apply fixes for items where the user chose "Fix." These also stay uncommitted.
+-
+-If 0 fixable findings exist, skip 7a. If 0 judgment-call findings exist, skip 7b.
++Apply fixes for items where the user chose "Fix." These also stay uncommitted. If 0 fixable findings exist, skip 7a. If 0 judgment-call findings exist, skip 7b.
+ 
+ ### 7c. Track remaining findings
+ 
+@@ -462,7 +470,7 @@ Create **TodoWrite** entries for all remaining (unfixed) findings, grouped by se
  
  ### 7d. Update review stats
  
@@ -699,6 +844,75 @@
  
  ## Step 8: Handle Disputed Findings
  
+### skills/review/agent-instructions.md
+@@ -14,6 +14,12 @@ These rules bind every agent in this file — core, specialist, and full-codebas
+ 
+ **Scratch programs.** Follow the next section whenever you write and run code to confirm a finding.
+ 
++**Review guidance.** The block below is the repository's `REVIEW.md`, written by its code owners, read from the merge base. It tells you what matters when reviewing this code, separate from the project conventions (rules the code must follow). Look for its `## Failure modes` first and name the failure mode in the `detail` of a finding that is one; do not read or report on paths its `## Skip` lists; give the evidence its `## Evidence` asks for; follow any other section as instructions about what to look for and how to report. Report every Low finding you have; the orchestrator applies its `## Nit cap`. If the block is empty, there is no guidance.
++
++```
++{REVIEW_GUIDANCE}
++```
++
+ ---
+ 
+ ## Scratch programs
+### skills/review/finding-schema.md
+@@ -16,6 +16,7 @@ Every finding reported by a review agent MUST use this exact structure. Omitting
+ - fixable: <true | false — true if the fix is mechanical and can be auto-applied without judgment>
+ - systemic: <optional — present only when the issue is an instance of a repeatable pattern: name the defect class, then enumerate EVERY instance found, searching across all reference mechanisms that could carry the pattern (template attributes, raw attributes, ES-module imports, CSS @import/url(), manifests, service workers, config files — whichever apply). Omit for one-off issues.>
+ - reproduction: <optional; present for a security finding, or any finding whose correctness depends on an invariant over untrusted input: the invariant in one line, the exact triggering inputs (escaped so control characters survive), and, if you fuzzed or enumerated, the generator or enumeration rule, the corpus size, and how many inputs failed. Omit otherwise.>
++- pre_existing: <true | false; set by the orchestrator at fan-in, never by a review agent: true when no line of the finding was added or modified by the change under review (the `locate` mode of `ccm-review-guide`). Absent in full mode, which has no diff.>
+ ```
+ 
+ Use one block per finding. Separate findings with a blank line.
+@@ -24,6 +25,8 @@ The `specialist` field enables multi-specialist confirmation (boosted confidence
+ 
+ The `systemic` field prevents whack-a-mole fix loops — a point-fix to the reported line while sibling instances survive to the next review pass. When an issue is one instance of a pattern, the **enumeration is the finding**, not the first hit: search every mechanism that could carry the pattern, not just the syntax the first instance used. And scope your all-clears: a "no other instances" claim MUST state its search scope and the mechanisms covered, or be downgraded to "no other {mechanism} instances found". An unscoped universal claim is more dangerous than silence in an autonomous loop that acts on verdicts.
+ 
++The `pre_existing` field keeps a defect the change did not introduce from reading as the author's fault, and from pulling an autonomous fix pass into code the PR is not about. A pre-existing finding never fails a review on its own; the one exception is a pre-existing Critical security finding, which still blocks because merging ships it again: FAIL in a standalone review, `needs-human` in `review-ticket`, never a fix pass (`review-guidance.md`). Review agents report the line they see and leave the field out.
++
+ The `reproduction` field hands the fixer what you used to find the issue. An autonomous fix step reruns those inputs and that corpus against its fix before pushing (`skills/auto-ticket/autonomous-contract.md` §9); without them it can only check a few cases of its own.
+ 
+ ## Severity Definitions
+### skills/review/triage-instructions.md
+@@ -13,6 +13,14 @@ You are verifying a single code review finding. Your job is to determine whether
+ {FINDING}
+ ```
+ 
++### Review guidance
++
++The repository's `REVIEW.md` (from the merge base; empty if there is none). Give the evidence its `## Evidence` section asks for at this finding's severity, and keep its `## Failure modes` in mind when judging severity.
++
++```
++{REVIEW_GUIDANCE}
++```
++
+ ### Verification Steps
+ 
+ 1. **Read the code at the reported location** — does the code actually do what the finding claims?
+@@ -63,10 +71,13 @@ Before verification, merge findings that refer to the same issue:
+ - Tag finding: `[MULTI-SPECIALIST: correctness + security]` (list confirming specialists)
+ - This is strong signal — multiple independent reviewers found the same problem
+ 
++**REVIEW.md and pre-existing tag:** after merging, drop findings in `## Skip` paths, apply `## Failure modes` severity raises, and set `pre_existing` on every finding from one call to the `locate` mode of `ccm-review-guide` (`review-guidance.md`).
++
+ ### 2. Apply Confidence Threshold
+ - Default threshold: 80 (overridable via `--threshold N`)
+ - Findings below threshold are silently dropped — they don't appear in the report at all
+ - Exception: Critical findings with confidence 60+ are kept (err on the side of caution for critical issues)
++- Then the `REVIEW.md` nit cap: keep at most `nit_cap` Low findings, highest confidence first; the rest go to Dismissed as `over the REVIEW.md nit cap ({n})`
+ 
+ ### 3. Spawn Verification Agents
+ - Only for **Critical** and **High** findings that survived deduplication and threshold
+@@ -121,4 +132,5 @@ After triage, order findings for the report:
+ 3. Medium — grouped by file to minimize reader context switching
+ 4. Convention violations — separated into their own section
+ 5. Low — at the end, grouped by file
+-6. Dismissed — transparency section showing what was filtered and why
++6. Pre-existing — every `pre_existing: true` finding except a Critical security one (which stays under Critical), one line each
++7. Dismissed — transparency section showing what was filtered and why
 ### skills/test/SKILL.md
 @@ -103,7 +103,7 @@ Run test suites in parallel when they are independent:
  "${CLAUDE_PLUGIN_ROOT}/bin/ccm-validate" --only test

@@ -90,7 +90,7 @@ Granting one without the other still strands the run (a fork hits `File is in a 
    "Bash(timeout:*)", "Bash(gtimeout:*)", "Bash(mkdir:*)", "Bash(mktemp:*)", "Bash(codex:*)",
    "Bash(ccm-context *)", "Bash(ccm-ci-status *)", "Bash(ccm-doctor *)",
    "Bash(ccm-external-review *)", "Bash(ccm-merge-gate *)", "Bash(ccm-post-review *)",
-   "Bash(ccm-pr-reply *)", "Bash(ccm-pr-threads *)", "Bash(ccm-review-route *)",
+   "Bash(ccm-pr-reply *)", "Bash(ccm-pr-threads *)", "Bash(ccm-review-route *)", "Bash(ccm-review-guide *)",
    "Bash(ccm-validate *)", "Bash(ccm-openspec-scope *)", "Bash(ccm-openspec-version *)", "Bash(ccm-spec-block *)", "Bash(ccm-harness *)",
    "Bash(ccm-finish-guard *)", "Bash(ccm-spec-delta *)", "Bash(ccm-followup-check *)", "Bash(ccm-acceptance *)", "Bash(openspec:*)"
    ```

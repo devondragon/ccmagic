@@ -13,6 +13,14 @@ You are verifying a single code review finding. Your job is to determine whether
 {FINDING}
 ```
 
+### Review guidance
+
+The repository's `REVIEW.md` (from the merge base; empty if there is none). Give the evidence its `## Evidence` section asks for at this finding's severity, and keep its `## Failure modes` in mind when judging severity.
+
+```
+{REVIEW_GUIDANCE}
+```
+
 ### Verification Steps
 
 1. **Read the code at the reported location** — does the code actually do what the finding claims?
@@ -63,10 +71,13 @@ Before verification, merge findings that refer to the same issue:
 - Tag finding: `[MULTI-SPECIALIST: correctness + security]` (list confirming specialists)
 - This is strong signal — multiple independent reviewers found the same problem
 
+**REVIEW.md and pre-existing tag:** after merging, drop findings in `## Skip` paths, apply `## Failure modes` severity raises, and set `pre_existing` on every finding from one call to the `locate` mode of `ccm-review-guide` (`review-guidance.md`).
+
 ### 2. Apply Confidence Threshold
 - Default threshold: 80 (overridable via `--threshold N`)
 - Findings below threshold are silently dropped — they don't appear in the report at all
 - Exception: Critical findings with confidence 60+ are kept (err on the side of caution for critical issues)
+- Then the `REVIEW.md` nit cap: keep at most `nit_cap` Low findings, highest confidence first; the rest go to Dismissed as `over the REVIEW.md nit cap ({n})`
 
 ### 3. Spawn Verification Agents
 - Only for **Critical** and **High** findings that survived deduplication and threshold
@@ -121,4 +132,5 @@ After triage, order findings for the report:
 3. Medium — grouped by file to minimize reader context switching
 4. Convention violations — separated into their own section
 5. Low — at the end, grouped by file
-6. Dismissed — transparency section showing what was filtered and why
+6. Pre-existing — every `pre_existing: true` finding except a Critical security one (which stays under Critical), one line each
+7. Dismissed — transparency section showing what was filtered and why
