@@ -2459,7 +2459,8 @@ rename to src/users.ts'
 
 route_eval_cases_match_graders() {
   local d want re
-  for d in "$ROOT"/evals/0[1-5]-*; do
+  for d in "$ROOT"/evals/[0-9][0-9]-*; do
+    [ -f "$d/graders/routes-match-script.md" ] || continue
     want=QUICK
     [ -f "$d/graders/routes-deep.md" ] && want=DEEP
     run_route_stdin "$(awk '/^```diff$/ {f = 1; next} /^```$/ {f = 0} f' "$d/prompt.md")"
@@ -2506,6 +2507,170 @@ route_record_local_is_shared_by_worktrees() {
   (cd "$T/wt" && "$BIN/ccm-review-route" --record migration=2 --local >/dev/null)
   check "$(git -C "$T/wt" status --porcelain)" ""
   check "$(jq -c . .git/ccmagic/review-stats.json)" '{"migration":{"dispatched":1,"findings":2}}'
+}
+
+# ---- ccm-review-guide (issue 109) ----------------------------------------------
+
+# shellcheck disable=SC2016 # literal backticks in the markdown
+GUIDE_MD='# Review guide
+
+Intro text.
+
+## Failure modes
+- Docs: it lies.
+
+## Skip
+- `src/gen/**` generated client
+- *.snap
+- vendor/
+- /build
+
+## Nit cap
+At most 2 nits.
+
+## Evidence
+Critical needs a repro command.
+
+## Tone
+Be brief.'
+
+
+guide_load_reads_merge_base_not_the_branch() {
+  printf '%s\n' "$GUIDE_MD" >REVIEW.md
+  gcommit guide
+  git checkout -q -b feature/x
+  printf '## Nit cap\n0\n' >REVIEW.md
+  gcommit soften
+  run "$BIN/ccm-review-guide" load
+  check "$RC,$(jqval .source),$(jqval .path),$(jqval .ref)" "0,merge-base,REVIEW.md,$(git rev-parse main)"
+  check "$(jqval .nit_cap),$(jq -c .skip <<<"$OUT")" '2,["src/gen/**","*.snap","vendor/","/build"]'
+  check "$(jqval .failure_modes),$(jqval .evidence)" "- Docs: it lies.,Critical needs a repro command."
+  check "$(jq -c '[.other_sections[] | .heading]' <<<"$OUT")" '["","Tone"]'
+  check "$(jqval .checkout_differs),$(jqval '.warnings[0]')" "true,the checkout edits REVIEW.md; the merge base copy was used"
+}
+
+guide_load_ignores_a_guide_the_branch_adds() {
+  git checkout -q -b feature/x
+  mkdir -p .claude
+  printf '## Skip\n- src/**\n' >.claude/REVIEW.md
+  gcommit add
+  run "$BIN/ccm-review-guide" load
+  check "$(jqval .source),$(jqval .path),$(jq -c .skip <<<"$OUT"),$(jqval .checkout_differs)" "none,null,[],true"
+  [[ $(jqval '.warnings[0]') == "the checkout adds .claude/REVIEW.md"* ]]
+}
+
+guide_load_falls_back_to_checkout_without_merge_base() {
+  mkdir -p .claude
+  printf '## Nit cap\n- 3\n' >.claude/REVIEW.md
+  run "$BIN/ccm-review-guide" load --base no-such-branch
+  check "$(jqval .source),$(jqval .path),$(jqval .nit_cap)" "checkout,.claude/REVIEW.md,3"
+  check "$(jqval .note)" "no merge base of no-such-branch and HEAD; read the checkout"
+  printf '## Nit cap\n- 1\n' >REVIEW.md
+  run "$BIN/ccm-review-guide" load --base no-such-branch
+  check "$(jqval .path),$(jqval .nit_cap)" "REVIEW.md,1"
+}
+
+guide_load_pasted_file_and_bad_nit_cap() {
+  OUT=$(printf '## Nit cap\nnone\n\n## Skip\nprose only\n' | "$BIN/ccm-review-guide" load --file - 2>"$T/stderr") && RC=0 || RC=$?
+  check "$RC,$(jqval .source),$(jqval .nit_cap),$(jqval '.warnings | length')" "0,file,null,2"
+  run "$BIN/ccm-review-guide" load --file missing.md
+  check "$RC,$(jqval .error)" "3,REVIEW.md file not found"
+  run "$BIN/ccm-review-guide" load --file a --base main
+  check "$RC" "4"
+}
+
+guide_load_ignores_headings_in_code_fences() {
+  # shellcheck disable=SC2016 # literal backticks
+  printf '## Skip\n- docs/**\n```\n## Nit cap\n1\n```\n' >REVIEW.md
+  gcommit guide
+  run "$BIN/ccm-review-guide" load
+  check "$(jqval .nit_cap),$(jq -c .skip <<<"$OUT")" 'null,["docs/**"]'
+}
+
+guide_skip_matches_globs_like_gitignore() {
+  printf '%s\n' "$GUIDE_MD" >REVIEW.md
+  gcommit guide
+  run "$BIN/ccm-review-guide" skip src/gen/api/client.ts src/generated.ts a/b/c.snap c.snapshot \
+    vendor/x.js lib/vendor/y.js build/out.js lib/build/out.js ./src/gen/z.ts
+  check "$RC,$(jq -c '[.skipped[] | "\(.path)=\(.glob)"]' <<<"$OUT")" \
+    '0,["src/gen/api/client.ts=src/gen/**","a/b/c.snap=*.snap","vendor/x.js=vendor/","lib/vendor/y.js=vendor/","build/out.js=/build","src/gen/z.ts=src/gen/**"]'
+  check "$(jq -c .kept <<<"$OUT")" '["src/generated.ts","c.snapshot","lib/build/out.js"]'
+}
+
+guide_skip_single_star_stays_in_a_segment() {
+  # shellcheck disable=SC2016 # literal backticks
+  OUT=$(printf '## Skip\n- `src/*.ts`\n- a?c\n' | "$BIN/ccm-review-guide" skip --file - src/a.ts src/x/b.ts abc abbc 2>"$T/stderr")
+  check "$(jq -c '[.skipped[].path]' <<<"$OUT"),$(jq -c .kept <<<"$OUT")" '["src/a.ts","abc"],["src/x/b.ts","abbc"]'
+}
+
+guide_locate_tags_pre_existing_lines() {
+  seq 1 20 >a.txt
+  seq 1 5 >gone.txt
+  gcommit base
+  git checkout -q -b feature/x
+  sed -i.bak -e 's/^5$/five/' -e '/^10$/d' -e 's/^15$/fifteen/' a.txt && rm -f a.txt.bak
+  printf 'new\n' >b.txt
+  git rm -q gone.txt
+  gcommit change
+  # a.txt now: 1-4, five, 6-9, 11-14, fifteen, 16-20. Line 10 was removed
+  # after new line 9, so new lines 9 and 10 sit next to it.
+  run "$BIN/ccm-review-guide" locate a.txt:5 a.txt:3 a.txt:9 a.txt:10 a.txt:11 a.txt:12 a.txt:1-4 a.txt:2-6 \
+    b.txt:1 c.txt:4 a.txt gone.txt:2
+  check "$RC" "0"
+  check "$(jq -c '[.findings[] | .pre_existing]' <<<"$OUT")" \
+    '[false,true,false,false,true,true,true,false,false,true,false,false]'
+  check "$(jqval '.findings[0].reason'),$(jqval '.findings[1].reason'),$(jqval '.findings[9].reason')" \
+    "line 5 is added or next to removed lines,outside every changed hunk,file not in the diff"
+  check "$(jqval .introduced),$(jqval .pre_existing)" "7,5"
+  check "$(jq -c '[.files[] | select(.path == "gone.txt") | .whole]' <<<"$OUT")" '[true]'
+}
+
+guide_locate_pasted_diff_with_context() {
+  OUT=$(printf '%s\n' 'diff --git a/src/x.ts b/src/x.ts
+--- a/src/x.ts
++++ b/src/x.ts
+@@ -10,5 +10,5 @@ function f() {
+   const a = 1;
+-  log("old");
++  log("new");
+   const b = 2;
+--- not a header
+   return a;' | "$BIN/ccm-review-guide" locate --diff-file - src/x.ts:10 src/x.ts:11 src/x.ts:13 src/x.ts:14 2>"$T/stderr") && RC=0 || RC=$?
+  check "$RC,$(jq -c '[.findings[].pre_existing]' <<<"$OUT")" '0,[true,false,false,true]'
+}
+
+# The issue 109 eval cases paste a REVIEW.md and a diff; the script must read
+# them the way the graders expect.
+guide_eval_cases_match_graders() {
+  local e=$ROOT/evals
+  eval_block() { awk -v k="$2" '$0 == "```" k {f = 1; next} /^```$/ {f = 0} f' "$e/$1/prompt.md"; }
+  OUT=$(eval_block 08-review-md-skip markdown | "$BIN/ccm-review-guide" skip --file - src/gen/petstore/client.ts src/lib/greet.ts)
+  check "$(jq -c '[.skipped[].path], .kept' <<<"$OUT" | paste -sd, -)" '["src/gen/petstore/client.ts"],["src/lib/greet.ts"]'
+  OUT=$(eval_block 09-review-md-nit-cap markdown | "$BIN/ccm-review-guide" load --file -)
+  check "$(jqval .nit_cap)" "2"
+  OUT=$(eval_block 10-review-md-failure-mode markdown | "$BIN/ccm-review-guide" load --file -)
+  [[ $(jqval .failure_modes) == "- Docs: it lies."* ]]
+  OUT=$(eval_block 11-pre-existing-untouched-line diff | "$BIN/ccm-review-guide" locate --diff-file - src/cart/total.ts:9 src/cart/total.ts:12)
+  check "$(jq -c '[.findings[].pre_existing]' <<<"$OUT")" '[true,false]'
+  OUT=$(eval_block 12-pre-existing-critical-security diff | "$BIN/ccm-review-guide" locate --diff-file - src/orders/lookup.ts:15 src/orders/lookup.ts:17)
+  check "$(jq -c '[.findings[].pre_existing]' <<<"$OUT")" '[true,false]'
+}
+
+guide_locate_pr_and_errors() {
+  fx pr-diff 'diff --git a/a.ts b/a.ts
+--- a/a.ts
++++ b/a.ts
+@@ -3,0 +4,2 @@
++x
++y'
+  run "$BIN/ccm-review-guide" locate --pr 7 a.ts:4 a.ts:6
+  check "$RC,$(jqval .source.kind),$(jq -c '[.findings[].pre_existing]' <<<"$OUT")" '0,pr,[false,true]'
+  run "$BIN/ccm-review-guide" locate --pr 7 --range main...HEAD a.ts:1
+  check "$RC" "4"
+  run "$BIN/ccm-review-guide" locate --range no-such...HEAD a.ts:1
+  check "$RC" "3"
+  run "$BIN/ccm-review-guide" bogus
+  check "$RC" "4"
 }
 
 route_local_needs_record() {
@@ -6212,7 +6377,7 @@ harness_docker_env_passes_proxy_not_secrets() {
 MIRRORS=$(mktemp -d)
 trap 'rm -rf "$MIRRORS"' EXIT
 
-for fn in $(declare -F | awk '{print $3}' | grep -E '^(context|ci|merge_gate|guard|post|postreview|stop|threads|reply|validate|route|doctor|extreview|skills|spec_block|scope|finish|baseline|propose|specpolish|specdelta|openspecver|harness)_'); do
+for fn in $(declare -F | awk '{print $3}' | grep -E '^(context|ci|merge_gate|guard|post|postreview|stop|threads|reply|validate|route|guide|doctor|extreview|skills|spec_block|scope|finish|baseline|propose|specpolish|specdelta|openspecver|harness)_'); do
   t "$fn" "$fn"
 done
 
