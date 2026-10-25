@@ -264,7 +264,7 @@ See `docs/ccmagic.local.md.example` for the full config template.
 
 The review reads the file from the merge base of the change (`git show <merge-base>:REVIEW.md`), not from the checkout. On a PR the checkout is the PR's head, so reading it there would let a PR edit `REVIEW.md` to soften its own review. A change to `REVIEW.md` takes effect for the changes reviewed after it merges, and the report says when the change under review edits it. Without a merge base (no `main`, no git) the checkout's copy is used and the report says so.
 
-Findings on lines the change did not add or modify are tagged pre-existing. They get their own report section, never fail the review or trigger an auto-ticket fix pass on their own (auto-ticket files them as follow-ups, one per systemic group), and the report summary starts with the introduced and pre-existing counts. A pre-existing Critical security finding still blocks, since merging ships it again.
+Findings on lines the change did not add or modify are tagged pre-existing. They get their own report section, never fail the review or trigger an auto-ticket fix pass on their own (auto-ticket files them as follow-ups, one per systemic group), and the report summary starts with the introduced and pre-existing counts. A pre-existing Critical security finding still blocks, since merging ships it again: the review reports FAIL, and under auto-ticket the review returns `needs-human`, which parks the run with the finding named instead of trying to fix it in the PR.
 
 ## Tracker support
 

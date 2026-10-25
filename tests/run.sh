@@ -4300,11 +4300,16 @@ STANDALONE_SCRIPTS_SINCE_BASELINE=(ccm-baseline-check ccm-propose-check ccm-spec
 # comparison has no baseline for them; auto-ticket's changes that run them are in
 # $EVERY_TICKET_DIFF.
 ADDED_AGENTS_SINCE_BASELINE=(agents/auto-visual.md)
+# Skill support files added since $SPEC_BASELINE, new for every ticket, so the
+# comparison has no baseline for them either; the SKILL.md lines that load them
+# are in $EVERY_TICKET_DIFF. review-guidance.md: REVIEW.md and pre-existing
+# findings (issue 109).
+ADDED_SKILL_FILES_SINCE_BASELINE=(skills/review/review-guidance.md)
 
 spec_prompt_files() {
   { git -C "$ROOT" ls-tree -r --name-only "$SPEC_BASELINE" -- skills agents
     git -C "$ROOT" ls-files -- skills agents; } | LC_ALL=C sort -u |
-    awk -v skip="${STANDALONE_SKILLS_SINCE_BASELINE[*]}" -v added="${ADDED_AGENTS_SINCE_BASELINE[*]}" '
+    awk -v skip="${STANDALONE_SKILLS_SINCE_BASELINE[*]}" -v added="${ADDED_AGENTS_SINCE_BASELINE[*]} ${ADDED_SKILL_FILES_SINCE_BASELINE[*]}" '
       BEGIN { n = split(skip, s, " "); m = split(added, a, " ") }
       { for (i = 1; i <= m; i++) if ($0 == a[i]) next
         for (i = 1; i <= n; i++) if (index($0, "skills/" s[i] "/") == 1) next; print }'

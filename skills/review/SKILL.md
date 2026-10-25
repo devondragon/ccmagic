@@ -353,7 +353,7 @@ If MCP and Explore agents disagree on a finding → flag for user decision in St
 
 ## Summary
 Introduced: X Critical, Y High, Z Medium, W Low, V Convention. Pre-existing: P.   ← or "Introduced: 0. Pre-existing: 0. Nothing to fix."
-- **Verdict**: PASS | PASS WITH WARNINGS | FAIL (rules in review-guidance.md; pre-existing findings never FAIL on their own, except a Critical security one)
+- **Verdict**: PASS | PASS WITH WARNINGS | FAIL (rules in review-guidance.md; pre-existing findings never FAIL on their own, except a Critical security one, which `review-ticket` turns into `needs-human`)
 - **REVIEW.md**: [path and source (merge base | checkout | pasted), "this change edits it" when `checkout_differs`, skipped paths; or "none"]
 - **Scope**: branch changes | full codebase | PR #X
 - **Branch**: [current branch or PR base]

@@ -57,9 +57,9 @@ A finding the change caused cites a line the change touched. For code the change
 ### What changes for a pre-existing finding
 
 - **Verdict.** A pre-existing finding never makes the verdict FAIL on its own, and never makes a `review-ticket` verdict `fixable-findings`. A pre-existing Medium or above makes the verdict at most PASS WITH WARNINGS.
-- **Exception: a pre-existing Critical security finding still blocks** (FAIL, and in `review-ticket` it counts like an introduced Critical). Merging onto it ships it again. Its `detail` says so: "Pre-existing, not introduced by this change; merging ships it again."
+- **Exception: a pre-existing Critical security finding still blocks** (FAIL in a standalone review). Merging onto it ships it again. In `review-ticket` it makes the verdict `needs-human`, never `fixable-findings`: a person decides how to handle a security defect the PR did not introduce, so no fix pass touches it, and the `reason` names the finding (`file:line` and issue). Its `detail` says so: "Pre-existing, not introduced by this change; merging ships it again."
 - **Report.** Pre-existing findings go in their own section, `## Pre-existing, not introduced by this change ({count})`, after the introduced findings, one line each (severity, confidence, `file:line`, issue, suggestion); the blocking security exception stays in Critical Issues with its tag.
-- **Fixes.** `--fix` does not apply them. Under `/ccmagic:auto-ticket` they never reach a fix pass: `review-ticket` lists them under `follow_ups:`, one entry per `systemic:` group (a finding without `systemic:` is its own group), so they are filed once instead of fixed in an unrelated PR.
+- **Fixes.** `--fix` does not apply them. Under `/ccmagic:auto-ticket` they never reach a fix pass: `review-ticket` lists them under `follow_ups:`, one entry per `systemic:` group (a finding without `systemic:` is its own group), so they are filed once instead of fixed in an unrelated PR. The pre-existing Critical security finding is never in a fix pass either: its `needs-human` verdict parks the run.
 - **Re-review.** On a `review_pass` of 2 or more, a pre-existing finding verified unchanged is one line ("pre-existing, unchanged: `file:line` issue") and is never re-raised as new.
 
 ## Counts and verdict
