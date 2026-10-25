@@ -94,6 +94,8 @@ From the ticket title, description, and recent comments, extract:
 
 If the user disagrees with the inferred AC, ask them to clarify before continuing.
 
+**Reeve acceptance tests (RV-134).** A ticket whose description carries a `reeve:acceptance` block is a tests ticket: its criteria are the block's own "Acceptance criteria", and its "Criteria to test" are the parent ticket's, the input its tests check. Never report a criterion to test as missing from the diff; check instead that each has a test whose title starts with its `AC-<n>` (or a PR-body line saying why it has none) and that the diff only adds files under the block's directory plus its marker. On a build whose PR deletes a marker file named for this ticket (contract §10), the deletion is in scope and the tests under the directory beside it are read-only: a change to one is a CRITICAL finding, and a test the code fails is a missing criterion.
+
 ---
 
 ## Step 4: Run ticket-scope drift analysis

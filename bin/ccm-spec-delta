@@ -10,6 +10,7 @@
 #        ccm-spec-delta scope [--worktree] TICKET BASE
 #        ccm-spec-delta reopen BASE
 #        ccm-spec-delta approval BASE  (the ticket description on stdin)
+#        ccm-spec-delta record HEAD BASE
 #
 # TICKET is a tracker key (BMC-430; a key whose letters Reeve's change-name rule
 # refuses, such as one with an underscore, fails change-name in name mode) or a GitHub issue number (42 or #42);
@@ -74,6 +75,17 @@
 #   Output: {pass, mode, approval, change, detail} (pass is always true; exit
 #   0 either way; change is null unless approval is true).
 #
+# record: the spec_delta a version 2 run record carries for the PR whose head
+#   is HEAD (a commit: the run record's head_sha), read from the files the PR
+#   changes from the merge base of BASE and HEAD, whichever run made them.
+#   touches_openspec is whether any changed path is under openspec/. When
+#   exactly one folder under openspec/changes/archive/ is touched and every
+#   path in it is added, spec_delta is that folder (a plain delta's archive or
+#   a requirements approval's archive); otherwise it is null and detail says
+#   why. It checks no other rule; scope does that.
+#   Output: {pass, mode, touches_openspec, spec_delta, detail, head, base,
+#            merge_base} (pass is always true; exit 0 either way).
+#
 # reopen: undo the archive in the working tree for a fix pass. The archive
 #   folder the branch adds goes back to openspec/changes/<name>/, and each
 #   capability's spec.md is restored from the merge base.
@@ -97,8 +109,8 @@ usage() { echo "ccm-spec-delta: $1" >&2; exit 4; }
 mode=${1:-}
 case $mode in
   -h|--help) sed -n '2,/^set -euo/p' "$0" | sed '$d'; exit 0 ;;
-  applies|name|collision|check|scope|reopen|approval) shift ;;
-  "") usage "name a mode: applies, name, collision, check, scope, reopen, or approval" ;;
+  applies|name|collision|check|scope|reopen|approval|record) shift ;;
+  "") usage "name a mode: applies, name, collision, check, scope, reopen, approval, or record" ;;
   *) usage "unknown mode $mode" ;;
 esac
 
@@ -121,6 +133,7 @@ case $mode in
   name) need 3 "TICKET, TITLE, and BASE" ;;
   collision|check) need 2 "NAME and BASE" ;;
   scope) need 2 "TICKET and BASE" ;;
+  record) need 2 "HEAD and BASE" ;;
   applies|reopen|approval) need 1 "BASE" ;;
 esac
 
@@ -142,8 +155,10 @@ trap 'rm -rf "$scratch"' EXIT
 
 base=${args[${#args[@]}-1]}
 base_sha=$(git rev-parse --verify --quiet "$base^{commit}") || unreadable "cannot resolve base $base to a commit"
-head_sha=$(git rev-parse --verify --quiet "HEAD^{commit}") || unreadable "cannot resolve HEAD to a commit"
-mb_sha=$(git merge-base "$base_sha" "$head_sha") || unreadable "$base and HEAD have no merge base"
+head_ref=HEAD
+[ "$mode" != record ] || head_ref=${args[0]}
+head_sha=$(git rev-parse --verify --quiet "$head_ref^{commit}") || unreadable "cannot resolve $head_ref to a commit"
+mb_sha=$(git merge-base "$base_sha" "$head_sha") || unreadable "$base and $head_ref have no merge base"
 
 # at REV PATH: whether PATH exists at REV.
 at() { git cat-file -e "$1:$2" 2>/dev/null; }
@@ -402,6 +417,26 @@ side_cat() {
 A=openspec/changes/archive/
 # The archive folders the branch touches, and whether every path under them is added.
 archive_dirs() { touched | awk -v a="$A" 'index($0, a) == 1 { r = substr($0, length(a) + 1); if (index(r, "/")) print substr(r, 1, index(r, "/") - 1); else print "" }' | LC_ALL=C sort -u; }
+
+# ---- record ---------------------------------------------------------------------
+
+if [ "$mode" = record ]; then
+  record() {
+    jq -n --argjson t "$1" --arg f "$2" --arg d "$3" --arg h "$head_sha" --arg b "$base_sha" --arg mb "$mb_sha" '
+      {pass: true, mode: "record", touches_openspec: $t, spec_delta: (if $f == "" then null else $f end),
+       detail: (if $d == "" then null else $d end), head: $h, base: $b, merge_base: $mb}'
+    exit 0
+  }
+  touched >"$scratch/touched"
+  grep -q '^openspec/' "$scratch/touched" || record false "" "the PR changes nothing under openspec/"
+  dirs=$(archive_dirs | grep . || true)
+  n=$(grep -c . <<<"$dirs" || true)
+  [ "$n" -gt 0 ] || record true "" "the PR changes openspec/ and touches no archive folder"
+  [ "$n" -eq 1 ] || record true "" "the PR touches $n archive folders ($(tr '\n' ' ' <<<"$dirs" | sed 's/ $//')); a run record names one"
+  first=$(awk -F'\t' -v a="$A$dirs/" '(index($2, a) == 1 || index($3, a) == 1) && $1 != "A" { print ($3 != "" ? $3 : $2); exit }' "$changes")
+  [ -z "$first" ] || record true "" "$first is not added; the PR changes an archive folder the base already has"
+  record true "$A$dirs" ""
+fi
 
 # ---- reopen ---------------------------------------------------------------------
 

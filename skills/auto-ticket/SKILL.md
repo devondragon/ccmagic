@@ -2,7 +2,7 @@
 name: auto-ticket
 description: Autonomous end-to-end ticket driver. Runs the full work → review → PR-feedback → finish cycle unattended, merging when the work is clean and CI is green, or parking the ticket (needs-human) with a clear note when a decision genuinely requires a human. Detects the tracker (Linear, GitHub Issues, JIRA) and ticket from the argument or current branch.
 user-invocable: true
-allowed-tools: Read(*), Bash(git:*, gh:*), Bash(rm -f .ccmagic-ticket.md), Bash(${CLAUDE_PLUGIN_ROOT}/bin/ccm-context *), Bash(ccm-context *), Bash(${CLAUDE_PLUGIN_ROOT}/bin/ccm-ci-status *), Bash(ccm-ci-status *), Bash(${CLAUDE_PLUGIN_ROOT}/bin/ccm-pr-threads *), Bash(ccm-pr-threads *), Bash(${CLAUDE_PLUGIN_ROOT}/bin/ccm-spec-block *), Bash(ccm-spec-block *), Bash(${CLAUDE_PLUGIN_ROOT}/bin/ccm-harness *), Bash(ccm-harness *), Bash(${CLAUDE_PLUGIN_ROOT}/bin/ccm-followup-check *), Bash(ccm-followup-check *), Glob(*), Grep(*), Task(*), TodoWrite(*), Skill(*)
+allowed-tools: Read(*), Bash(git:*, gh:*), Bash(rm -f .ccmagic-ticket.md), Bash(${CLAUDE_PLUGIN_ROOT}/bin/ccm-context *), Bash(ccm-context *), Bash(${CLAUDE_PLUGIN_ROOT}/bin/ccm-ci-status *), Bash(ccm-ci-status *), Bash(${CLAUDE_PLUGIN_ROOT}/bin/ccm-pr-threads *), Bash(ccm-pr-threads *), Bash(${CLAUDE_PLUGIN_ROOT}/bin/ccm-spec-block *), Bash(ccm-spec-block *), Bash(${CLAUDE_PLUGIN_ROOT}/bin/ccm-spec-delta *), Bash(ccm-spec-delta *), Bash(${CLAUDE_PLUGIN_ROOT}/bin/ccm-harness *), Bash(ccm-harness *), Bash(${CLAUDE_PLUGIN_ROOT}/bin/ccm-followup-check *), Bash(ccm-followup-check *), Glob(*), Grep(*), Task(*), TodoWrite(*), Skill(*)
 argument-hint: "[TICKET-ID] (detects from the current branch if omitted)"
 model: sonnet
 context: fork
@@ -115,7 +115,7 @@ Run the work-ticket step via `run_step` — `/ccmagic:work-ticket {TICKET-ID}` w
 <!-- /ccmagic:spec-only -->
 
 <!-- ccmagic:plain-delta -->
-**Only when the base has `openspec/specs/` and the grounding block has no `spec:` section** (the work step decides this, and reports it with a `spec_delta:` line, contract §3). Keep the value from the last work pass that emitted one, first pass or fix pass, as the run's `spec_delta`. When no pass emitted one, the run has none, and Step 6 leaves the key out of the run record.
+**Only when the base has `openspec/specs/` and the grounding block has no `spec:` section** (the work step decides this, and reports it with a `spec_delta:` line, contract §3). Keep the value from the last work pass that emitted one, first pass or fix pass, as the run's `spec_delta`. Step 6 replaces it with the archive folder the PR head carries, when there is one. When no pass emitted one and the PR head carries no archive folder, the run has none, and Step 6 leaves the key out of the run record.
 <!-- /ccmagic:plain-delta -->
 
 ---
@@ -346,7 +346,7 @@ Judged head: {judged_head}
 ```
 ````
 
-**UAT checklist.** In Step 0, after fetching the ticket, list its visual criteria (contract §4): each acceptance criterion that asks for a screenshot or names a visible UI state, copied verbatim. Until a check runs them, each goes on the UAT checklist with the note `no harness`. With `visual_checklist: off`, the section reads "none" and the criteria are dropped. The checklist is part of the summary, so it reaches the PR and the ticket wherever the summary does, the parked note included.
+**UAT checklist.** In Step 0, after fetching the ticket, list its visual criteria (contract §4): each acceptance criterion that asks for a screenshot or names a visible UI state, copied verbatim. On a tests ticket (a `reeve:acceptance` block) take them only from the block's own "Acceptance criteria", never from its "Criteria to test" (contract §10). Until a check runs them, each goes on the UAT checklist with the note `no harness`. With `visual_checklist: off`, the section reads "none" and the criteria are dropped. The checklist is part of the summary, so it reaches the PR and the ticket wherever the summary does, the parked note included.
 
 **Head drift.** Only when the visual step's last report was `harness: ran` (otherwise `judged_head` is `none`), compare its `judged_head` with the PR head read for the run record: `git diff --name-only {judged_head} {head_sha}`. If any changed path is outside tests and docs (a test or doc path has a segment `test`, `tests`, `__tests__`, or `spec`, or a file name containing `.test.`, `.spec.`, or `_test.`, or lies under `docs/`, or ends in `.md`), say so under Visual check (`the PR head is now {sha}; {n} files changed since the check`) and put every visual criterion on the UAT checklist with the note `changed after the visual check`. The check is not run again.
 
@@ -363,13 +363,21 @@ Judged head: {judged_head}
 <!-- /ccmagic:spec-only -->
 
 <!-- ccmagic:plain-delta -->
-**Only when the base has `openspec/specs/` and the grounding block has no `spec:` section,** and only when the run has a `spec_delta` (Step 1). The record carries one more key, `spec_delta`, as the last key inside `ccmagic`, right after `follow_ups`:
+**Only when the base has `openspec/specs/` and the grounding block has no `spec:` section.** When the run has a PR, set the run's `spec_delta` from the PR head before writing the record, whichever run made the archive: run `git fetch origin {BASE_BRANCH}`, then, each as its own Bash call,
+
+```bash
+"${CLAUDE_PLUGIN_ROOT}/bin/ccm-spec-delta" record {head_sha} origin/{BASE_BRANCH}
+```
+
+with `{head_sha}` the record's `head_sha` (the bare name `ccm-spec-delta` only when the path form is not found or is denied). When its `spec_delta` names a folder, that folder is the run's `spec_delta`, whatever the work step reported: a run that resumed a branch whose archive an earlier attempt made, and archived nothing itself, still names it (RD-42), since Reeve's gate reads only the record bound to the current head. When `touches_openspec` is `false`, or the call fails, keep the value from Step 1 (on a failure, say so under "Key autonomous decisions"). When `touches_openspec` is `true` and `spec_delta` is `null`, keep the value from Step 1 and put the script's `detail` under "Key autonomous decisions": the PR changes `openspec/` without adding exactly one archive folder, which the finish step's scope check refuses.
+
+When the run then has a `spec_delta`, the record carries one more key, `spec_delta`, as the last key inside `ccmagic`, right after `follow_ups`:
 
 ```json
 {"ccmagic": {"version": 2, "run_id": "{run_id}", "ticket": "{TICKET-ID}", "repo": "{owner/name}", "pr": {pr_number or null}, "head_sha": {"<PR head SHA>" or null}, "outcome": "{merged | handed-off | parked}", "classification": "{class}", "merge_owner": "{self | reeve}", "review_passes": {n}, "feedback_passes": {n}, "ci_attempts": {n}, "findings": {"critical": {n}, "high": {n}}, "steps": [{"step": "work-ticket", "status": "done"}, {"step": "review-ticket", "status": "clean"}, {"step": "validate", "status": "needs-human", "reason": "{one line}"}, {"step": "validate", "status": "done"}, {"step": "finish-ticket", "status": "done", "reason": "handed off to reeve; PR #12 awaiting merge"}], "follow_ups": [{"item": "{short description}", "step": "review-ticket", "ticket": "{id or null}", "reason": "{why not filed, or null}"}], "spec_delta": "{spec_delta: none, or openspec/changes/archive/<folder>}"}}
 ```
 
-`spec_delta` is the string `none` or the archive folder's path, exactly as the work step reported it (`openspec/changes/archive/2026-10-13-bmc-430-fix-expiry`). For a requirements approval's archive ticket it is the archived change's folder (`openspec/changes/archive/2026-10-23-<change>`), and the record still has no `openspec` key (contract §3). Reeve's gate checks it against the archive folder the PR carries. The record stays `"version": 2`; a version 1 fallback record carries the key in the same place. The key is additive like `follow_ups`, and readers that don't know it ignore it. A run that parked before the work step decided has no `spec_delta`, and its record leaves the key out. The parked note's record (contract §4) carries the same key.
+`spec_delta` is the string `none` or the archive folder's path, exactly as the work step reported it (`openspec/changes/archive/2026-10-13-bmc-430-fix-expiry`). For a requirements approval's archive ticket it is the archived change's folder (`openspec/changes/archive/2026-10-23-<change>`), and the record still has no `openspec` key (contract §3). Reeve's gate checks it against the archive folder the PR carries. The record stays `"version": 2`; a version 1 fallback record carries the key in the same place. The key is additive like `follow_ups`, and readers that don't know it ignore it. A run that parked before the work step decided, with no PR or a PR head that carries no archive folder, has no `spec_delta`, and its record leaves the key out. The parked note's record (contract §4) carries the same key.
 <!-- /ccmagic:plain-delta -->
 
 `version: 2` binds the record to what it describes, and Reeve treats a record whose binding doesn't match the PR it located as no record at all (RV-1). A version 2 record carries `repo`, `pr`, and `head_sha` on every outcome, never omitted (the one exception is the version 1 fallback below):
