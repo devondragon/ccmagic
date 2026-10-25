@@ -4308,6 +4308,106 @@ skills_standalone_not_on_ticket_path() {
   check "${hits# }" ""
 }
 
+# ---- ccm-followup-check (issue 112) -----------------------------------------
+
+fu_check() { OUT=$("$BIN/ccm-followup-check" "$@" 2>"$T/stderr") && RC=0 || RC=$?; }
+fu_rules() { jq -r '[.problems[].rule] | join(",")' <<<"$OUT"; }
+
+# fu_decision: a follow-up that needs a decision, in the q1/A/B shape.
+fu_decision() {
+  printf '%s\n' 'Raised by the review step on PR #7 (ENG-1).' '' \
+    '**q1.** Should the auth guard cover GET /api/me?' \
+    '- A: Intercept GET /api/me in the guard (for: one place to enforce; against: one more request per page)' \
+    '- B: Reword the rule to exclude it (for: no code change; against: the route stays unguarded)' \
+    'Recommended: A. The guard already sees every other route.' '' \
+    'Follow-up key: AuthGuard.canActivate'
+}
+
+# fu_change: a follow-up with no open decision: one finding, a change, and
+# acceptance criteria.
+fu_change() {
+  # shellcheck disable=SC2016 # literal backticks
+  printf '%s\n' 'Raised by the review step on PR #7 (ENG-1).' '' '## Change' '' \
+    '`src/net/abuse.ts`: make `AbuseManager.ipMatchesCIDR` reject a prefix length over 32.' '' \
+    '## Acceptance criteria' '' '- [ ] `ipMatchesCIDR("10.0.0.1", "10.0.0.0/33")` returns false.' '' \
+    'Follow-up key: AbuseManager.ipMatchesCIDR'
+}
+
+followup_decision_shape_passes() {
+  fu_check < <(fu_decision)
+  check "$RC,$(jqval .pass),$(jqval .shape),$(jqval .questions),$(fu_rules)" "0,true,decision,1,"
+  # Linear may turn line endings into CRLF; a second question is q2.
+  fu_check < <(fu_decision | sed '$d'; printf '%s\n' '**q2.** Keep the old route?' \
+    '- A: Yes (for: clients use it; against: two paths)' '- B: No (for: one path; against: a breaking change)' \
+    'Recommended: B. Nothing calls it.' 'Follow-up key: AuthGuard.canActivate' | sed 's/$/\r/')
+  check "$RC,$(jqval .questions),$(fu_rules)" "0,2,"
+}
+
+followup_change_shape_passes() {
+  fu_check < <(fu_change)
+  check "$RC,$(jqval .pass),$(jqval .shape),$(fu_rules)" "0,true,change,"
+  # Any list marker counts as a checkable item.
+  fu_check < <(fu_change | sed 's/^- \[ \] /1. /')
+  check "$RC" "0"
+}
+
+followup_decision_problems() {
+  # One option, no recommendation.
+  fu_check < <(fu_decision | sed '/^- B:/d; /^Recommended:/d')
+  check "$RC,$(fu_rules)" "1,options-too-few,recommended-missing"
+  # A recommendation naming no option; an option without for/against.
+  fu_check < <(fu_decision | sed 's/^Recommended: A\./Recommended: C./; s/ (for: no code.*$//')
+  check "$RC,$(fu_rules)" "1,option-shape,recommended-unknown"
+  # Options out of order, a question numbered wrong, a bare recommendation.
+  fu_check < <(fu_decision | sed 's/^- B:/- C:/; s/^\*\*q1\./**q2./; s/^Recommended: A\..*/Recommended: A/')
+  check "$RC,$(fu_rules)" "1,question-order,option-order,recommended-shape"
+  # The options of RD-107, written as one sentence, are not a decision block.
+  fu_check <<<'Options: intercept GET /api/me, or reword the rule. Needs a human decision.
+Follow-up key: AuthGuard.canActivate'
+  check "$RC,$(jqval .shape),$(fu_rules)" "1,change,change-missing,criteria-missing"
+}
+
+followup_change_problems() {
+  # RD-108: extra findings, and no acceptance criteria.
+  fu_check < <(fu_change | sed '/^## Acceptance criteria/,/^- \[ \]/d' | sed '$i\
+Low-priority also: rename x; drop y.')
+  check "$RC,$(fu_rules)" "1,extra-findings,criteria-missing"
+  # Empty sections.
+  fu_check < <(fu_change | sed '/^`src/d; /^- \[ \]/d')
+  check "$RC,$(fu_rules)" "1,change-empty,criteria-empty"
+  # The key line: missing, repeated, not last.
+  fu_check < <(fu_change | sed '$d')
+  check "$RC,$(fu_rules)" "1,key-missing"
+  fu_check < <(fu_change; echo 'Follow-up key: other')
+  check "$RC,$(fu_rules)" "1,key-repeated"
+  fu_check < <(fu_change; echo 'Thanks.')
+  check "$RC,$(fu_rules)" "1,key-not-last"
+  # Trailing blank lines are fine.
+  fu_check < <(fu_change; printf '\n\n')
+  check "$RC" "0"
+  fu_check extra </dev/null
+  check "$RC" "4"
+}
+
+# SKILL.md states both shapes, files a decision in the decision state, and
+# checks each description with ccm-followup-check; its two examples pass.
+# shellcheck disable=SC2016 # literal backticks in the markdown being matched
+skills_auto_ticket_follow_up_shapes() {
+  local f="$ROOT/skills/auto-ticket/SKILL.md" missing='' ex shapes=''
+  grep -qF '`Needs Decision`' "$f" || missing+=" decision-state"
+  grep -qF '`## Acceptance criteria`' "$f" || missing+=" criteria"
+  grep -qF '`**q1.** <question>`' "$f" || missing+=" q1"
+  grep -qF 'bin/ccm-followup-check' "$f" || missing+=" helper"
+  grep -qF 'Low-priority also' "$f" || missing+=" one-finding"
+  grep -qF 'ccm-followup-check' "$ROOT/skills/auto-ticket/autonomous-contract.md" || missing+=" contract"
+  # Each example is a ```text fence holding a Follow-up key line.
+  while IFS= read -r -d '' ex; do
+    OUT=$(printf '%s' "$ex" | "$BIN/ccm-followup-check") || missing+=" example:$(fu_rules)"
+    shapes+=" $(jqval .shape)"
+  done < <(awk '/^```text$/ { inb = 1; b = ""; next } inb && /^```$/ { inb = 0; if (b ~ /\nFollow-up key: /) printf "%s%c", b, 0; next } inb { b = b $0 "\n" }' "$f")
+  check "${missing# },${shapes# }" ",decision change"
+}
+
 # ---- ccm-baseline-check and /ccmagic:spec-baseline (RV-84) ------------------
 
 BASELINE_FIXTURE=$ROOT/tests/fixtures/baseline
@@ -6212,7 +6312,7 @@ harness_docker_env_passes_proxy_not_secrets() {
 MIRRORS=$(mktemp -d)
 trap 'rm -rf "$MIRRORS"' EXIT
 
-for fn in $(declare -F | awk '{print $3}' | grep -E '^(context|ci|merge_gate|guard|post|postreview|stop|threads|reply|validate|route|doctor|extreview|skills|spec_block|scope|finish|baseline|propose|specpolish|specdelta|openspecver|harness)_'); do
+for fn in $(declare -F | awk '{print $3}' | grep -E '^(context|ci|merge_gate|guard|post|postreview|stop|threads|reply|validate|route|doctor|extreview|skills|spec_block|scope|finish|baseline|propose|specpolish|specdelta|openspecver|harness|followup)_'); do
   t "$fn" "$fn"
 done
 

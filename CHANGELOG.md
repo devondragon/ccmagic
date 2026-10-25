@@ -2,6 +2,16 @@
 
 All notable changes to ccmagic are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+### Changed
+
+- `/auto-ticket` files each follow-up in one of two description shapes, so a decision is not hidden in prose and a tracker's intake grader can take the ticket as written (issue 112). A follow-up holds one finding; extras are filed separately or dropped with a reason, never appended as "Low-priority also". One that needs a decision lists each question as `**q1.** <question>`, its options as `- A: ... (for: ...; against: ...)`, and `Recommended: X. <why>`, and is filed in the tracker's decision state instead of Backlog (Linear `Needs Decision` when the team has that state, a JIRA status of that name when the workflow has one). Any other has a `## Change` section naming the file and what to do and a `## Acceptance criteria` list with at least one checkable item. The `Follow-up key:` line stays last. Before, RD-107 went to Backlog with its four options in one sentence, and Reeve's intake failed RD-108 for an either/or, three unrelated extras, and no acceptance criteria.
+
+### Added
+
+- `bin/ccm-followup-check` reads a follow-up description on stdin and reports its `shape` (`decision` or `change`) and each rule it breaks (`extra-findings`, `options-too-few`, `recommended-unknown`, `criteria-missing`, `key-not-last`, and the rest); exit 0 only when it passes. `/auto-ticket` runs it on each description before filing, rewrites on a failure, and files anyway with the remaining rules named in the summary if the second check fails. `docs/cyrus-deployment.md` grants it by bare name.
+
 ## [3.25.0] - 2026-10
 
 ### Added
