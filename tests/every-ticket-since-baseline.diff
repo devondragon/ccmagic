@@ -105,16 +105,18 @@
  
  The grounding block arrives as your task prompt — read the tracker / ticket / PR context and the needs-human config from it.
 ### agents/auto-work.md
-@@ -18,7 +18,7 @@ Defer full code review to the orchestrator's dedicated review step — keep only
+@@ -18,7 +18,9 @@ Defer full code review to the orchestrator's dedicated review step — keep only
  
  **Keep build runs few.** Follow work-ticket's "Build and test runs" guidance. On a JVM project, do not run `compileJava`, `compileTestJava`, or `mvn compile` before a test run: go straight to the narrowest `./gradlew test --tests <pattern>` (or `mvn test -Dtest=<pattern>`), which compiles main and test sources. Run compile-only at most once, and only when no test is ready yet, such as while scaffolding. Batch related test classes into one run.
  
 -**Fix pass.** When the grounding block carries `fix_pass:`, the orchestrator is sending back review findings or failed local checks on the work already in the PR, listed in `findings_to_fix:`. Follow the preloaded work-ticket's *Fix pass* section instead of implementing the ticket: stay on the current branch, apply only the listed items (a `systemic:` finding as a class, with the enumeration search re-run; a security or invariant finding under contract §9, with the verifier's inputs rerun and an invariant test added), run the narrowest covering tests, and leave the changes uncommitted. Do not commit, push, or open a PR: the orchestrator's push step does that after you return `done`. End with the `applied_findings:` section and, when there is something for the commit body, the `commit_notes:` section, then the fix-pass handshake (`reason: fix pass {n} ({fix_source}): applied {k} items`, no `requested_state:`).
++**Never loosen a test.** On the first pass and on every fix pass, never disable, skip, or loosen a test or a check to make it pass; a test you cannot make pass is a `needs-human` naming it. When the ticket's description carries a `reeve:acceptance` block, or the `find` mode of `ccm-acceptance` reports acceptance tests for the ticket, follow the preloaded work-ticket's *Acceptance tests* rules (`acceptance.md` in its skill directory, contract §10): a tests ticket writes only under the named directory plus the marker, starts each test title with its `AC-<n>`, and treats "Criteria to test" as input, not scope; a build deletes the marker, runs the acceptance tests, never edits them, and stops `needs-human` naming a test that cannot pass.
++
 +**Fix pass.** When the grounding block carries `fix_pass:`, the orchestrator is sending back review findings, unmet visual criteria, or failed local checks on the work already in the PR, listed in `findings_to_fix:`. For a visual item (`fix_source: visual`), Read the screenshot at the item's path and change the UI so the criterion holds; an item with id `harness` is a build or startup failure caused by this change, so fix its cause. Follow the preloaded work-ticket's *Fix pass* section instead of implementing the ticket: stay on the current branch, apply only the listed items (a `systemic:` finding as a class, with the enumeration search re-run; a security or invariant finding under contract §9, with the verifier's inputs rerun and an invariant test added), run the narrowest covering tests, and leave the changes uncommitted. Do not commit, push, or open a PR: the orchestrator's push step does that after you return `done`. End with the `applied_findings:` section and, when there is something for the commit body, the `commit_notes:` section, then the fix-pass handshake (`reason: fix pass {n} ({fix_source}): applied {k} items`, no `requested_state:`).
  
  End your output with the work-ticket autonomous handshake, verbatim (on a fix pass, the `applied_findings:` and `commit_notes:` sections come just before it):
  
-@@ -34,7 +34,7 @@ requested_state: <In Review on done; omit on needs-human and on a fix pass>
+@@ -34,7 +36,7 @@ requested_state: <In Review on done; omit on needs-human and on a fix pass>
  **No tracker access.** Read the ticket from the grounding block's `ticket_content:`. Do not fetch or update the ticket, and do not spawn a helper agent to do it; the orchestrator owns every tracker read and write (contract §8). Report a needed state change in `requested_state:` and anything to file in `follow_ups:`.
  
  
@@ -320,7 +322,7 @@
  ```
  ````
  
-+**UAT checklist.** In Step 0, after fetching the ticket, list its visual criteria (contract §4): each acceptance criterion that asks for a screenshot or names a visible UI state, copied verbatim. Until a check runs them, each goes on the UAT checklist with the note `no harness`. With `visual_checklist: off`, the section reads "none" and the criteria are dropped. The checklist is part of the summary, so it reaches the PR and the ticket wherever the summary does, the parked note included.
++**UAT checklist.** In Step 0, after fetching the ticket, list its visual criteria (contract §4): each acceptance criterion that asks for a screenshot or names a visible UI state, copied verbatim. On a tests ticket (a `reeve:acceptance` block) take them only from the block's own "Acceptance criteria", never from its "Criteria to test" (contract §10). Until a check runs them, each goes on the UAT checklist with the note `no harness`. With `visual_checklist: off`, the section reads "none" and the criteria are dropped. The checklist is part of the summary, so it reaches the PR and the ticket wherever the summary does, the parked note included.
 +
 +**Head drift.** Only when the visual step's last report was `harness: ran` (otherwise `judged_head` is `none`), compare its `judged_head` with the PR head read for the run record: `git diff --name-only {judged_head} {head_sha}`. If any changed path is outside tests and docs (a test or doc path has a segment `test`, `tests`, `__tests__`, or `spec`, or a file name containing `.test.`, `.spec.`, or `_test.`, or lies under `docs/`, or ends in `.md`), say so under Visual check (`the PR head is now {sha}; {n} files changed since the check`) and put every visual criterion on the UAT checklist with the note `changed after the visual check`. The check is not run again.
 +
@@ -479,6 +481,20 @@
  
  Needs-human parking is already the orchestrator's (§4). Comments on the PR (`gh pr comment`, `ccm-post-review`, `ccm-pr-reply`) are not tracker writes and stay in the steps. A sub-skill invoked without a grounding block (interactive or standalone autonomous) keeps its full tracker behavior; this section changes nothing there.
  
+@@ -309,3 +352,13 @@ This applies wherever an autonomous run fixes a finding: the work step's fix pas
+ 4. **Do not push a fix that fails.** If any verifier input or corpus input still breaks the invariant, keep fixing within the pass. If the fix cannot be made to pass, do not commit or push it as fixed: the fix pass emits `needs-human` and the orchestrator route-and-stops (§4) without running the push step, and `pr-feedback` does not reply `fixed` and emits `needs-human`. Either way the reason names the finding and the first failing input, written in its escaped form (as in `reproduction:`) so the handshake `reason:` stays on one line.
+ 
+ When a finding carries no inputs, derive the invariant and inputs from its detail, and name both in the commit body (on a fix pass, in `commit_notes:`). This section changes nothing for other findings.
++
++## 10. Acceptance tests (Reeve RV-134)
++
++On a repository that opts in, Reeve creates a tests ticket for a ticket before its build: a child titled `Acceptance tests: <PARENT>` whose description is a `reeve:acceptance` block. Its PR adds black-box tests under `<path>/<PARENT>/` and an empty marker `<pending>/<PARENT>`, a person approves it, and the tests merge marked as expected to fail. The parent's build then runs from a base that holds them. `skills/work-ticket/acceptance.md` has the step-by-step rules; `ccm-acceptance` checks a branch by the gate's file rules. These rules hold in every step of a run:
++
++- **Every work pass, first or fix, never disables, skips, or loosens a test or a check to make it pass,** on any ticket. A test it cannot make pass is a `needs-human` naming the test.
++- **On a tests ticket** (a `reeve:acceptance` block), the work step writes only under the named directory, plus the marker; starts each test title with the `AC-<n>` it checks; and treats "Criteria to test" as input, not scope. The ticket's criteria are the block's own "Acceptance criteria": the review step never reports a criterion to test as missing, and the orchestrator lists visual criteria (§4) only from the block's own criteria, since the criteria to test describe the parent's build.
++- **On a build whose acceptance directory exists** (the `find` mode of `ccm-acceptance` reports `applies: true`), the work step deletes the marker, runs the acceptance tests, and never edits them; a test that cannot pass without a change to it is a `needs-human` whose `reason` names the test. The review step treats the marker's deletion as in scope and any change under the tests' or the marker's directory as a CRITICAL finding, and a fix pass never changes an acceptance test: a finding that asks for one is a `needs-human` naming it.
++
++Reeve's gate parks a tests PR that changes anything outside the directory and the marker, and a build PR that changes the tests or keeps its marker (`acceptance-mismatch`). These rules keep a run from reaching that park.
 ### skills/codex-review/SKILL.md
 @@ -143,7 +143,7 @@ For >50 files, focus Codex/Gemini on Tier 1+2 only.
  
@@ -647,7 +663,16 @@
  2. If `config.tracker` is `auto` or unset, run the detection cascade:
     - **Ticket shape:** `tracker_hint` from `ccm-context`: `github` for an integer ID, `linear` or `jira` when a key-shaped ID meets a `ticket_url_base` pointing at that tracker, `linear-or-jira` otherwise.
     - **MCP probe:** Linear MCP — a server available to the session (case-insensitive `mcp__*[Ll]inear*__get_issue`, incl. Cyrus's `mcp__linear__` and a still-connecting server; see contract §7); Atlassian/JIRA MCP (`mcp__*atlassian*__*` or `mcp__*Atlassian*__*`).
-@@ -234,6 +234,7 @@ Absent all three, run the interactive path exactly as documented above. Also rea
+@@ -94,6 +94,8 @@ From the ticket title, description, and recent comments, extract:
+ 
+ If the user disagrees with the inferred AC, ask them to clarify before continuing.
+ 
++**Reeve acceptance tests (RV-134).** A ticket whose description carries a `reeve:acceptance` block is a tests ticket: its criteria are the block's own "Acceptance criteria", and its "Criteria to test" are the parent ticket's, the input its tests check. Never report a criterion to test as missing from the diff; check instead that each has a test whose title starts with its `AC-<n>` (or a PR-body line saying why it has none) and that the diff only adds files under the block's directory plus its marker. On a build whose PR deletes a marker file named for this ticket (contract §10), the deletion is in scope and the tests under the directory beside it are read-only: a change to one is a CRITICAL finding, and a test the code fails is a missing criterion.
++
+ ---
+ 
+ ## Step 4: Run ticket-scope drift analysis
+@@ -234,6 +236,7 @@ Absent all three, run the interactive path exactly as documented above. Also rea
  - **Step 7 (Drift handling):** apply rules instead of asking:
    - **Out-of-scope changes** stay, but flag each one — leave the out-of-scope table populated and post a PR comment listing them — unless this pass's report is being posted as a PR comment (the *Report posting* rule below): a full report carries the out-of-scope table itself, and a delta report carries net-new out-of-scope items plus the reference to the prior report's table; either way, don't post both. Do not revert.
    - **Missing AC** → treat as *not-done*: `fixable-findings` if the caller can close it in-scope; `needs-human` if it can't.
@@ -811,7 +836,45 @@
  ```
  
 ### skills/work-ticket/SKILL.md
-@@ -331,14 +331,15 @@ Also read these keys from `.claude/ccmagic.local.md`: `needs_human_state:`, `nee
+@@ -2,7 +2,7 @@
+ name: work-ticket
+ description: End-to-end ticket workflow. Detects your tracker (Linear, GitHub Issues, or JIRA), looks up the ticket, assigns it to you, moves it to In Progress, triages the work type, creates a branch, executes the work (delegating to /ccmagic:debug for bugs), validates scope, then commits and opens a PR.
+ user-invocable: true
+-allowed-tools: Read(*), Write(*), Edit(*), Bash(git:*, gh:*, mkdir:*, timeout:*, gtimeout:*), Bash(${CLAUDE_PLUGIN_ROOT}/bin/ccm-context *), Bash(ccm-context *), Glob(*), Grep(*), Task(*), TodoWrite(*), AskUserQuestion(*), Skill(*)
++allowed-tools: Read(*), Write(*), Edit(*), Bash(git:*, gh:*, mkdir:*, timeout:*, gtimeout:*), Bash(${CLAUDE_PLUGIN_ROOT}/bin/ccm-context *), Bash(ccm-context *), Bash(${CLAUDE_PLUGIN_ROOT}/bin/ccm-acceptance *), Bash(ccm-acceptance *), Glob(*), Grep(*), Task(*), TodoWrite(*), AskUserQuestion(*), Skill(*)
+ argument-hint: Ticket ID (e.g. ENG-123, PROJ-456, or a GitHub issue number like 42)
+ model: inherit
+ ---
+@@ -170,6 +170,10 @@ git checkout -b {branch-name}
+ 
+ ## Step 5: Execute the work
+ 
++### Acceptance tests (all paths)
++
++Reeve can write a ticket's acceptance tests in a separate tests ticket that merges before the build (RV-134); `${CLAUDE_SKILL_DIR}/acceptance.md` holds the rules. When the description carries a `reeve:acceptance` block, the ticket is a tests ticket: follow that file's *Tests ticket* section, which writes only the tests and the marker and treats "Criteria to test" as input, not scope. Otherwise, before the path you take, run that file's `ccm-acceptance` find check; when the ticket has acceptance tests, follow its *Build with acceptance tests* section: delete the marker, run the tests, never edit them, and stop naming a test that cannot pass.
++
+ ### Quick Fix path
+ 
+ 1. Implement the fix directly in this session. Read the relevant files first to understand the codebase. Make the minimal change that addresses the ticket scope. Follow the project's coding standards from `context/conventions.md`.
+@@ -207,6 +211,8 @@ The debug skill runs its systematic investigation. After it finishes, **run `/cc
+ 
+ ### Build and test runs (all paths)
+ 
++Never disable, skip, or loosen a test or a check to make it pass: no skip or expected-to-fail marking, no weaker assertion, no excluded file, no raised threshold. Fix the code, or change a test only because the ticket changes the behavior it checks, and say so in the PR body. A test you cannot make pass any other way is a stop: `needs-human` naming the test (interactive: tell the user).
++
+ On JVM projects each build tool invocation is slow, so keep the count down:
+ 
+ - Skip separate compile-only runs (`compileJava`, `compileTestJava`, `mvn compile`) when a test run follows. Go straight to the narrowest test run that covers the change: `./gradlew test --tests <pattern>` or `mvn test -Dtest=<pattern>`. It compiles main and test sources on the way.
+@@ -232,6 +238,8 @@ Read the changed files to confirm the implementation aligns with the ticket.
+ 
+ **Invariant self-check.** Identify any invariant the change's correctness or safety depends on — *especially one the change itself asserts* in a comment, doc, or the PR body (e.g. "every /js asset is fingerprinted", "all callers hold the lock"). Verify each one actually holds repo-wide with a search across every mechanism that could violate it, before shipping. A violated invariant is a gap like any unmet acceptance criterion: close it, or surface it (autonomous mode: close it or `needs-human` — never ship on a premise the repo violates).
+ 
++On a tests ticket (a `reeve:acceptance` block), the criteria are the block's own "Acceptance criteria"; its "Criteria to test" are the parent's, and are input (`acceptance.md`). On a build with acceptance tests, each acceptance test is a criterion too.
++
+ For each acceptance criterion or stated goal in the ticket, report:
+ - **Addressed** — describe how.
+ - **Partially addressed** — explain the gap.
+@@ -331,20 +339,23 @@ Also read these keys from `.claude/ccmagic.local.md`: `needs_human_state:`, `nee
    - If only minor/cosmetic unknowns remain, pick the reasonable option and note the choice in the PR body.
    - Record the implementation/architecture plan as a **PR comment** after the PR is created (Step 7) instead of pausing for confirmation.
  - **Step 6 (Validate scope):** a missing acceptance criterion means **not done** — keep working to close it. Never take the interactive "commit with gaps noted" option and never treat a partial as shippable. If a gap genuinely cannot be closed within the ticket's scope, stop with `needs-human` (the `reason` lists the unmet AC).
@@ -829,3 +892,11 @@
  2. **Fix a `systemic:` finding as a class.** Apply the fix to every enumerated instance, then re-run the enumeration search yourself, across every mechanism that could carry the pattern and not only the syntax of the reported instance, to catch stragglers. Never point-fix only the reported line.
  3. **Apply contract §9 to a security finding**, or to any finding whose correctness depends on an invariant over untrusted input: run the verifier's triggering inputs (the finding's **Reproduction**) against the fix, rerun any fuzzed or enumerated corpus within the scratch-program limits (`timeout -k 5 60`, or `gtimeout -k 5 60` on macOS; the smallest corpus that shows the behavior), and add a property or parameterized test stating the invariant. If the fix still fails any of those inputs, keep fixing within the pass; if it cannot be made to pass, stop with `needs-human` (the `reason` names the finding and the first failing input, escaped as in `reproduction:`).
  4. **Run the narrowest tests that cover the changes** (see *Build and test runs*), plus the invariant tests from item 3.
+ 5. **Leave the changes uncommitted.** No `git add`, `git commit`, `git push`, or `gh pr` command: the orchestrator's push step commits and pushes the pass, and only after a `done`.
+ 6. **Report** an `applied_findings:` section (one line per listed item, `- {id/title}: {file}`, with `; invariant test: {test file and name}` for an item fixed under §9) and, when there is something for the commit body (a §9 corpus sampled down, an invariant derived from a finding with no inputs), a `commit_notes:` section with lines of the form `- {file}: {note}`, naming the repository file the note concerns (for a §9 note, the invariant test), both `~~~`-fenced, just before the handshake (contract §3).
+ 
++On a tests ticket or a build with acceptance tests, a fix pass also follows `${CLAUDE_SKILL_DIR}/acceptance.md` and runs its `ccm-acceptance` check before it reports `done`.
++
+ An item that cannot be fixed within the ticket's scope → `needs-human` naming it. The handshake on a fix pass has no `requested_state:`:
+ 
+ ```
