@@ -88,6 +88,13 @@ max_feedback_passes: 3
 # off drops them instead of listing them.
 # visual_checklist: on
 
+# Reeve acceptance tests (RV-134): the directory that holds each ticket's tests
+# (<path>/<TICKET>/) and the directory of the empty marker files
+# (<pending>/<TICKET>), as in reeve.yml's acceptance block. Set both or
+# neither; without them, work-ticket finds a ticket's tests by name.
+# acceptance_path: e2e/acceptance
+# acceptance_pending: acceptance-pending
+
 # --- Validation (/ccmagic:validate, /ccmagic:test, and the autonomous validate step) ---
 # bin/ccm-validate runs format, lint, types, test, and build checks, one command
 # each, and the command's exit code is the verdict. A validate_<check> key sets
@@ -152,6 +159,7 @@ Copy this file to **`.claude/ccmagic.local.md`** in your project root and edit t
 | `ci_timeout_minutes` | Max minutes to wait for CI to settle before parking on timeout. | `30` |
 | `ci_poll_interval_seconds` | Interval for the `gh pr checks --watch` CI wait in an autonomous run. | `60` |
 | `visual_checklist` | `on` lists the visual criteria an autonomous run could not check on the run summary's UAT checklist; `off` drops them instead. | `on` |
+| `acceptance_path`, `acceptance_pending` | Where Reeve's acceptance tests (`<path>/<TICKET>/`) and their marker files (`<pending>/<TICKET>`) live, for `ccm-acceptance`; set both or neither. | found by the ticket's name |
 | `validate_format`, `validate_lint`, `validate_types`, `validate_test`, `validate_build` | Command for that `ccm-validate` check; `none` disables it. | detected from the project manifest |
 | `validate_timeout_seconds` | Per-check time limit for `ccm-validate`, at most 7200; a check that hits it fails as "timed out". It also bounds the install of missing Node dependencies, where hitting it is an `environment` result. Above 540, `/ccmagic:validate` runs the checks detached (`--start`, then `--wait`). | `540` |
 | `model_<step>` | Per-step model override (`model_work_ticket` … `model_push`, `model_visual`). | Balanced mapping |
