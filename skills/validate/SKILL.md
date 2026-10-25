@@ -61,7 +61,7 @@ Start every planned check in one run that outlives the Bash call, in two calls. 
 "${CLAUDE_PLUGIN_ROOT}/bin/ccm-validate" --start --attached
 ```
 
-It launches nothing and prints `{status: "prepared", run, timeout_seconds, limit_s, checks}` (exit 0); read `run` from it. Exit 6 or exit 2 is one of the other `--start` answers below; handle it as that paragraph says and do not attach. Then make this one Bash call with `run_in_background: true`, so the harness owns the run as a background task, with that `run` in place of `<run>`:
+It launches nothing and prints `{status: "prepared", run, timeout_seconds, limit_s, checks}` (exit 0); read `run` from it. Exit 6 or exit 2 is one of the other `--start` answers below; handle it as that paragraph says and do not attach. Then make this one Bash call with `run_in_background: true` and `timeout: 7200000` (Claude Code stops a background command after 30 minutes unless `timeout` is set, and 7200000 (2 hours) is the maximum; `--wait` still enforces ccmagic's own limit.), so the harness owns the run as a background task, with that `run` in place of `<run>`:
 
 ```bash
 "${CLAUDE_PLUGIN_ROOT}/bin/ccm-validate" --attach <run>
