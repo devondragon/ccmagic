@@ -2,6 +2,12 @@
 
 All notable changes to ccmagic are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.26.1] - 2026-10
+
+### Fixed
+
+- The three long background `--attach` calls now pass `timeout: 7200000` (`validate` step 2L, `test`, and the `auto-visual` harness `up`). Claude Code 2.1.310 stops a background Bash command after its `timeout`, 1800000 ms (30 minutes) by default and 7200000 ms (2 hours) at most, so a run past 30 minutes lost its heartbeat, `--wait` reported `status: fail`, and `auto-validate` turned that into `needs-human` with a misleading failure reason. `--wait` still enforces ccmagic's own limit (`validate_timeout_seconds`). Foreground `--wait` calls are unchanged.
+
 ## [3.26.0] - 2026-10
 
 ### Added
