@@ -2,7 +2,7 @@
 name: auto-ticket
 description: Autonomous end-to-end ticket driver. Runs the full work → review → PR-feedback → finish cycle unattended, merging when the work is clean and CI is green, or parking the ticket (needs-human) with a clear note when a decision genuinely requires a human. Detects the tracker (Linear, GitHub Issues, JIRA) and ticket from the argument or current branch.
 user-invocable: true
-allowed-tools: Read(*), Bash(git:*, gh:*), Bash(rm -f .ccmagic-ticket.md), Bash(${CLAUDE_PLUGIN_ROOT}/bin/ccm-context *), Bash(ccm-context *), Bash(${CLAUDE_PLUGIN_ROOT}/bin/ccm-ci-status *), Bash(ccm-ci-status *), Bash(${CLAUDE_PLUGIN_ROOT}/bin/ccm-pr-threads *), Bash(ccm-pr-threads *), Bash(${CLAUDE_PLUGIN_ROOT}/bin/ccm-spec-block *), Bash(ccm-spec-block *), Bash(${CLAUDE_PLUGIN_ROOT}/bin/ccm-harness *), Bash(ccm-harness *), Glob(*), Grep(*), Task(*), TodoWrite(*), Skill(*)
+allowed-tools: Read(*), Bash(git:*, gh:*), Bash(rm -f .ccmagic-ticket.md), Bash(${CLAUDE_PLUGIN_ROOT}/bin/ccm-context *), Bash(ccm-context *), Bash(${CLAUDE_PLUGIN_ROOT}/bin/ccm-ci-status *), Bash(ccm-ci-status *), Bash(${CLAUDE_PLUGIN_ROOT}/bin/ccm-pr-threads *), Bash(ccm-pr-threads *), Bash(${CLAUDE_PLUGIN_ROOT}/bin/ccm-spec-block *), Bash(ccm-spec-block *), Bash(${CLAUDE_PLUGIN_ROOT}/bin/ccm-harness *), Bash(ccm-harness *), Bash(${CLAUDE_PLUGIN_ROOT}/bin/ccm-followup-check *), Bash(ccm-followup-check *), Glob(*), Grep(*), Task(*), TodoWrite(*), Skill(*)
 argument-hint: "[TICKET-ID] (detects from the current branch if omitted)"
 model: sonnet
 context: fork
@@ -250,17 +250,57 @@ Whatever the outcome, record it on the PR and the ticket so the unattended run l
 
 **Follow-ups first.** Go through the run's follow-up list (every non-empty `follow_ups:` item from every step, including a `clean` review's optional items). Before filing any item, collect what was already filed for the same work, then search for the item. Collect the Follow-ups sections and run records (`follow_ups` entries with a `ticket` id) of earlier run summaries on this PR and on this ticket; a retry after a park or a second run on the same ticket can raise the same finding again. Then search the team's open tickets for the item's follow-up key (below): Linear `list_issues` with `query`, `gh issue list --search`, or a JIRA text search in JQL. For each item decide one of:
 
-- **file it**: on mcp, create a ticket in the same tracker and team (Linear `save_issue` in the ticket's `project` and related to `{TICKET-ID}`, `gh issue create`, or the Atlassian MCP) with a title and a description that names the PR and the step that raised it and ends with exactly one line `Follow-up key: <key>`, then list its ID. The key names the file and symbol (for example `AbuseManager.ipMatchesCIDR`) or the config key or route the item is about, one key per item. The same finding must produce the same key, so use the most specific stable identifier, never prose. Never file a follow-up as a sub-issue of another issue: no `parentId`, since a parent the run does not own (a spec change's parent, for one) can reach Done with an open child; or
+- **file it**: on mcp, create a ticket in the same tracker and team (Linear `save_issue` in the ticket's `project` and related to `{TICKET-ID}`, `gh issue create`, or the Atlassian MCP) with a title and a description in one of the two shapes under *Follow-up descriptions* below, then list its ID. The key names the file and symbol (for example `AbuseManager.ipMatchesCIDR`) or the config key or route the item is about, one key per item. The same finding must produce the same key, so use the most specific stable identifier, never prose. Never file a follow-up as a sub-issue of another issue: no `parentId`, since a parent the run does not own (a spec change's parent, for one) can reach Done with an open child; or
 - **already filed**: an earlier filed id from the collection above, or an open ticket whose description holds the same `Follow-up key:` line or that plainly describes the same defect. Do not file. Comment on the existing ticket, "Also raised by run {run_id} on PR #{n} ({step}).", and list the item in the summary and the run record as already a ticket with that id, reason "already filed"; or
 - **don't file it**, with a one-line reason: already a ticket ID the step named (list it as is), a duplicate of another item in this list, fixed later in this run (name the commit or pass), or too minor to track (say why).
 
 If the search or the comment fails, that is not a park: file the item as in the first option and say in the summary that the duplicate search failed.
 
+**Follow-up descriptions.** A filed follow-up holds one finding: file each extra finding as its own item, or drop it with a reason as above, and never append it as "Low-priority also: ...". Every description opens with a line naming the PR and the step that raised it, and ends with exactly one line `Follow-up key: <key>`, its last line. Between them it takes one of two shapes:
+
+- **Needs a decision** (the step could not choose between fixes, or the item ends in "needs a human decision"): write each open question as `**q1.** <question>` (then `**q2.**`, ...), each option on its own line as `- A: <option> (for: <reasons>; against: <reasons>)` (then `- B:`, ...; at least two), and one line `Recommended: X. <why>` naming one of the options. File it in the tracker's decision state instead of the default Backlog: Linear `Needs Decision` when the team has a state of that name (`list_issue_statuses`), a JIRA status of that name when the project's workflow has one; otherwise the default state, and the summary marks the item "needs a decision".
+- **No open decision**: a `## Change` section that names the file (and symbol) and what to do, and a `## Acceptance criteria` section with at least one checkable list item (`- [ ] ...`).
+
+```text
+Raised by the review step on PR #42 (ENG-123).
+
+**q1.** Should the auth guard cover GET /api/me?
+- A: Intercept GET /api/me in the guard (for: one place enforces the rule; against: one more check per page load)
+- B: Reword the rule to exclude GET /api/me (for: no code change; against: the route stays unguarded)
+Recommended: A. The guard already covers every other route.
+
+Follow-up key: AuthGuard.canActivate
+```
+
+```text
+Raised by the review step on PR #42 (ENG-123).
+
+## Change
+
+`src/net/abuse.ts`: make `AbuseManager.ipMatchesCIDR` reject a prefix length over 32 instead of matching every address.
+
+## Acceptance criteria
+
+- [ ] `ipMatchesCIDR("10.0.0.1", "10.0.0.0/33")` returns false, and a test covers it.
+
+Follow-up key: AbuseManager.ipMatchesCIDR
+```
+
+Before filing, pass each description to the checker on stdin, as its own Bash call:
+
+```bash
+"${CLAUDE_PLUGIN_ROOT}/bin/ccm-followup-check" <<'CCM_FOLLOWUP_EOF'
+{the description, verbatim}
+CCM_FOLLOWUP_EOF
+```
+
+Write the description's lines and the closing `CCM_FOLLOWUP_EOF` line at the start of the line. Its `shape` is `decision` or `change`. Exit 1: rewrite the description to clear each of its `problems`, and check again. If it still fails, file it as it is and name the remaining rules in the summary; a failed check is never a park.
+
 <!-- ccmagic:spec-only -->
 **Only when the grounding block has a `spec:` section.** Also collect the follow-ups filed on the change's other tickets (the sub-issues of the change's parent ticket) and on their PRs, since the sections and the archive ticket of one change tend to find the same defects.
 <!-- /ccmagic:spec-only -->
 
-Under prompt-relay there is no create API, so list every item under "to file" for a human. Every item appears in the summary's Follow-ups section; "none" is correct only when the list is empty. A parked run does the same before route-and-stop posts its note.
+Under prompt-relay there is no create API, so list every item under "to file" for a human; an item that needs a decision lists its questions, options, and recommendation in the shape above. Every item appears in the summary's Follow-ups section; "none" is correct only when the list is empty. A parked run does the same before route-and-stop posts its note.
 
 ````markdown
 ## 🤖 Autonomous run summary — {TICKET-ID}
