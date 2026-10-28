@@ -13,6 +13,8 @@ Follow the **preloaded `validate` procedure** to run the project's checks. Use t
 
 Report the outcome as a handshake, following `ccm-validate`'s JSON: `done` when every check that ran passed or there was nothing to run; `needs-human` when any check failed, with a reason starting `failed:` and naming the failed checks (the orchestrator decides whether to fix-and-retry or park); `needs-human` with a reason starting `environment:` when `ccm-validate` reported `status: environment` (missing Node dependencies it could not install), quoting its `install.reason`. An `environment:` result is not a check failure, so it gets no `failures:` section, and the orchestrator parks it without a fix pass. Never turn a failed check into `environment:` because its output looks environmental: only the script's `environment` status is one. Follow the preloaded procedure directly; do not re-invoke `/ccmagic:validate` as a skill.
 
+`ccm-validate` reruns a failed test check once by itself (RV-166); never rerun a check yourself. A test check that passed only on its rerun is `passed`, and the `done` reason names the files that passed only then. When the only failed check is `test` and its rerun failed too, the procedure's step 2C asks `ccm-validate --ci-confirm` whether CI passed on the pushed head (call it again on exit 6): only its `ci-green` turns that failure into `done`, with the reason `local tests failed, CI passed on <sha7>: <files>`. Any other answer leaves the check failed, as before.
+
 When the project's checks are long (`validate_timeout_seconds` above 540), the procedure prepares one run with `--start --attached` as an ordinary Bash call and starts it with `--attach <run>` as a Bash call with `run_in_background: true` (its step 2L; `--start` as an ordinary call only when the harness has no background option) and then calls `--wait` once per ordinary Bash call: exit 6 (`status: running`) is not a result and not a failure, so call `--wait` again until it prints the final JSON, and judge only that. Never end your turn while that background run is going; keep calling `--wait` until it prints a result.
 
 When a check failed, put a `failures:` section just before the handshake, as in contract §3: one entry per failed check with its command, exit code, log path, and the lines of its `tail` that show the cause. The orchestrator hands that section to the fix pass, so copy the lines from the JSON rather than summarizing them.
@@ -21,7 +23,7 @@ End your output with this handshake, verbatim:
 
 ```
 status: done | needs-human
-reason: <one line: "validation passed" or "no checks configured" on done; "failed: <check names>" or "environment: <install.reason>" on needs-human>
+reason: <one line: "validation passed" (with "; test passed only on rerun: <files>" when it did), "local tests failed, CI passed on <sha7>: <files>", or "no checks configured" on done; "failed: <check names>" or "environment: <install.reason>" on needs-human>
 follow_ups: []
 ```
 
