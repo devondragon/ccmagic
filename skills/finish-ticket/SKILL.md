@@ -471,6 +471,8 @@ follow_ups: []
 requested_state: <{merge_handoff_state} when orchestrated or under prompt-relay; omit otherwise>
 ```
 
+**Red CI hand-off (RV-165).** Only when the grounding block carries `ci_handoff: true` (the orchestrator found CI red and no failure attributable to the PR), run the Step 3 merge gate as `"${CLAUDE_PLUGIN_ROOT}/bin/ccm-merge-gate" {pr_number} --red-ci-handoff` instead. It reads the attribution again (`ccm-ci-status` with `--attribute`) and drops the red-CI blocker only under `merge_owner: reeve` when every counted failure is an Actions job whose log cannot be read or a check the base branch's tip fails too; every other blocker still blocks. When it exits 0 with a `ci_handoff` object, hand off as above with the reason `handed off to reeve; PR #{pr_number} awaiting merge; CI red, {ci_handoff.reason}`, and the hand-off comment's Preflight names the failing checks. When it refuses (`ci_handoff_refused`), return `needs-human` with the blockers. Without the line, never pass the flag.
+
 The `reason` must begin with the exact text `handed off to reeve`; `/ccmagic:auto-ticket` keys on it. A missing `merge_handoff_state` on the team is `needs-human` (Step 7 hand-off branch), never a fallback merge. Absent the key, or with `merge_owner: self`, this section does not apply and the run merges as documented above.
 
 ### Route-and-stop (park the ticket) — top-level entry points only

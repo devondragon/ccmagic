@@ -38,9 +38,10 @@ review_pass: {n, only on re-reviews (Step 3 fix loop, Step 4f late push); absent
 fix_pass: {n, only on a fix pass of the work step (Step 2b, 3, or 4b); absent otherwise}
 fix_source: {review | validate | visual, only with fix_pass}
 visual_round: {n, only to the visual step (Step 2b): 1 on the first round, up to 3}
+ci_handoff: {true, only to the finish step, and only when Step 4d found the pass clean with red CI; absent otherwise}
 ```
 
-`merge_owner` and `merge_handoff_state` come from config (§5) with defaults `self` and `Awaiting Merge`; only `finish-ticket` acts on them.
+`merge_owner` and `merge_handoff_state` come from config (§5) with defaults `self` and `Awaiting Merge`; only `finish-ticket` acts on them. `ci_handoff: true` (RV-165) tells the finish step that CI is red and the orchestrator found no failure attributable to the PR (`ccm-ci-status` with `--attribute`); the finish step runs `ccm-merge-gate` with `--red-ci-handoff`, which checks the attribution again and takes it only under `merge_owner: reeve`, and hands off with CI red. It never lets a run merge.
 
 The block always carries the ticket content, on every transport. The orchestrator fetches the ticket once in its Step 0 (under prompt-relay it takes the content from the invocation instead, §7) and appends a `ticket_content:` section:
 
@@ -159,7 +160,7 @@ Which values each sub-skill can emit:
 | `validate` | `done` \| `needs-human` |
 | `push` | `done` \| `needs-human` |
 | `visual` (agent `auto-visual`) | `done` \| `needs-human` (`done` whatever the judgments; `needs-human` only with no `visual_criteria:` section or no PR) |
-| `finish-ticket` | `done` \| `needs-human` (with `merge_owner: reeve`, `done` carries `reason: handed off to reeve; ...` and the PR is not merged) |
+| `finish-ticket` | `done` \| `needs-human` (with `merge_owner: reeve`, `done` carries `reason: handed off to reeve; ...` and the PR is not merged; with `ci_handoff: true` the reason goes on `; CI red, {attribution reason}`) |
 
 On a fix pass (§2) the work step's report carries an `applied_findings:` section and, when there is something to note, a `commit_notes:` section, both fenced and just **before** the handshake block, so the handshake stays last:
 
@@ -319,6 +320,7 @@ A project file overrides the user file, which overrides the built-in default. Th
 - **Never finish past a failed validate.** The run reaches `finish-ticket` only when its latest validate step returned `done` and its latest review `clean`; `ccm-finish-guard` checks the `steps:` section (§2) in the PreToolUse hook and again in the finish agent. A failed check gets the bounded fix passes of orchestrator Step 4b, an `environment:` result parks, and no orchestrator judgment (such as "the failure is environmental") replaces either.
 - **Never finish on a stale review.** The last clean review's `head:` must be the PR head when `finish-ticket` runs. A late push (Step 4a or 4b) gets a re-review (orchestrator Step 4f) within the existing loop limits, and a run that can't re-review the pushed head parks.
 - **Every exit is `merged`, `handed-off` (only with `merge_owner: reeve`), or `parked-needs-human` (with a reason).** Never `stalled`, never a silent hang, never a merge on a guess.
+- **Red CI is handed off only when it is not the PR's** (RV-165): only with `merge_owner: reeve`, with no open threads, a clean review of the PR head, and a `done` validate on that head, and only when `ccm-ci-status` with `--attribute` finds every counted failure to be an Actions job whose log cannot be read or a check the base tip fails too. The run record carries the red CI in its `ci` key, never as a step status. A red PR never merges.
 
 ## 7. Prompt-relay transport
 

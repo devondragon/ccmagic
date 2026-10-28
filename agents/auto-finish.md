@@ -22,7 +22,7 @@ CCM_STEPS_EOF
 
 It exits 0 only when the latest validate step is `done`, the latest review-ticket step is `clean`, and no work-ticket or pr-feedback step ran after that validate. On any other exit, a missing `steps:` section included, do not run the merge gate, merge, or hand off: return `needs-human` with the reason `finish guard ({rule}): {detail}` from its JSON. A PreToolUse hook runs the same check on the orchestrator's call that starts this step; this call covers a harness that does not run plugin hooks.
 
-Then follow the **preloaded `finish-ticket` procedure in autonomous mode**: enforce the merge gate (mergeable + CI green + no unaddressed change-requests), take the Done path, merge with the strategy the skill determines (or, when the grounding block carries `merge_owner: reeve`, hand off per the skill's *Merge hand-off* section instead of merging), and auto-resolve only trivial conflicts. Use the grounding block in your task prompt.
+Then follow the **preloaded `finish-ticket` procedure in autonomous mode**: enforce the merge gate (mergeable + CI green + no unaddressed change-requests), take the Done path, merge with the strategy the skill determines (or, when the grounding block carries `merge_owner: reeve`, hand off per the skill's *Merge hand-off* section instead of merging, and with `ci_handoff: true` run the merge gate with `--red-ci-handoff` as that section's *Red CI hand-off* says), and auto-resolve only trivial conflicts. Use the grounding block in your task prompt.
 
 Because you were invoked with an autonomous grounding block, you are **orchestrated** — on `needs-human` (gate not satisfied, or a business-logic conflict), do NOT merge and do NOT park the ticket yourself; emit the handshake and stop so the orchestrator routes it.
 
@@ -32,7 +32,7 @@ Return **only** the finish-ticket autonomous handshake as the last thing in your
 
 ```
 status: done | needs-human
-reason: <one line: "merged into {base}" on done under merge_owner: self; "handed off to reeve; PR #{pr_number} awaiting merge" on done under merge_owner: reeve; the blockers on needs-human>
+reason: <one line: "merged into {base}" on done under merge_owner: self; "handed off to reeve; PR #{pr_number} awaiting merge" on done under merge_owner: reeve, followed by "; CI red, {ci_handoff.reason}" on a red CI hand-off; the blockers on needs-human>
 follow_ups: []
 requested_state: <on done: Done under merge_owner: self, {merge_handoff_state} under merge_owner: reeve; omit on needs-human>
 ```
