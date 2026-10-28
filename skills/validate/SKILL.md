@@ -51,7 +51,9 @@ For each check with `status: planned`, in the listed order:
 
 Give each call the maximum Bash tool timeout (600000 ms). One call per check keeps each under the tool's 10-minute limit; the script enforces its own `validate_timeout_seconds` limit (default 540, which leaves room to report before the tool's limit) and reports a check that hits it as `failed` with reason "timed out". If the output has a `note`, no `timeout` binary was found and the checks ran unbounded; repeat the note in the report. If the Bash call itself times out and prints no JSON, count that check as failed with reason "timed out".
 
-Each call prints `{status: pass | fail | environment, install?, checks: [{name, command, source, status, exit_code, duration_s, log, reason?, tail?}]}` and exits 0 on pass, 1 on fail, and 5 on `environment` (missing dependencies it could not install, so no check ran; stop and report it as step 1b says). A failed check carries the last 40 lines of its output as `tail`; the full output is in the `log` file. Keep going after a failure so the report covers every check, unless the user asked to stop at the first failure.
+Each call prints `{status: pass | fail | environment, install?, checks: [{name, command, source, status, exit_code, duration_s, log, reason?, tail?, rerun?, passed_on_rerun?}]}` and exits 0 on pass, 1 on fail, and 5 on `environment` (missing dependencies it could not install, so no check ran; stop and report it as step 1b says). A failed check carries the last 40 lines of its output as `tail`; the full output is in the `log` file. Keep going after a failure so the report covers every check, unless the user asked to stop at the first failure.
+
+**The test check runs twice when it fails** (RV-166). The script itself reruns a failed `test` check once, unless it timed out, before it prints the result; you never rerun anything. With vitest or jest (the command, or the `package.json` script it runs, is one plain `vitest` or `jest` call) it reruns only the test files the first run's `FAIL` lines name, one file at a time and without coverage, but only when the run's summary counts exactly those files as failed and reports no unhandled error, coverage threshold, or crashed worker; otherwise, and for any other runner (Gradle, Maven, go, cargo, pytest, a compound script), it reruns the whole command unchanged. In a step 2 call the rerun gets only the time the first run left of `validate_timeout_seconds`, so the call still ends within it; with under 30 seconds left the rerun is skipped (`rerun.status: skipped`, with a `reason`) and the check stays failed. The check's `rerun` object says what happened: `mode` (`files` or `command`), `files`, `command`, `status` (`passed`, `failed`, or `skipped`), `log`, and `failed_files` (the files the rerun still failed, when the runner is known). A rerun that passes makes the check `passed` with `passed_on_rerun: true`; one that fails or is skipped leaves it `failed`.
 
 ### 2L. Long checks: one background run (`timeout_seconds` above 540)
 
@@ -89,6 +91,19 @@ The loop has a limit: `limit_s` is the sum of the planned checks' limits (one mo
 
 Other `--start` answers, with or without `--attached`: `nothing-to-run` (exit 2) is step 1's case. `running` (exit 6) with a `note` means an earlier call in this checkout left a run going, which may have checked older code: `--wait` until it ends, discard that result, and start again. Exit 1 with a `fail` result means the run could not start; report it as failed. The background call's own completion notification, when it arrives, carries the same final JSON as `--wait`; `--wait` is the one to judge.
 
+### 2C. CI on the same head (autonomous mode only)
+
+Run this only in autonomous mode, and only when the result (every step 2 call together, or the step 2L result) has exactly one failed check, `test`, and that check has a `rerun` whose `status` is `failed`. A test check with no `rerun` (it timed out), or any other failed check, skips this step. Make this call, in the foreground with the maximum Bash tool timeout (600000 ms):
+
+```bash
+"${CLAUDE_PLUGIN_ROOT}/bin/ccm-validate" --ci-confirm
+```
+
+It prints `{status, reason, head, ci, call_again?}`. Exit 6 (`ci-pending`, `call_again: true`) means CI on the head is still running: make the identical call again, until another code. The total wait is bounded by `validate_timeout_seconds` across calls, so do not count calls yourself. Then:
+
+- `ci-green` (exit 0): the working tree is clean, `HEAD` is the pull request's head, CI passed on it, at least one counted check ran and passed (not all skipped), and no check that `.reeve/policy.yml` lists under `ci.ignore` failed (the test job may be one of them). CI is the result for the test check: see the autonomous handshake below.
+- `ci-not-green` (CI failed, timed out, is absent, could not be read, is green only because a failed `ci.ignore` check was set aside, or skipped every counted check) or `not-applicable` (uncommitted or untracked changes, no readable pull request, or `HEAD` not pushed yet, so CI never ran on this code), both exit 1: the test check stays failed. Add the `reason` to its `failures:` entry.
+
 ### 3. Optional checks (interactive only)
 
 These are outside the script and never change the verdict. Offer them in interactive mode when relevant; skip them in autonomous mode:
@@ -99,7 +114,7 @@ These are outside the script and never change the verdict. Offer them in interac
 
 ## Validation Report Format
 
-Fill the report from the JSON of the step 2 calls (or the step 2L result): one section per check in the listed order, with the command, `duration_s`, and for a failed check the relevant lines of `tail` (read `log` for more when the tail doesn't show the cause). Skipped checks get one line with their `reason`. Optional checks from step 3 go in their own sections, marked as not affecting the result.
+Fill the report from the JSON of the step 2 calls (or the step 2L result): one section per check in the listed order, with the command, `duration_s`, and for a failed check the relevant lines of `tail` (read `log` for more when the tail doesn't show the cause). A test check with a `rerun` says what the rerun ran and how it ended; one that passed only on rerun names the files (or the whole command) that passed only then, and a step 2C `ci-green` says local tests failed and CI passed on the head, naming the files. Skipped checks get one line with their `reason`. Optional checks from step 3 go in their own sections, marked as not affecting the result.
 
 ```markdown
 # Validation Report
@@ -212,20 +227,21 @@ Autonomous mode is ON when the first present signal (in priority order) resolves
 
 Absent all three, run the interactive path exactly as documented above.
 
-`/ccmagic:validate` has no tracker access; it never moves a ticket. It runs steps 1 and 2, or 2L (not the optional checks), reports the result, and emits the handshake. The parent skill or orchestrator owns any route-and-stop. Auto-fix is **off** in autonomous mode: report failures, don't rewrite code.
+`/ccmagic:validate` has no tracker access; it never moves a ticket. It runs steps 1 and 2, or 2L, then 2C when it applies (not the optional checks), reports the result, and emits the handshake. The parent skill or orchestrator owns any route-and-stop. Auto-fix is **off** in autonomous mode: report failures, don't rewrite code.
 
 The handshake follows the script's JSON, with no judgment of your own:
 
-- Every step 2 call returned `status: pass` (or the step 2L result did): emit `done` with reason `validation passed`. A step 2L `running` answer (exit 6) is not a result: keep calling `--wait`.
+- Every step 2 call returned `status: pass` (or the step 2L result did): emit `done` with reason `validation passed`. A step 2L `running` answer (exit 6) is not a result: keep calling `--wait`. When the test check has `passed_on_rerun: true`, the reason is `validation passed; test passed only on rerun: {files}`, with `{files}` the `rerun.files` joined by `, `, or `the whole test command` when `rerun.mode` is `command`.
+- Step 2C returned `ci-green`: emit `done` with reason `local tests failed, CI passed on {head, first 7 characters}: {files}`, with `{files}` the rerun's `failed_files` joined by `, `, else its `files`, else `the whole test command`. Emit no `failures:` section. This is the only case where a failed check ends in `done`.
 - `--list` returned `nothing-to-run`: emit `done` with reason `no checks configured`.
 - `--install`, a step 2 call, or the step 2L result returned `status: environment`: emit `needs-human` with a reason starting `environment:` and quoting `install.reason` (for example `environment: npm ci exited 1`), and no `failures:` section. An environment problem is not a check failure: the orchestrator parks it without a fix pass. Only the script's `environment` status is one; a check the script reports `failed` stays `failed:` however environmental its output looks.
-- Any step 2 call returned `status: fail`, or the step 2L result did: emit `needs-human` with a reason listing the failed check names from the JSON (for example `failed: lint, test`; add "(timed out)" after a check whose `reason` says so). Just before the handshake, emit a `failures:` section (contract §3) with one entry per failed check: its `command`, `exit_code`, `log` path, and the lines of its `tail` that show the cause, copied from the JSON (a check a stopped step 2L run left failed has no exit code or `tail`; give its `reason`, and the end of its `log` when there is one). The orchestrator decides whether to fix-and-retry or park, and hands that section to the fix pass.
+- Any step 2 call returned `status: fail`, or the step 2L result did: emit `needs-human` with a reason listing the failed check names from the JSON (for example `failed: lint, test`; add "(timed out)" after a check whose `reason` says so). Just before the handshake, emit a `failures:` section (contract §3) with one entry per failed check: its `command`, `exit_code`, `log` path, and the lines of its `tail` that show the cause, copied from the JSON (a check a stopped step 2L run left failed has no exit code or `tail`; give its `reason`, and the end of its `log` when there is one). For a test check with a `rerun`, add a line `rerun ({mode}): exit {rerun.exit_code}; still failing: {failed_files, or "unknown"}; CI: {the step 2C reason, or "not consulted"}`, so the fix pass knows the failure repeated. The orchestrator decides whether to fix-and-retry or park, and hands that section to the fix pass.
 
 ### Handshake (emit last, in autonomous mode)
 
 ```
 status: done | needs-human
-reason: <one line: "validation passed" or "no checks configured" on done; "failed: <check names>" or "environment: <install.reason>" on needs-human>
+reason: <one line: "validation passed" (with "; test passed only on rerun: <files>" when it did), "local tests failed, CI passed on <sha7>: <files>", or "no checks configured" on done; "failed: <check names>" or "environment: <install.reason>" on needs-human>
 follow_ups: []
 ```
 

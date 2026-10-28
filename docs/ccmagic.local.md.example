@@ -113,6 +113,15 @@ max_feedback_passes: 3
 # Bash call, then --wait until it finishes), since a single Bash tool call
 # stops at 10 minutes; set it above 540 when a check,
 # such as a test suite with integration tests, takes longer than 9 minutes.
+# A failed test check runs once more under the same limit (RV-166): only the
+# failed files when the test command, or the package.json script it runs, is a
+# plain vitest or jest call and the run's summary accounts for every failure
+# (one file at a time, without coverage), and the whole command otherwise,
+# Gradle included. In a plain run the rerun gets only the time left of
+# validate_timeout_seconds. In an autonomous run, a
+# test check that fails twice while CI passed on the same pushed, clean head is
+# not a park; ccm-validate --ci-confirm waits for that CI no longer than
+# validate_timeout_seconds.
 # validate_format: npm run format:check
 # validate_lint: npm run lint
 # validate_types: npm run typecheck
