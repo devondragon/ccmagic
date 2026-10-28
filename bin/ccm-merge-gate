@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ccm-merge-gate: decide whether a PR may be merged, as JSON.
 #
-# Usage: ccm-merge-gate [PR]    (defaults to the current branch's PR)
+# Usage: ccm-merge-gate [PR] [--red-ci-handoff]   (PR defaults to the current branch's)
 #
 # The gate passes only when all of these hold:
 #   - the PR is OPEN
@@ -10,16 +10,30 @@
 #   - no reviewer's latest review is CHANGES_REQUESTED
 # A missing approval is a warning, not a blocker.
 #
+# --red-ci-handoff (RV-165) is for the hand-off to Reeve, never a merge. With
+# it, CI is read with `ccm-ci-status --attribute`, and a `failed` CI is not a
+# blocker when merge_owner is reeve in the config and the attribution verdict
+# is `not-attributable` (every counted failure is an Actions job whose log
+# cannot be read, or a check the base branch tip fails too). Every other
+# blocker still blocks. The output then carries `ci_handoff: {reason, checks}`;
+# when the flag was given and CI is red but the rule does not hold, it carries
+# `ci_handoff: null` and `ci_handoff_refused` saying why. The PreToolUse merge
+# guard never passes the flag, and under merge_owner: reeve it denies every
+# merge, so the flag cannot let a red PR merge.
+#
 # Exit codes: 0 pass, 1 blocked, 3 cannot read the PR, 4 usage error.
 # Output: {pass, pr, url, base, head, blockers: [..], warnings: [..], ci: {..}}
 
 set -euo pipefail
 here=$(dirname "${BASH_SOURCE[0]}")
+# shellcheck source=bin/ccm-lib.sh
+. "$here/ccm-lib.sh"
 
-pr=""
+pr="" handoff=false
 for a in "$@"; do
   case $a in
-    -h|--help) sed -n '2,14p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,26p' "$0"; exit 0 ;;
+    --red-ci-handoff) handoff=true ;;
     -*) echo "ccm-merge-gate: unknown flag $a" >&2; exit 4 ;;
     *) pr=${a#\#} ;;
   esac
@@ -40,9 +54,20 @@ if [ -z "$view" ]; then
 fi
 pr=$(jq -r .number <<<"$view")
 
-ci=$("$here/ccm-ci-status" "$pr") || true
+owner=self
+if [ "$handoff" = true ]; then
+  ci=$("$here/ccm-ci-status" "$pr" --attribute) || true
+  owner=$(ccm_config_get merge_owner)
+else
+  ci=$("$here/ccm-ci-status" "$pr") || true
+fi
 
-result=$(jq -n --argjson v "$view" --argjson ci "$ci" '
+result=$(jq -n --argjson v "$view" --argjson ci "$ci" --arg handoff "$handoff" --arg owner "$owner" '
+  # The red-CI hand-off (RV-165): only with the flag, under merge_owner: reeve,
+  # on a failed CI whose every counted failure is not attributable to the PR.
+  ($handoff == "true" and $ci.status == "failed") as $asked
+  | ($asked and $owner == "reeve" and $ci.attribution.verdict == "not-attributable") as $red_ok
+  |
   # Latest review per reviewer. COMMENTED reviews do not change a stance.
   ($v.reviews
     | map(select(.state != "COMMENTED" and .state != "PENDING"))
@@ -55,7 +80,7 @@ result=$(jq -n --argjson v "$view" --argjson ci "$ci" '
       (if $v.mergeable == "CONFLICTING" then "merge conflicts with " + $v.baseRefName
        elif $v.mergeable != "MERGEABLE" then "mergeability is " + $v.mergeable + " (GitHub has not computed it)"
        else empty end),
-      (if ($ci.status | IN("green", "no-ci")) then empty
+      (if ($ci.status | IN("green", "no-ci")) or $red_ok then empty
        else "CI " + $ci.status + ": " + $ci.reason end),
       (if ($changes | length) > 0 then "changes requested by " + ($changes | join(", ")) else empty end)
     ] as $blockers
@@ -66,6 +91,11 @@ result=$(jq -n --argjson v "$view" --argjson ci "$ci" '
       warnings: (if $approvals == 0 then ["no approving review"] else [] end),
       ci: $ci
     }
+  + (if $red_ok then {ci_handoff: {reason: $ci.attribution.reason, checks: [$ci.attribution.checks[].name]}}
+     elif $asked then {ci_handoff: null,
+       ci_handoff_refused: (if $owner != "reeve" then "merge_owner is " + $owner + ", not reeve"
+                            else ($ci.attribution.reason // "the CI failure could not be attributed") end)}
+     else {} end)
 ')
 
 echo "$result"

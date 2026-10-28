@@ -5,6 +5,8 @@
 #   ccm-ci-status [PR]                       one snapshot
 #   ccm-ci-status [PR] --watch [--wait-key KEY] [--timeout-minutes N]
 #                 [--interval S] [--max-call-seconds S]
+#   ccm-ci-status [PR] --attribute           one snapshot; when it is `failed`,
+#                                            also say whether the failure is the PR's
 #
 # Status values and exit codes:
 #   green           0  every check passed (skipped/neutral count as passed)
@@ -53,25 +55,43 @@
 # total wait across repeated calls is bounded by --timeout-minutes (default:
 # config ci_timeout_minutes) without the caller counting anything. A call that
 # returns `pending` with "call_again": true should simply be repeated.
+#
+# --attribute (RV-165) adds an `attribution` object to a `failed` snapshot
+# (null for any other status). For each counted check that failed or was
+# cancelled it reports `kind` (`actions` for a GitHub Actions job of this repo,
+# `other` for a commit status or another App's check run), `job_id`, `log`
+# (`readable` or `unreadable` from GET actions/jobs/ID/logs, `n/a` for other),
+# and `base`: the same check, matched by name, on the base branch's tip
+# (`red`, `pending`, `green`, `absent`, or `unreadable`). A check is not the
+# PR's (`attributable: false`) when the base tip fails it too, or when it is an
+# Actions job whose log this token cannot read. `verdict` is
+# `not-attributable` only when no counted failure is the PR's, else
+# `attributable`. It cannot be combined with --watch.
 
 set -euo pipefail
 # shellcheck source=bin/ccm-lib.sh
 . "$(dirname "${BASH_SOURCE[0]}")/ccm-lib.sh"
 
-pr="" watch=false wait_key="" timeout_min="" interval="" max_call=540
+pr="" watch=false attribute=false wait_key="" timeout_min="" interval="" max_call=540
 while [ $# -gt 0 ]; do
   case $1 in
     --watch) watch=true ;;
+    --attribute) attribute=true ;;
     --wait-key) wait_key=${2:?}; shift ;;
     --timeout-minutes) timeout_min=${2:?}; shift ;;
     --interval) interval=${2:?}; shift ;;
     --max-call-seconds) max_call=${2:?}; shift ;;
-    -h|--help) sed -n '2,55p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,69p' "$0"; exit 0 ;;
     -*) echo "ccm-ci-status: unknown flag $1" >&2; exit 4 ;;
     *) pr=${1#\#} ;;
   esac
   shift
 done
+
+if [ "$watch" = true ] && [ "$attribute" = true ]; then
+  echo "ccm-ci-status: --attribute takes one snapshot and cannot be combined with --watch" >&2
+  exit 4
+fi
 
 [ -n "$timeout_min" ] || timeout_min=$(ccm_config_get ci_timeout_minutes)
 [ -n "$interval" ] || interval=$(ccm_config_get ci_poll_interval_seconds)
@@ -163,8 +183,8 @@ expand_jobs() {
     return
   fi
   for id in $(jq -r '.[] | select(.run_id != null and (.bucket | IN("pass", "skipping") | not)) | .run_id' <<<"$checks"); do
-    if out=$(gh api "repos/$slug/actions/runs/$id/jobs?per_page=100" --paginate --jq '.jobs[] | {name, status, conclusion}' 2>/dev/null) &&
-      jobs=$(jq -s -c '[.[] | {name, state: (.conclusion // .status), owner: "github-actions",
+    if out=$(gh api "repos/$slug/actions/runs/$id/jobs?per_page=100" --paginate --jq '.jobs[] | {id, name, status, conclusion}' 2>/dev/null) &&
+      jobs=$(jq -s -c '[.[] | {name, state: (.conclusion // .status), owner: "github-actions", job_id: .id,
         bucket: (if .status != "completed" then "pending"
                  elif (.conclusion | IN("success","skipped","neutral")) then "pass"
                  else "fail" end)}]' <<<"$out") && [ "$jobs" != '[]' ]; then
@@ -333,6 +353,123 @@ snapshot() {
   actions_verdict
 }
 
+# ---- --attribute (RV-165) ----------------------------------------------------
+
+# The Actions job id in a check run's details URL, when the URL names a job of
+# this repository's workflow runs on github.com; empty otherwise.
+job_from_link() {
+  local link=$1 re
+  [ -n "$slug" ] || return 0
+  re="^https://github\.com/([^/]+/[^/]+)/actions/runs/[0-9]+/job/([0-9]+)([/?#].*)?$"
+  if [[ $link =~ $re ]] && [ "$(tr '[:upper:]' '[:lower:]' <<<"${BASH_REMATCH[1]}")" = "$(tr '[:upper:]' '[:lower:]' <<<"$slug")" ]; then
+    echo "${BASH_REMATCH[2]}"
+  fi
+}
+
+# The counted failed checks of a snapshot as [{name, kind, job_id}]: one entry
+# per failed Actions job (kind actions; job_id null when the job list could not
+# be read), and one per other failed check (kind other).
+failed_units() {
+  local r=$1 failed links out units='[]' entry name link job id jobs
+  failed=$(jq -c '[.checks[] | select((.advisory | not) and (.bucket == "fail" or .bucket == "cancel"))]' <<<"$r")
+  links='[]'
+  if [ "$(jq -r .source <<<"$r")" = checks ]; then
+    out=$(gh pr checks "$pr" --json name,link 2>/dev/null) || true
+    if jq -e 'type == "array"' <<<"$out" >/dev/null 2>&1; then links=$out; fi
+  fi
+  while IFS= read -r entry; do
+    [ -n "$entry" ] || continue
+    name=$(jq -r .name <<<"$entry")
+    if [ "$(jq -r '.job_id // empty' <<<"$entry")" != "" ]; then
+      units=$(jq -c --arg n "$name" --argjson id "$(jq .job_id <<<"$entry")" '. + [{name: $n, kind: "actions", job_id: $id}]' <<<"$units")
+    elif [ "$(jq -r '.run_id // empty' <<<"$entry")" != "" ]; then
+      id=$(jq -r .run_id <<<"$entry")
+      if out=$(gh api "repos/$slug/actions/runs/$id/jobs?per_page=100" --paginate --jq '.jobs[] | {id, name, status, conclusion}' 2>/dev/null) &&
+        jobs=$(jq -s -c '[.[] | select(.status == "completed" and (.conclusion | IN("success","skipped","neutral") | not)) | {name, kind: "actions", job_id: .id}]' <<<"$out") &&
+        [ "$jobs" != '[]' ]; then
+        units=$(jq -c --argjson j "$jobs" '. + $j' <<<"$units")
+      else
+        units=$(jq -c --arg n "$name" '. + [{name: $n, kind: "actions", job_id: null}]' <<<"$units")
+      fi
+    else
+      link=$(jq -r --arg n "$name" '[.[] | select(.name == $n) | .link // empty] | first // empty' <<<"$links")
+      job=$(job_from_link "$link")
+      if [ -n "$job" ]; then
+        units=$(jq -c --arg n "$name" --argjson id "$job" '. + [{name: $n, kind: "actions", job_id: $id}]' <<<"$units")
+      else
+        units=$(jq -c --arg n "$name" '. + [{name: $n, kind: "other", job_id: null}]' <<<"$units")
+      fi
+    fi
+  done < <(jq -c '.[]' <<<"$failed")
+  echo "$units"
+}
+
+# The base branch tip's checks as [{name, bucket}] (check runs, or Actions jobs
+# when check runs are hidden, plus commit statuses), or null when unreadable.
+base_checks() {
+  local bsha=$1 out list st runs id jobs
+  if out=$(gh api "repos/$slug/commits/$bsha/check-runs?per_page=100" --paginate --jq '.check_runs[] | {name, status, conclusion}' 2>/dev/null); then
+    list=$(jq -s -c '.' <<<"$out")
+  elif runs=$(gh run list --commit "$bsha" --json databaseId,workflowName,status,conclusion 2>/dev/null); then
+    list='[]'
+    for id in $(jq -r '.[].databaseId' <<<"$runs"); do
+      if out=$(gh api "repos/$slug/actions/runs/$id/jobs?per_page=100" --paginate --jq '.jobs[] | {name, status, conclusion}' 2>/dev/null); then
+        jobs=$(jq -s -c '.' <<<"$out")
+      else
+        jobs=$(jq -c --argjson id "$id" '[.[] | select(.databaseId == $id) | {name: .workflowName, status, conclusion}]' <<<"$runs")
+      fi
+      list=$(jq -c --argjson j "$jobs" '. + $j' <<<"$list")
+    done
+  else
+    echo null
+    return
+  fi
+  list=$(jq -c '[.[] | {name, bucket: (if ((.status // "") | ascii_downcase) != "completed" then "pending"
+    elif ((.conclusion // "") | ascii_downcase | IN("success","skipped","neutral")) then "pass" else "fail" end)}]' <<<"$list")
+  if st=$(gh api "repos/$slug/commits/$bsha/status" 2>/dev/null) && jq -e '.statuses | type == "array"' <<<"$st" >/dev/null 2>&1; then
+    list=$(jq -c --argjson st "$st" '. + ($st.statuses | map({name: .context,
+      bucket: (if .state == "success" then "pass" elif .state == "pending" then "pending" else "fail" end)}))' <<<"$list")
+  fi
+  echo "$list"
+}
+
+attribution() {
+  local r=$1 units bsha="" blist=null checks='[]' u id log
+  units=$(failed_units "$r")
+  if [ -n "$slug" ]; then
+    bsha=$(gh api "repos/$slug/branches/$base" --jq .commit.sha 2>/dev/null) || bsha=""
+  fi
+  if [ -n "$bsha" ]; then blist=$(base_checks "$bsha"); fi
+  while IFS= read -r u; do
+    [ -n "$u" ] || continue
+    log=n/a
+    if [ "$(jq -r .kind <<<"$u")" = actions ]; then
+      id=$(jq -r '.job_id // empty' <<<"$u")
+      if [ -n "$id" ] && gh api "repos/$slug/actions/jobs/$id/logs" >/dev/null 2>&1; then log=readable; else log=unreadable; fi
+    fi
+    checks=$(jq -c --argjson u "$u" --arg log "$log" --argjson bl "$blist" '
+      ($u.name) as $n
+      | (if $bl == null then "unreadable"
+         else [$bl[] | select(.name == $n) | .bucket] as $b
+           | if any($b[]; . == "fail") then "red" elif any($b[]; . == "pending") then "pending"
+             elif ($b | length) > 0 then "green" else "absent" end end) as $base
+      | . + [$u + {log: $log, base: $base,
+          attributable: (($base == "red" or ($u.kind == "actions" and $log == "unreadable")) | not)}]' <<<"$checks")
+  done < <(jq -c '.[]' <<<"$units")
+  jq -n --argjson c "$checks" --arg base "$base" --arg bsha "$bsha" '
+    def why: . as $k | $k.name + " (" + ([
+        (if $k.kind == "actions" and $k.log == "unreadable" then "log unreadable" else empty end),
+        (if $k.base == "red" then "also failing on " + $base else empty end)]
+      | if length == 0 then (if $k.kind == "actions" then "log readable" else "not an Actions job" end) + ", " + $k.base + " on " + $base else join(", ") end) + ")";
+    (($c | length) > 0 and all($c[]; .attributable | not)) as $na
+    | {verdict: (if $na then "not-attributable" else "attributable" end),
+       base_sha: (if $bsha == "" then null else $bsha end),
+       checks: $c,
+       reason: (if ($c | length) == 0 then "no counted failed check found"
+                elif $na then "not attributable to the PR: " + ($c | map(why) | join(", "))
+                else "attributable to the PR: " + ([$c[] | select(.attributable)] | map(why) | join(", ")) end)}'
+}
+
 exit_for() {
   case $1 in
     green|no-ci) echo 0 ;;
@@ -347,6 +484,13 @@ exit_for() {
 
 if [ "$watch" = false ]; then
   r=$(snapshot)
+  if [ "$attribute" = true ]; then
+    if [ "$(jq -r .status <<<"$r")" = failed ]; then
+      r=$(jq --argjson a "$(attribution "$r")" '. + {attribution: $a}' <<<"$r")
+    else
+      r=$(jq '. + {attribution: null}' <<<"$r")
+    fi
+  fi
   echo "$r"
   exit "$(exit_for "$(jq -r .status <<<"$r")")"
 fi
