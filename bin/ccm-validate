@@ -611,6 +611,7 @@ test_runner() {
     [ -n "$body" ] || return 0
     prefix="PATH=\"$root/node_modules/.bin:\$PATH\" "
   fi
+  # shellcheck disable=SC2016 # a literal $( to look for, not an expansion
   case $body in *'&&'*|*'||'*|*';'*|*'|'*|*'`'*|*'$('*|*$'\n'*) return 0 ;; esac
   if [[ $body =~ ^[[:space:]]*([A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*[[:space:]]+)*(npx[[:space:]]+)?(vitest|jest)([[:space:]]|$) ]]; then
     runner=${BASH_REMATCH[3]}

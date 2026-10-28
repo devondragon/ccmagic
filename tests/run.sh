@@ -1945,6 +1945,7 @@ validate_rerun_vitest_failed_files_pass() {
   touch test/a.test.ts test/b.test.ts
   # The first run fails two files (one under a project name, one as a suite
   # error); the rerun passes.
+  # shellcheck disable=SC2016 # the stub expands $n, not this shell
   fake_runner vitest '[ "$n" -gt 1 ] && exit 0
 printf " FAIL  test/a.test.ts > polls > settles\n FAIL  |unit| test/b.test.ts [ test/b.test.ts ]\n FAIL  test/gone.test.ts > x\n"; exit 1'
   run "$BIN/ccm-validate" --only test
