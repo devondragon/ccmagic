@@ -1923,6 +1923,162 @@ validate_jvm_without_wrapper_uses_tool_name() {
   check "$(commands)" '-|-|-|sh ./mvnw -B test|sh ./mvnw -B verify'
 }
 
+# ---- ccm-validate: test rerun and --ci-confirm (RV-166) ---------------------
+
+# fake_runner NAME BODY: a test runner stub in $T/bin that logs its arguments
+# to $T/NAME.log, one line per call, then runs BODY with the call number in $n.
+fake_runner() {
+  mkdir -p "$T/bin"
+  # shellcheck disable=SC2016 # the stub expands these, not this shell
+  printf '#!/bin/sh\necho "$*" >>"%s/%s.log"\nn=$(wc -l <"%s/%s.log" | tr -d " ")\n%s\n' \
+    "$T" "$1" "$T" "$1" "$2" >"$T/bin/$1"
+  chmod +x "$T/bin/$1"
+}
+
+# test_check JQ: a field of the test check in OUT.
+test_check() { jq -c ".checks[] | select(.name == \"test\") | $1" <<<"$OUT"; }
+
+validate_rerun_vitest_failed_files_pass() {
+  seed_pkg '{"test":"vitest run"}'
+  mkdir -p test node_modules/vitest
+  echo '{"version":"3.2.4"}' >node_modules/vitest/package.json
+  touch test/a.test.ts test/b.test.ts
+  # The first run fails two files (one under a project name, one as a suite
+  # error); the rerun passes.
+  fake_runner vitest '[ "$n" -gt 1 ] && exit 0
+printf " FAIL  test/a.test.ts > polls > settles\n FAIL  |unit| test/b.test.ts [ test/b.test.ts ]\n FAIL  test/gone.test.ts > x\n"; exit 1'
+  run "$BIN/ccm-validate" --only test
+  check "$(jqval .status),$RC,$(test_check .status),$(test_check .passed_on_rerun),$(test_check .first_exit_code)" \
+    "pass,0,\"passed\",true,1"
+  check "$(test_check .rerun.mode),$(test_check .rerun.runner),$(test_check .rerun.files)" \
+    '"files","vitest",["test/a.test.ts","test/b.test.ts"]'
+  check "$(sed -n 2p "$T/vitest.log")" "run --no-file-parallelism --coverage.enabled=false test/a.test.ts test/b.test.ts"
+}
+
+validate_rerun_jest_still_failing_keeps_fail() {
+  seed_pkg '{"test":"CI=1 jest --ci"}'
+  mkdir -p src
+  touch src/x.test.js
+  fake_runner jest 'echo "FAIL src/x.test.js (1.2 s)"; exit 1'
+  run "$BIN/ccm-validate" --only test
+  check "$(jqval .status),$RC,$(test_check .status),$(test_check .exit_code)" 'fail,1,"failed",1'
+  check "$(test_check .rerun.status),$(test_check .rerun.mode),$(test_check .rerun.failed_files)" \
+    '"failed","files",["src/x.test.js"]'
+  check "$(sed -n 2p "$T/jest.log")" "--ci --runInBand --coverage=false --runTestsByPath src/x.test.js"
+  [[ $(test_check .rerun.tail) == *"FAIL src/x.test.js"* ]]
+}
+
+validate_rerun_unknown_runner_reruns_whole_command() {
+  # A command that is not vitest or jest: the whole command runs again.
+  config "validate_test: n=\$(cat $T/count 2>/dev/null || echo 0); echo \$((n + 1)) >$T/count; [ \$n -ge 1 ]"
+  run "$BIN/ccm-validate" --only test
+  check "$(jqval .status),$(test_check .passed_on_rerun),$(test_check .rerun.mode),$(test_check .rerun.runner),$(test_check .rerun.files)" \
+    'pass,true,"command",null,null'
+  check "$(command cat "$T/count")" "2"
+}
+
+validate_rerun_compound_script_and_no_files_rerun_whole_command() {
+  # vitest in a compound script: its arguments could land on another command.
+  seed_pkg '{"test":"vitest run && echo done"}'
+  mkdir -p test
+  touch test/a.test.ts
+  fake_runner vitest 'echo " FAIL  test/a.test.ts > x"; exit 1'
+  run "$BIN/ccm-validate" --only test
+  check "$(jqval .status),$(test_check .rerun.mode),$(test_check .rerun.command)" 'fail,"command","npm run test"'
+  # A plain vitest run whose output names no existing file.
+  seed_pkg '{"test":"vitest run"}'
+  rm -f "$T/vitest.log"
+  fake_runner vitest 'echo "Error: config failed to load"; exit 1'
+  run "$BIN/ccm-validate" --only test
+  check "$(jqval .status),$(test_check .rerun.mode),$(test_check .rerun.failed_files)" 'fail,"command",[]'
+  check "$(command cat "$T/vitest.log")" "run
+run"
+}
+
+validate_rerun_deterministic_failure_fails() {
+  seed_pkg '{"lint":"false","test":"echo broke; exit 2"}'
+  run "$BIN/ccm-validate"
+  check "$(jqval .status),$RC,$(check_status lint),$(test_check .status),$(test_check .rerun.status)" \
+    'fail,1,failed,"failed","failed"'
+  # Only the test check reruns.
+  check "$(jq -c '.checks[] | select(.name == "lint") | .rerun' <<<"$OUT")" "null"
+}
+
+validate_rerun_skipped_after_timeout() {
+  has_timeout_bin || { echo "  (skipped: no timeout binary)"; return 0; }
+  config "validate_test: echo x >>$T/runs; sleep 5
+validate_timeout_seconds: 1"
+  run "$BIN/ccm-validate" --only test
+  check "$(jqval .status),$(test_check .rerun),$(wc -l <"$T/runs" | tr -d ' ')" "fail,null,1"
+}
+
+# ci_head_pr [CHECKS_JSON] [RC]: an open PR whose head is HEAD, and its checks.
+ci_head_pr() {
+  local sha
+  sha=$(git rev-parse HEAD)
+  fx pr-view "{\"number\":7,\"headRefOid\":\"$sha\",\"baseRefName\":\"main\",\"mergeable\":\"MERGEABLE\"}"
+  local green='[{"name":"test","state":"SUCCESS","bucket":"pass"}]'
+  fx pr-checks "${1:-$green}" "${2:-}"
+}
+
+validate_ci_confirm_green_on_pushed_head() {
+  ci_head_pr
+  run "$BIN/ccm-validate" --ci-confirm
+  check "$(jqval .status),$RC,$(jqval .head),$(jqval .ci.status)" "ci-green,0,$(git rev-parse HEAD),green"
+}
+
+validate_ci_confirm_not_green() {
+  ci_head_pr '[{"name":"test","state":"FAILURE","bucket":"fail"}]' 1
+  run "$BIN/ccm-validate" --ci-confirm
+  check "$(jqval .status),$RC" "ci-not-green,1"
+  [[ $(jqval .reason) == *"is failed: failing: test"* ]]
+  # No CI at all is not a pass.
+  fx_err pr-checks 'no checks reported' 1
+  fx run-list '[]'
+  fx status '{"state":"pending","total_count":0,"statuses":[]}'
+  fx_err protection 'gh: Branch not protected (HTTP 404)' 1
+  run "$BIN/ccm-validate" --ci-confirm
+  check "$(jqval .status),$RC,$(jqval .ci.status)" "ci-not-green,1,no-ci"
+}
+
+validate_ci_confirm_advisory_failure_is_set_aside() {
+  ci_head_pr '[{"name":"test","state":"SUCCESS","bucket":"pass"},{"name":"copilot-pull-request-reviewer","state":"FAILURE","bucket":"fail"}]' 1
+  fx policy "$COPILOT_POLICY"
+  fx check-runs '{"check_runs":[{"name":"test","app":{"slug":"github-actions"}},{"name":"copilot-pull-request-reviewer","app":{"slug":"github-actions"}}]}'
+  run "$BIN/ccm-validate" --ci-confirm
+  check "$(jqval .status),$RC,$(jqval '.ci.advisory[0].name')" "ci-green,0,copilot-pull-request-reviewer"
+}
+
+validate_ci_confirm_pending_asks_to_call_again() {
+  config 'ci_poll_interval_seconds: 1'
+  git add -A && git -c user.email=t@t -c user.name=t commit -qm config
+  ci_head_pr '[{"name":"test","state":"IN_PROGRESS","bucket":"pending"}]' 8
+  CCM_VALIDATE_CI_MAX_CALL_SECONDS=0 run "$BIN/ccm-validate" --ci-confirm
+  check "$(jqval .status),$RC,$(jqval .call_again)" "ci-pending,6,true"
+  [ -f "$(git rev-parse --git-dir)/ccmagic/ci-wait-validate-ci-$(git rev-parse HEAD)" ]
+}
+
+validate_ci_confirm_not_applicable_without_pushed_clean_head() {
+  # HEAD is not the PR head: not pushed, so CI never ran on it.
+  fx pr-view '{"number":7,"headRefOid":"0000000","baseRefName":"main"}'
+  run "$BIN/ccm-validate" --ci-confirm
+  check "$(jqval .status),$RC" "not-applicable,1"
+  [[ $(jqval .reason) == *"has not been pushed"* ]]
+  # No pull request.
+  fx_err pr-view 'no pull requests found for branch "main"' 1
+  run "$BIN/ccm-validate" --ci-confirm
+  check "$(jqval .status),$RC" "not-applicable,1"
+  # A dirty tree, even with green CI on HEAD.
+  ci_head_pr
+  echo change >file.txt
+  run "$BIN/ccm-validate" --ci-confirm
+  check "$(jqval .status),$RC" "not-applicable,1"
+  [[ $(jqval .reason) == *"uncommitted or untracked"* ]]
+  # It takes no other option.
+  run "$BIN/ccm-validate" --ci-confirm --only test
+  check "$RC" "4"
+}
+
 # ---- ccm-validate: missing dependencies (RV-86) ----------------------------
 
 validate_installs_missing_deps_with_npm_ci() {
@@ -2139,7 +2295,7 @@ validate_test: echo suite ran
 validate_timeout_seconds: 900'
   run "$BIN/ccm-validate" --start
   check "$(jqval .status),$RC,$(jq -c .checks <<<"$OUT"),$(jqval .timeout_seconds)" 'started,0,["lint","test"],900'
-  check "$(jqval .limit_s)" "$((2 * 900 + 120))"
+  check "$(jqval .limit_s)" "$((3 * 900 + 120))"
   run "$BIN/ccm-validate" --wait 20
   check "$(jqval .status),$RC,$(check_status lint),$(check_status test),$(check_status build)" \
     "pass,0,passed,passed,skipped"
@@ -2240,7 +2396,7 @@ validate_start_attached_then_wait_passes() {
 validate_test: sleep 2; echo suite ran
 validate_timeout_seconds: 900'
   run "$BIN/ccm-validate" --start --attached
-  check "$(jqval .status),$RC,$(jq -c .checks <<<"$OUT"),$(jqval .limit_s)" "prepared,0,[\"lint\",\"test\"],$((2 * 900 + 120))"
+  check "$(jqval .status),$RC,$(jq -c .checks <<<"$OUT"),$(jqval .limit_s)" "prepared,0,[\"lint\",\"test\"],$((3 * 900 + 120))"
   local id
   id=$(jqval .run)
   check "$(vstate .run),$(vstate .attached),$(vstate .heartbeat_at),$(vstate .final),$(vstate .only)" "$id,true,null,null,null"
@@ -2472,11 +2628,11 @@ validate_run_past_overall_limit_is_stopped() {
   config 'validate_test: trap "" TERM; sleep 5; touch late
 validate_timeout_seconds: 1'
   CCM_VALIDATE_LIMIT_MARGIN_SECONDS=0 run "$BIN/ccm-validate" --start
-  check "$(jqval .limit_s)" "1"
+  check "$(jqval .limit_s)" "2"
   run "$BIN/ccm-validate" --wait 10
   check "$(jqval .status),$RC,$(check_status test)" "fail,1,failed" || vdiag
-  check "$(jqval .reason)" "the validate run did not finish within its overall limit of 1s" || vdiag
-  # The check would have ended by now; the run was stopped (KILL at about 3s).
+  check "$(jqval .reason)" "the validate run did not finish within its overall limit of 2s" || vdiag
+  # The check would have ended by now; the run was stopped (KILL at about 4s).
   sleep 4
   check "$([ -e late ] && echo late || echo stopped)" "stopped" || vdiag
 }
