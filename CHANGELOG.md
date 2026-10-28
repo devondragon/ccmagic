@@ -2,6 +2,18 @@
 
 All notable changes to ccmagic are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.27.0] - 2026-10
+
+### Added
+
+- With `merge_owner: reeve`, `/ccmagic:auto-ticket` hands a red-CI PR to Reeve when the failure is not the PR's, instead of parking it (RV-165). On 2026-10-26 RD-115 and RD-125 parked on `test (ubuntu-latest)`, a flaky test that `main` failed too: the session's token could not read the job log or rerun the job, and local validate had passed on the same head. Step 4d now finds a pass **clean with red CI** when the final CI status is `failed`, no thread is open, this pass's validate returned `done` on the head CI failed on, and `ccm-ci-status` with `--attribute` finds every counted failed check not attributable to the PR: a GitHub Actions job whose log cannot be read (`GET actions/jobs/ID/logs` fails), or a check the base branch's tip fails too. Local validate passing is required but never enough on its own, since every pass that reaches CI has it. Such a pass goes on to Step 5 as a clean one does (with the 4f re-review after a late push), and the finish step, given `ci_handoff: true`, runs `ccm-merge-gate` with `--red-ci-handoff`, which checks the rule again, keeps every other blocker, and accepts it only under `merge_owner: reeve`. The run ends `handed-off` with the ticket in `merge_handoff_state`, the finish reason goes on `; CI red, {why}`, and the run record carries `"ci": {"status": "failed", "handed_off": true, "checks": [...], "reason": "..."}` as its last key. No step status records the red CI, so Reeve's `run-overrode-verdict` rule does not apply, and Reeve's parser drops keys it does not know. A failure the session can read and the base does not share still gets the feedback passes and parks at the cap. `merge_owner: self` is unchanged, and the PreToolUse merge guard never passes the flag, so a red PR never merges.
+- `ccm-ci-status --attribute`: on a `failed` snapshot, an `attribution` object with `verdict` (`not-attributable` or `attributable`), `base_sha`, `reason`, and per counted failure `name`, `kind` (`actions` or `other`), `job_id`, `log` (`readable`, `unreadable`, or `n/a`), `base` (`red`, `pending`, `green`, `absent`, or `unreadable`), and `attributable`. The job comes from the check run's details URL (only a job of this repository on github.com counts), or on the Actions fallback from the failed run's jobs; the base tip's checks come from its check runs, or its runs' jobs when check runs are hidden, plus its commit statuses. On the Actions fallback, a run broken into its jobs for `ci.ignore` now keeps each job's `job_id`.
+- `ccm-merge-gate --red-ci-handoff`, described above. It adds `ci_handoff: {reason, checks}` when it takes the red CI, or `ci_handoff: null` and `ci_handoff_refused` when CI is red and the rule does not hold.
+
+### Deploy
+
+- Pull this into Cyrus only after Reeve's RV-160 (devondragon/reeve PR #277) is deployed and its GitHub App has the `actions: write` permission. Before that, Reeve's gate parks a red PR `ci-red` at once, so the hand-off only moves the park from ccmagic to Reeve. No new Bash grant is needed: both flags go through scripts Cyrus already grants.
+
 ## [3.26.1] - 2026-10
 
 ### Fixed

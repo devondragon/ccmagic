@@ -553,6 +553,128 @@ merge_gate_passes_with_failed_advisory_check() {
   check "$(jqval .pass),$RC,$(jqval '.ci.advisory[0].name')" "true,0,copilot-pull-request-reviewer"
 }
 
+# ---- ccm-ci-status --attribute (RV-165) -------------------------------------
+
+# A failed `test` job (job 555 of run 9) on the PR head, and the base tip base1.
+attr_red_test() {
+  pr_open
+  fx pr-checks '[{"name":"test (ubuntu-latest)","state":"FAILURE","bucket":"fail","link":"https://github.com/acme/app/actions/runs/9/job/555"},{"name":"lint","state":"SUCCESS","bucket":"pass","link":"https://github.com/acme/app/actions/runs/9/job/556"}]' 1
+  fx branch '{"commit":{"sha":"base1"}}'
+  fx status-base1 '{"state":"success","total_count":0,"statuses":[]}'
+}
+base_runs() { fx check-runs-base1 "{\"check_runs\":$1}"; }
+
+ci_attribute_log_unreadable_is_not_the_prs() {
+  attr_red_test
+  fx_err logs-555 'gh: Resource not accessible by personal access token (HTTP 403)' 1
+  base_runs '[{"name":"test (ubuntu-latest)","status":"completed","conclusion":"success"}]'
+  run "$BIN/ccm-ci-status" 7 --attribute
+  check "$(jqval .status),$RC,$(jqval .attribution.verdict)" "failed,1,not-attributable"
+  check "$(jqval '.attribution.checks[0] | [.name, .kind, .job_id, .log, .base, .attributable] | join(",")')" "test (ubuntu-latest),actions,555,unreadable,green,false"
+  check "$(jqval .attribution.base_sha),$(jqval .attribution.reason)" "base1,not attributable to the PR: test (ubuntu-latest) (log unreadable)"
+}
+
+ci_attribute_base_red_is_not_the_prs() {
+  attr_red_test
+  fx logs-555 'log text'
+  base_runs '[{"name":"test (ubuntu-latest)","status":"completed","conclusion":"failure"}]'
+  run "$BIN/ccm-ci-status" 7 --attribute
+  check "$(jqval .attribution.verdict),$(jqval '.attribution.checks[0].log'),$(jqval '.attribution.checks[0].base')" "not-attributable,readable,red"
+  check "$(jqval .attribution.reason)" "not attributable to the PR: test (ubuntu-latest) (also failing on main)"
+}
+
+ci_attribute_readable_failure_is_the_prs() {
+  attr_red_test
+  fx logs-555 'log text'
+  base_runs '[{"name":"test (ubuntu-latest)","status":"completed","conclusion":"success"}]'
+  run "$BIN/ccm-ci-status" 7 --attribute
+  check "$(jqval .attribution.verdict),$(jqval '.attribution.checks[0].attributable')" "attributable,true"
+  check "$(jqval .attribution.reason)" "attributable to the PR: test (ubuntu-latest) (log readable, green on main)"
+}
+
+ci_attribute_one_own_failure_makes_it_the_prs() {
+  pr_open
+  fx pr-checks '[{"name":"test","state":"FAILURE","bucket":"fail","link":"https://github.com/acme/app/actions/runs/9/job/555"},{"name":"build","state":"FAILURE","bucket":"fail","link":"https://github.com/acme/app/actions/runs/9/job/557"}]' 1
+  fx branch '{"commit":{"sha":"base1"}}'
+  fx_err logs-555 'HTTP 403' 1
+  fx logs-557 'log text'
+  base_runs '[{"name":"build","status":"in_progress","conclusion":null}]'
+  run "$BIN/ccm-ci-status" 7 --attribute
+  check "$(jqval .attribution.verdict),$(jqval '[.attribution.checks[] | .base] | join(",")')" "attributable,absent,pending"
+  check "$(jqval .attribution.reason)" "attributable to the PR: build (log readable, pending on main)"
+}
+
+ci_attribute_other_repo_link_is_not_actions() {
+  pr_open
+  fx pr-checks '[{"name":"ext","state":"FAILURE","bucket":"fail","link":"https://github.com/evil/app/actions/runs/9/job/555"}]' 1
+  fx branch '{"commit":{"sha":"base1"}}'
+  fx logs-555 'log text'
+  base_runs '[]'
+  run "$BIN/ccm-ci-status" 7 --attribute
+  check "$(jqval '.attribution.checks[0] | [.kind, .log, .base] | join(",")'),$(jqval .attribution.verdict)" "other,n/a,absent,attributable"
+  check "$(grep -c 'actions/jobs/555/logs' "$GH_FIXTURES/calls.log" || true)" "0"
+}
+
+ci_attribute_failed_status_red_on_base() {
+  pr_open
+  fx_err pr-checks 'HTTP 403' 1
+  fx run-list '[]'
+  fx status '{"state":"failure","total_count":1,"statuses":[{"context":"ext/ci","state":"failure"}]}'
+  fx branch '{"commit":{"sha":"base1"}}'
+  fx_err check-runs-base1 'HTTP 403' 1
+  fx run-list-base1 '[]'
+  fx status-base1 '{"state":"failure","total_count":1,"statuses":[{"context":"ext/ci","state":"error"}]}'
+  run "$BIN/ccm-ci-status" 7 --attribute
+  check "$(jqval '.attribution.checks[0] | [.name, .kind, .base] | join(",")'),$(jqval .attribution.verdict)" "ext/ci,other,red,not-attributable"
+}
+
+# On the Actions fallback a failed workflow run is broken into its failed
+# jobs, and the base tip's check runs fall back to its runs' jobs.
+ci_attribute_fallback_reads_jobs() {
+  pr_open
+  fx_err pr-checks 'HTTP 403' 1
+  fx run-list '[{"databaseId":9,"workflowName":"CI","status":"completed","conclusion":"failure"}]'
+  fx status '{"state":"pending","total_count":0,"statuses":[]}'
+  fx jobs-9 '{"jobs":[{"id":555,"name":"test (ubuntu-latest)","status":"completed","conclusion":"failure"},{"id":556,"name":"lint","status":"completed","conclusion":"success"}]}'
+  fx_err logs-555 'HTTP 403' 1
+  fx branch '{"commit":{"sha":"base1"}}'
+  fx_err check-runs-base1 'HTTP 403' 1
+  fx run-list-base1 '[{"databaseId":4,"workflowName":"CI","status":"completed","conclusion":"failure"}]'
+  fx jobs-4 '{"jobs":[{"id":40,"name":"test (ubuntu-latest)","status":"completed","conclusion":"failure"}]}'
+  fx status-base1 '{"state":"success","total_count":0,"statuses":[]}'
+  run "$BIN/ccm-ci-status" 7 --attribute
+  check "$(jqval '.attribution.checks | length'),$(jqval '.attribution.checks[0] | [.name, .job_id, .log, .base] | join(",")')" "1,test (ubuntu-latest),555,unreadable,red"
+  check "$(jqval .attribution.reason)" "not attributable to the PR: test (ubuntu-latest) (log unreadable, also failing on main)"
+}
+
+ci_attribute_unreadable_base_is_not_red() {
+  attr_red_test
+  fx logs-555 'log text'
+  fx_err branch 'HTTP 403' 1
+  run "$BIN/ccm-ci-status" 7 --attribute
+  check "$(jqval .attribution.verdict),$(jqval '.attribution.checks[0].base'),$(jqval .attribution.base_sha)" "attributable,unreadable,null"
+}
+
+ci_attribute_null_unless_failed() {
+  pr_open
+  fx pr-checks '[{"name":"test","state":"SUCCESS","bucket":"pass"}]'
+  run "$BIN/ccm-ci-status" 7 --attribute
+  check "$(jqval .status),$RC,$(jqval .attribution)" "green,0,null"
+  check "$(grep -c 'branches/' "$GH_FIXTURES/calls.log" || true)" "0"
+}
+
+ci_attribute_not_with_watch() {
+  pr_open
+  run "$BIN/ccm-ci-status" 7 --watch --attribute
+  check "$RC" "4"
+}
+
+ci_without_attribute_is_unchanged() {
+  attr_red_test
+  run "$BIN/ccm-ci-status" 7
+  check "$(jqval 'has("attribution")'),$(grep -c 'logs\|branches/' "$GH_FIXTURES/calls.log" || true)" "false,0"
+}
+
 # ---- ccm-merge-gate --------------------------------------------------------
 
 merge_gate_passes() {
@@ -610,12 +732,67 @@ merge_gate_unreadable_pr() {
   check "$(jqval .pass),$RC" "false,3"
 }
 
+merge_gate_red_ci_handoff_under_reeve() {
+  config 'merge_owner: reeve'
+  attr_red_test
+  fx_err logs-555 'HTTP 403' 1
+  base_runs '[]'
+  run "$BIN/ccm-merge-gate" 7 --red-ci-handoff
+  check "$(jqval .pass),$RC,$(jqval '.blockers | length'),$(jqval '.ci_handoff.checks[0]')" "true,0,0,test (ubuntu-latest)"
+  check "$(jqval .ci_handoff.reason)" "not attributable to the PR: test (ubuntu-latest) (log unreadable)"
+}
+
+merge_gate_red_ci_handoff_refused_under_self() {
+  attr_red_test
+  fx_err logs-555 'HTTP 403' 1
+  base_runs '[]'
+  run "$BIN/ccm-merge-gate" 7 --red-ci-handoff
+  check "$(jqval .pass),$RC,$(jqval .ci_handoff),$(jqval .ci_handoff_refused)" "false,1,null,merge_owner is self, not reeve"
+}
+
+merge_gate_red_ci_handoff_refused_when_the_prs() {
+  config 'merge_owner: reeve'
+  attr_red_test
+  fx logs-555 'log text'
+  base_runs '[{"name":"test (ubuntu-latest)","status":"completed","conclusion":"success"}]'
+  run "$BIN/ccm-merge-gate" 7 --red-ci-handoff
+  check "$(jqval .pass),$(jqval '.blockers[0]'),$(jqval .ci_handoff_refused)" "false,CI failed: failing: test (ubuntu-latest),attributable to the PR: test (ubuntu-latest) (log readable, green on main)"
+}
+
+merge_gate_red_ci_handoff_keeps_other_blockers() {
+  config 'merge_owner: reeve'
+  attr_red_test
+  pr_open CONFLICTING
+  fx_err logs-555 'HTTP 403' 1
+  base_runs '[]'
+  run "$BIN/ccm-merge-gate" 7 --red-ci-handoff
+  check "$(jqval .pass),$(jqval '.blockers | join(";")'),$(jqval '.ci_handoff.checks[0]')" "false,merge conflicts with main,test (ubuntu-latest)"
+}
+
+merge_gate_without_handoff_flag_blocks_red_ci_under_reeve() {
+  config 'merge_owner: reeve'
+  attr_red_test
+  fx_err logs-555 'HTTP 403' 1
+  base_runs '[]'
+  run "$BIN/ccm-merge-gate" 7
+  check "$(jqval .pass),$(jqval 'has("ci_handoff")')" "false,false"
+}
+
 # ---- pre-tool-use-guard: merge gate ----------------------------------------
 
 guard_ignores_other_commands() {
   hook 'git status && gh pr view 7'
   check "$(denied),$RC" "allow,0"
   check "$(test -f "$GH_FIXTURES/calls.log" && echo called || echo none)" "none"
+}
+
+# RV-165: a red CI that is not the PR's never lets an autonomous run merge.
+guard_red_ci_not_attributable_still_denies_merge() {
+  attr_red_test
+  fx_err logs-555 'HTTP 403' 1
+  base_runs '[]'
+  hook 'gh pr merge 7 --squash' ccmagic:auto-finish
+  check "$(denied)" "deny"
 }
 
 guard_ignores_merge_text_in_strings() {

@@ -2,7 +2,10 @@
 # Test stub for gh. Answers from files in $GH_FIXTURES, named after the
 # subcommand: pr-view, pr-checks, pr-diff, pr-comment, run-list, repo-view,
 # protection, status, graphql, graphql-resolve, reply, policy (the raw
-# .reeve/policy.yml), check-runs, statuses, jobs-ID (a run's jobs).
+# .reeve/policy.yml), check-runs, statuses, jobs-ID (a run's jobs), branch
+# (repos/R/branches/B), logs-ID (a job's log).
+# check-runs, status, and run-list (with --commit SHA) read NAME-SHA first
+# when that fixture exists, so a test can give the base tip its own answers.
 # For each name: NAME.json is printed to stdout, NAME.err to stderr, and
 # NAME.rc (default 0) is the exit code. -q/--jq is applied with jq -r.
 # Every call is appended to $GH_FIXTURES/calls.log. For pr-comment with
@@ -22,7 +25,14 @@ case "$1 ${2:-}" in
       *) : >"$GH_FIXTURES/pr-comment.stdin" ;;
     esac
     ;;
-  "run list") name=run-list ;;
+  "run list")
+    name=run-list
+    prev=""
+    for a in "$@"; do
+      if [ "$prev" = "--commit" ] && { [ -f "$GH_FIXTURES/run-list-$a.json" ] || [ -f "$GH_FIXTURES/run-list-$a.err" ]; }; then name=run-list-$a; fi
+      prev=$a
+    done
+    ;;
   "repo view") name=repo-view ;;
   "api graphql")
     name=graphql
@@ -31,15 +41,18 @@ case "$1 ${2:-}" in
   "api "*)
     case $2 in
       */protection/required_status_checks) name=protection ;;
+      */branches/*) name=branch ;;
+      */actions/jobs/*/logs) id=${2#*/actions/jobs/}; name=logs-${id%%/*} ;;
       */contents/.reeve/policy.yml*) name=policy ;;
-      */commits/*/check-runs*) name=check-runs ;;
+      */commits/*/check-runs*) name=check-runs; sha=${2#*/commits/}; sha=${sha%%/*} ;;
       */actions/runs/*/jobs*) id=${2#*/actions/runs/}; name=jobs-${id%%/*} ;;
       */commits/*/statuses*) name=statuses ;;
-      */commits/*/status) name=status ;;
+      */commits/*/status) name=status; sha=${2#*/commits/}; sha=${sha%%/*} ;;
       */comments/*/replies) name=reply ;;
     esac
     ;;
 esac
+if [ -n "${sha:-}" ] && { [ -f "$GH_FIXTURES/$name-$sha.json" ] || [ -f "$GH_FIXTURES/$name-$sha.err" ]; }; then name=$name-$sha; fi
 jqexpr=""
 prev=""
 for a in "$@"; do

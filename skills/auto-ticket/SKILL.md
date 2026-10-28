@@ -215,8 +215,10 @@ Everything this pass pushes is measured against `H`, so bot reviews triggered *b
   - `open_thread_count` is 0, and
   - the final `ccm-ci-status` status was `green` or `no-ci`.
 
+  **Only with `merge_owner: reeve`: red CI that is not the PR's (RV-165).** When the final status was `failed` and `open_thread_count` is 0, run `"${CLAUDE_PLUGIN_ROOT}/bin/ccm-ci-status" {PR_NUMBER} --attribute` and `git rev-parse HEAD`, each as its own Bash call. The pass is **clean with red CI** when all three hold: its `attribution.verdict` is `not-attributable` (each counted failed check is a GitHub Actions job whose log this session cannot read, or a check the base branch's tip fails too), its `sha` equals `git rev-parse HEAD`, and this pass's validate returned `done`, so validate passed locally on the head CI failed on. Keep `attribution.reason` and the failed checks' names for Steps 5 and 6. Validate passing is required but never enough on its own, since every pass that reaches 4c has one. Any other result (`attributable`, another head, a failed call) leaves the pass not clean: the feedback passes go on and the run parks at the cap, as before. With `merge_owner: self` red CI is never clean.
+
 **4e. Decide.**
-  - **clean** → read the PR head with `gh pr view {PR_NUMBER} --json headRefOid --jq .headRefOid`. If it equals `reviewed_head` (nothing was pushed since the last clean review), break out of the loop and continue to Step 5. If it differs (4a or 4b pushed), go to 4f. If the read fails, **route-and-stop** (stage = `review-ticket`, reason: "cannot read the PR head to confirm the review covers it: {first error line}").
+  - **clean**, or **clean with red CI** → read the PR head with `gh pr view {PR_NUMBER} --json headRefOid --jq .headRefOid`. If it equals `reviewed_head` (nothing was pushed since the last clean review), break out of the loop and continue to Step 5. If it differs (4a or 4b pushed), go to 4f. If the read fails, **route-and-stop** (stage = `review-ticket`, reason: "cannot read the PR head to confirm the review covers it: {first error line}").
   - a `needs-human` item surfaced → **route-and-stop**.
   - **pass cap hit and still not clean** → **route-and-stop** (reason: "still not clean after {max_feedback_passes} feedback passes: {what remains}").
 
@@ -234,11 +236,11 @@ Each 4f follows a feedback pass that pushed, so a run makes at most `max_feedbac
 
 Only 4e (with the PR head still at `reviewed_head`) and 4f (with a clean re-review of the PR head) lead here, so the last clean review read the commit the gate will merge. Never run this step while the PR head differs from `reviewed_head`: that is a stale review, which Reeve parks as `review-not-clean`; route-and-stop instead (stage = `review-ticket`).
 
-Run the finish-ticket step via `run_step` — `/ccmagic:finish-ticket` with the grounding block, ending it with a `steps:` section (contract §2): the run record's `steps` array so far, every step invocation of this run in order with its status and reason, exactly as Step 6 will write it, as one line of JSON in a `~~~` fence. Its Step 3 sanity check is the **merge gate**: it merges only if the PR is mergeable, CI is green, and there are no unaddressed change-requests.
+Run the finish-ticket step via `run_step` — `/ccmagic:finish-ticket` with the grounding block, plus a `ci_handoff: true` line when the pass was **clean with red CI** (4d), ending it with a `steps:` section (contract §2): the run record's `steps` array so far, every step invocation of this run in order with its status and reason, exactly as Step 6 will write it, as one line of JSON in a `~~~` fence. Its Step 3 sanity check is the **merge gate**: it merges only if the PR is mergeable, CI is green, and there are no unaddressed change-requests.
 
 **Finish guard.** `ccm-finish-guard` reads that `steps:` section and refuses a run whose latest validate is not `done`, whose latest review-ticket is not `clean`, or that ran work-ticket or pr-feedback after its latest validate (RV-86). The plugin's PreToolUse hook runs it on your call that starts `auto-finish` and denies the call when it fails, and the finish agent runs it again first. A denied call names the rule: **route-and-stop** with the stage and reason the denial gives. Do not start the finish step again with a changed step list, and do not move the ticket yourself. The one exception is a denial for a missing or malformed `steps:` section (`steps-unreadable`): add the section and start the step once more.
 
-- `done` with `reason` beginning `handed off to reeve` → the PR is open and nothing merged; the handshake carries `requested_state: {merge_handoff_state}`, which the after-step routine applies (a missing state parks the run there). Continue to Step 6 with outcome **handed-off**.
+- `done` with `reason` beginning `handed off to reeve` → the PR is open and nothing merged; the handshake carries `requested_state: {merge_handoff_state}`, which the after-step routine applies (a missing state parks the run there). Continue to Step 6 with outcome **handed-off**. With `ci_handoff: true` the finish step runs its merge gate with `--red-ci-handoff`, which reads the attribution again itself; when that refuses, it returns `needs-human` like any blocker.
 - `done` otherwise → the PR merged; the handshake carries `requested_state: Done`, which the after-step routine applies. Continue to Step 6 with outcome **merged**.
 - `needs-human` → the gate wasn't satisfied. It did **not** merge → **route-and-stop** (stage = `finish-ticket`, reason: its blockers). A reason starting `finish guard (` is the guard's refusal: route-and-stop with that reason, at stage `validate` for a validate rule and `review-ticket` for a review rule.
 
@@ -305,7 +307,7 @@ Under prompt-relay there is no create API, so list every item under "to file" fo
 ````markdown
 ## 🤖 Autonomous run summary — {TICKET-ID}
 
-**Outcome:** {✅ Merged into `{base}` | 🔁 Handed off to Reeve, awaiting merge | 🅿️ Parked — needs human}
+**Outcome:** {✅ Merged into `{base}` | 🔁 Handed off to Reeve, awaiting merge{, CI red: {attribution reason}} | 🅿️ Parked — needs human}
 **PR:** {pr_url}
 **Run:** {run_id}
 **Requested state:** {Done | merge_handoff_state | needs_human_state} *(prompt-relay only — omit under mcp)*
@@ -314,7 +316,7 @@ Under prompt-relay there is no create API, so list every item under "to file" fo
 - Classified as **{class}**, branched, implemented, opened the PR.
 - Review: {clean first pass | N CRITICAL findings fixed and re-reviewed}{; re-reviewed after a late push in feedback pass P}.
 - PR feedback: {P} pass(es) — applied {A}, declined {D}, deferred {F}.
-- Finish: {merged with {squash|merge commit} | handed off to reeve | gate not satisfied}.
+- Finish: {merged with {squash|merge commit} | handed off to reeve{ with CI red, not attributable to this PR} | gate not satisfied}.
 
 ### Key autonomous decisions
 - {classification + reasoning}
@@ -379,6 +381,8 @@ When the run then has a `spec_delta`, the record carries one more key, `spec_del
 
 `spec_delta` is the string `none` or the archive folder's path, exactly as the work step reported it (`openspec/changes/archive/2026-10-13-bmc-430-fix-expiry`). For a requirements approval's archive ticket it is the archived change's folder (`openspec/changes/archive/2026-10-23-<change>`), and the record still has no `openspec` key (contract §3). Reeve's gate checks it against the archive folder the PR carries. The record stays `"version": 2`; a version 1 fallback record carries the key in the same place. The key is additive like `follow_ups`, and readers that don't know it ignore it. A run that parked before the work step decided, with no PR or a PR head that carries no archive folder, has no `spec_delta`, and its record leaves the key out. The parked note's record (contract §4) carries the same key.
 <!-- /ccmagic:plain-delta -->
+
+**Only when the run handed off with red CI** (Step 4d). The record carries one more key, `ci`, as the last key inside `ccmagic`: `"ci": {"status": "failed", "handed_off": true, "checks": ["{failed check name}", ...], "reason": "{attribution.reason, one line}"}`. The red CI is recorded here and never as a step status, and no step entry is added for it: Reeve's gate parks `run-overrode-verdict` on a step that returned `needs-human` or `fixable-findings` and was never resolved, and its parser drops keys it does not know. Reeve reruns the failed Actions jobs once, or waits while the base fails the same check, before it parks `ci-red` (RV-160). The key is additive like `follow_ups`; every other record leaves it out.
 
 `version: 2` binds the record to what it describes, and Reeve treats a record whose binding doesn't match the PR it located as no record at all (RV-1). A version 2 record carries `repo`, `pr`, and `head_sha` on every outcome, never omitted (the one exception is the version 1 fallback below):
 
@@ -447,6 +451,7 @@ There is no stalled outcome. Never hang waiting for input.
 | Local `/ccmagic:validate` can't be made green within the bounded attempts | route-and-stop (reason: validation failures). |
 | CI never settles within `ci_timeout_minutes` (watch loop cap) | route-and-stop (reason: CI timeout). |
 | Feedback-pass cap hit still not clean | route-and-stop (reason: remaining threads / red CI). |
+| Red CI under `merge_owner: reeve`, no open threads, and `ccm-ci-status` with `--attribute` says `not-attributable` on the head validate passed on | Not a park: the pass is clean with red CI (4d); finish hands off with `ci_handoff: true` and the record's `ci` key. |
 | Step 4 pushed after the last clean review (4a or 4b) | Re-review the pushed head (4f). A stale review never reaches finish: a clean re-review of another head, an unreadable PR head, or findings with no review fix or feedback passes left → route-and-stop (stage `review-ticket`), before any fix is pushed. |
 | `finish-ticket` merge gate not satisfied | It returns `needs-human` and does not merge → route-and-stop (stage `finish-ticket`). |
 | `requested_state: {merge_handoff_state}` and no state of that exact name exists | route-and-stop (stage `finish-ticket`); nothing was merged on the hand-off path. |
