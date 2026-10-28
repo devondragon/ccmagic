@@ -1944,10 +1944,10 @@ validate_rerun_vitest_failed_files_pass() {
   echo '{"version":"3.2.4"}' >node_modules/vitest/package.json
   touch test/a.test.ts test/b.test.ts
   # The first run fails two files (one under a project name, one as a suite
-  # error); the rerun passes.
+  # error), and its summary counts two; the rerun passes.
   # shellcheck disable=SC2016 # the stub expands $n, not this shell
   fake_runner vitest '[ "$n" -gt 1 ] && exit 0
-printf " FAIL  test/a.test.ts > polls > settles\n FAIL  |unit| test/b.test.ts [ test/b.test.ts ]\n FAIL  test/gone.test.ts > x\n"; exit 1'
+printf " FAIL  test/a.test.ts > polls > settles\n FAIL  |unit| test/b.test.ts [ test/b.test.ts ]\n Test Files  2 failed | 4 passed (6)\n"; exit 1'
   run "$BIN/ccm-validate" --only test
   check "$(jqval .status),$RC,$(test_check .status),$(test_check .passed_on_rerun),$(test_check .first_exit_code)" \
     "pass,0,\"passed\",true,1"
@@ -1960,13 +1960,56 @@ validate_rerun_jest_still_failing_keeps_fail() {
   seed_pkg '{"test":"CI=1 jest --ci"}'
   mkdir -p src
   touch src/x.test.js
-  fake_runner jest 'echo "FAIL src/x.test.js (1.2 s)"; exit 1'
+  fake_runner jest 'printf "FAIL src/x.test.js (1.2 s)\nTest Suites: 1 failed, 3 passed, 4 total\n"; exit 1'
   run "$BIN/ccm-validate" --only test
   check "$(jqval .status),$RC,$(test_check .status),$(test_check .exit_code)" 'fail,1,"failed",1'
   check "$(test_check .rerun.status),$(test_check .rerun.mode),$(test_check .rerun.failed_files)" \
     '"failed","files",["src/x.test.js"]'
   check "$(sed -n 2p "$T/jest.log")" "--ci --runInBand --coverage=false --runTestsByPath src/x.test.js"
   [[ $(test_check .rerun.tail) == *"FAIL src/x.test.js"* ]]
+}
+
+# rerun_mode_for OUTPUT: the rerun mode a failing vitest run with OUTPUT gets,
+# given test/a.test.ts exists and the rerun passes.
+rerun_mode_for() {
+  rm -f "$T/vitest.log"
+  fake_runner vitest "[ \"\$n\" -gt 1 ] && exit 0
+printf '$1'; exit 1"
+  run "$BIN/ccm-validate" --only test
+  printf '%s,%s' "$(jqval .status)" "$(test_check .rerun.mode)"
+}
+
+validate_rerun_files_only_when_they_account_for_every_failure() {
+  seed_pkg '{"test":"vitest run"}'
+  mkdir -p test
+  touch test/a.test.ts
+  # A FAIL file outside the repository root is dropped, so the summary's count
+  # no longer matches: the whole command reruns.
+  check "$(rerun_mode_for ' FAIL  test/a.test.ts > x\n FAIL  test/gone.test.ts > y\n Test Files  2 failed (2)\n')" 'pass,"command"'
+  # No summary line at all.
+  check "$(rerun_mode_for ' FAIL  test/a.test.ts > x\n')" 'pass,"command"'
+  # An unhandled rejection no FAIL line names fails the run every time.
+  check "$(rerun_mode_for ' FAIL  test/a.test.ts > x\n Test Files  1 failed (1)\n Errors  1 error\nVitest caught 1 unhandled error during the test run.\n')" 'pass,"command"'
+  # A coverage threshold, which the files rerun would turn off.
+  check "$(rerun_mode_for ' FAIL  test/a.test.ts > x\n Test Files  1 failed (1)\nERROR: Coverage for lines (50%%) does not meet global threshold (80%%)\n')" 'pass,"command"'
+  # Accounted for: the files rerun.
+  check "$(rerun_mode_for ' FAIL  test/a.test.ts > x\n Test Files  1 failed | 2 passed (3)\n')" 'pass,"files"'
+}
+
+validate_rerun_gets_only_the_time_left_in_a_plain_run() {
+  has_timeout_bin || { echo "  (skipped: no timeout binary)"; return 0; }
+  # 2s used of a 31s limit leaves 29s, under the 30s minimum: no rerun.
+  config "validate_test: echo x >>$T/runs; sleep 2; exit 1
+validate_timeout_seconds: 31"
+  run "$BIN/ccm-validate" --only test
+  check "$(jqval .status),$(test_check .rerun.status),$(wc -l <"$T/runs" | tr -d ' ')" 'fail,"skipped",1'
+  [[ $(test_check .rerun.reason) == *"was left after the first run"* ]]
+  # With enough left, the rerun's limit is what the first run left.
+  rm -f "$T/runs"
+  config "validate_test: echo x >>$T/runs; exit 1
+validate_timeout_seconds: 60"
+  CCM_VALIDATE_RERUN_MIN_SECONDS=5 run "$BIN/ccm-validate" --only test
+  check "$(test_check .rerun.status),$(wc -l <"$T/runs" | tr -d ' ')" '"failed",2'
 }
 
 validate_rerun_unknown_runner_reruns_whole_command() {
@@ -2042,12 +2085,22 @@ validate_ci_confirm_not_green() {
   check "$(jqval .status),$RC,$(jqval .ci.status)" "ci-not-green,1,no-ci"
 }
 
-validate_ci_confirm_advisory_failure_is_set_aside() {
+validate_ci_confirm_advisory_failure_is_not_green() {
+  # ccm-ci-status is green with the ci.ignore check set aside, but a failed
+  # advisory check may be the test job: not green for --ci-confirm.
   ci_head_pr '[{"name":"test","state":"SUCCESS","bucket":"pass"},{"name":"copilot-pull-request-reviewer","state":"FAILURE","bucket":"fail"}]' 1
   fx policy "$COPILOT_POLICY"
   fx check-runs '{"check_runs":[{"name":"test","app":{"slug":"github-actions"}},{"name":"copilot-pull-request-reviewer","app":{"slug":"github-actions"}}]}'
   run "$BIN/ccm-validate" --ci-confirm
-  check "$(jqval .status),$RC,$(jqval '.ci.advisory[0].name')" "ci-green,0,copilot-pull-request-reviewer"
+  check "$(jqval .status),$RC,$(jqval .ci.status),$(jqval '.ci.advisory[0].name')" "ci-not-green,1,green,copilot-pull-request-reviewer"
+  [[ $(jqval .reason) == *"ci.ignore sets aside failing checks: copilot-pull-request-reviewer"* ]]
+}
+
+validate_ci_confirm_all_skipped_is_not_green() {
+  ci_head_pr '[{"name":"test","state":"SKIPPED","bucket":"skipping"}]'
+  run "$BIN/ccm-validate" --ci-confirm
+  check "$(jqval .status),$RC,$(jqval .ci.status)" "ci-not-green,1,green"
+  [[ $(jqval .reason) == *"all were skipped"* ]]
 }
 
 validate_ci_confirm_pending_asks_to_call_again() {

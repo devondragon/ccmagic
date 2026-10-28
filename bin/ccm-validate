@@ -86,29 +86,38 @@
 #   not prepared or already started 4)
 #
 # Test rerun (RV-166): a `test` check that fails (not by timing out) runs once
-# more before it is reported, under the same time limit, with output in
-# test-rerun.log. When the command, or the package.json script it runs, is a
-# plain vitest or jest invocation and the first run's `FAIL` lines name test
-# files that exist, only those files run again, one file at a time and without
-# coverage (vitest: `--no-file-parallelism` from 1.1 on and
-# `--coverage.enabled=false`; jest: `--runInBand --coverage=false
-# --runTestsByPath`). Any other runner (Gradle, Maven, go, cargo, pytest, a
-# compound script), or a vitest or jest run whose output names no file, runs
-# the whole command again unchanged. A rerun that passes makes the check
+# more before it is reported, with output in test-rerun.log. In a plain run the
+# rerun gets only the time left of the check's limit after the first run, so
+# both fit in validate_timeout_seconds (and one Bash call); with under 30
+# seconds left it is skipped (`rerun.status: skipped`, with a reason) and the
+# check stays failed. A --start worker gives the rerun a full limit. When the
+# command, or the package.json script it runs, is a plain vitest or jest
+# invocation, the first run's `FAIL` lines name test files that exist, and the
+# run's summary accounts for every failure (vitest `Test Files  N failed`, jest
+# `Test Suites: N failed`, N equal to the files found) with no unhandled error,
+# coverage threshold, or crashed worker reported, only those files run again,
+# one file at a time and without coverage (vitest: `--no-file-parallelism` from
+# 1.1 on and `--coverage.enabled=false`; jest: `--runInBand --coverage=false
+# --runTestsByPath`). Otherwise (Gradle, Maven, go, cargo, pytest, a compound
+# script, or a vitest or jest run whose failures the files do not account for)
+# the whole command runs again unchanged. A rerun that passes makes the check
 # `passed` with `passed_on_rerun: true`, `first_exit_code`, and `rerun`; one
-# that fails leaves it `failed` with `rerun`. `rerun` is {mode: files |
-# command, runner: vitest | jest | null, files, command, status, exit_code,
-# duration_s, log, failed_files (from the rerun's output; null for an unknown
-# runner), reason?, tail?}.
+# that fails or is skipped leaves it `failed` with `rerun`. `rerun` is {mode:
+# files | command, runner: vitest | jest | null, files, command, status:
+# passed | failed | skipped, exit_code, duration_s, log, failed_files (from the
+# rerun's output; null for an unknown runner), reason?, tail?}.
+# CCM_VALIDATE_RERUN_MIN_SECONDS replaces the 30 (tests only).
 #
 # --ci-confirm: whether CI on HEAD decides a test check that failed twice. It
 # prints {status, reason, head, ci, call_again?}:
 #   ci-green        0  the working tree is clean, HEAD is the head of this
-#                      branch's pull request, and ccm-ci-status reports `green`
-#                      for it (checks `ci.ignore` lists are set aside there)
+#                      branch's pull request, ccm-ci-status reports `green`
+#                      for it, at least one counted check ran and passed, and
+#                      no check `ci.ignore` sets aside failed
 #   ci-pending      6  CI on HEAD is still running; call again (call_again)
-#   ci-not-green    1  CI on HEAD failed, timed out, is absent (`no-ci`), or
-#                      could not be read
+#   ci-not-green    1  CI on HEAD failed, timed out, is absent (`no-ci`), could
+#                      not be read, is green only by setting aside a failed
+#                      ci.ignore check, or had every counted check skipped
 #   not-applicable  1  uncommitted or untracked changes, no readable pull
 #                      request, or HEAD not pushed: CI never ran on this code
 # The wait goes through `ccm-ci-status --watch` with the wait key
@@ -305,6 +314,18 @@ if [ "$mode" = ci ]; then
   ci_status=$(jq -r .status <<<"$ci_out")
   ci_sha=$(jq -r '.sha // ""' <<<"$ci_out")
   if [ "$ci_status" = green ] && [ "$ci_sha" = "$ci_head" ]; then
+    # Green with a set-aside (ci.ignore) check failing is not the suite
+    # passing: the test job may be the advisory one. Nor is green with no
+    # counted check that ran and passed (all skipped).
+    ci_adv_failed=$(jq -r '[(.advisory // [])[] | select(.bucket == "fail" or .bucket == "cancel") | .name] | join(", ")' <<<"$ci_out")
+    if [ -n "$ci_adv_failed" ]; then
+      ci_answer ci-not-green "CI on $ci_head is green only because ci.ignore sets aside failing checks: $ci_adv_failed" "$ci_out"
+      exit 1
+    fi
+    if ! jq -e 'any((.checks // [])[]; (.advisory | not) and .bucket == "pass")' >/dev/null <<<"$ci_out"; then
+      ci_answer ci-not-green "CI on $ci_head is green, but no counted check ran and passed (all were skipped)" "$ci_out"
+      exit 1
+    fi
     ci_answer ci-green "CI passed on $ci_head" "$ci_out"
     exit 0
   fi
@@ -635,6 +656,23 @@ failed_files() {
   return 0
 }
 
+# failures_accounted LOG COUNT: the run's summary names exactly COUNT failed
+# test files (vitest `Test Files  N failed`, jest `Test Suites: N failed`), and
+# nothing in LOG reports a failure no FAIL line names: unhandled errors or
+# rejections, vitest's `Errors  N error` line, a coverage threshold (the rerun
+# turns coverage off), or a worker that crashed or failed to exit (files it left
+# unrun). Only then is rerunning the FAIL files the same verdict as the run.
+failures_accounted() {
+  local esc text n
+  esc=$(printf '\033')
+  text=$(sed "s/${esc}\[[0-9;]*[A-Za-z]//g" "$1" 2>/dev/null || true)
+  if grep -Eiq 'unhandled (error|rejection)|^[[:space:]]*errors[[:space:]]+[0-9]+[[:space:]]+errors?|coverage.*threshold|threshold.*not met|worker.*(exited unexpectedly|failed to exit|crash|terminated)|out of memory' <<<"$text"; then
+    return 1
+  fi
+  n=$(sed -nE 's/^[[:space:]]*(Test Files[[:space:]]+|Test Suites:[[:space:]]+)([0-9]+) failed.*/\2/p' <<<"$text" | tail -n 1)
+  [ -n "$n" ] && [ "$n" -eq "$2" ]
+}
+
 # vitest_quiet_flag: --no-file-parallelism, when the installed vitest has it
 # (1.1 and later); nothing when its version cannot be read.
 vitest_quiet_flag() {
@@ -647,13 +685,17 @@ vitest_quiet_flag() {
 
 # plan_rerun CMD LOG: sets rerun_mode (files or command), rerun_files (JSON
 # array or null), and rerun_cmd for a failed test check. With vitest or jest
-# and at least one failing file found in LOG, only those files run again, one
-# at a time and without coverage; otherwise the whole command runs again.
+# and failing files found in LOG that account for every failure the run
+# reports (failures_accounted), only those files run again, one at a time and
+# without coverage; otherwise the whole command runs again.
 plan_rerun() {
   local files f quoted=""
   test_runner "$1"
   files=""
   [ -z "$runner" ] || files=$(failed_files "$2")
+  if [ -n "$files" ] && ! failures_accounted "$2" "$(printf '%s\n' "$files" | wc -l | tr -d ' ')"; then
+    files=""
+  fi
   if [ -n "$files" ]; then
     rerun_mode=files
     rerun_files=$(printf '%s\n' "$files" | jq -R . | jq -cs .)
@@ -685,19 +727,20 @@ stop_check() {
   kill -KILL -- "-$1" 2>/dev/null || kill -KILL "$1" 2>/dev/null || true
 }
 
-# run_bounded CMD LOG: run CMD from the repo root under the time limit, output
+# run_bounded CMD LOG [LIMIT]: run CMD from the repo root under LIMIT seconds
+# (default validate_timeout_seconds), output
 # to LOG, and return its exit code. In a worker it runs in the background and
 # the worker polls it: a run abandoned by --wait stops the check and the
 # worker, which writes nothing more.
 run_bounded() {
-  local rc
+  local rc lim=${3:-$timeout_s}
   set +e
   if [ "$mode" = worker ]; then
     worker_stopped && exit 0
     if [ -n "$timeout_bin" ]; then
       # timeout puts the command in a process group of its own; record it, so
       # this worker and its heartbeat loop can stop the check.
-      "$timeout_bin" --kill-after=10 "$timeout_s" bash -c "$1" >"$2" 2>&1 </dev/null &
+      "$timeout_bin" --kill-after=10 "$lim" bash -c "$1" >"$2" 2>&1 </dev/null &
     else
       bash -c "$1" >"$2" 2>&1 </dev/null &
     fi
@@ -714,7 +757,7 @@ run_bounded() {
     done
     wait "$child"
   elif [ -n "$timeout_bin" ]; then
-    "$timeout_bin" --kill-after=10 "$timeout_s" bash -c "$1" >"$2" 2>&1 </dev/null
+    "$timeout_bin" --kill-after=10 "$lim" bash -c "$1" >"$2" 2>&1 </dev/null
   else
     bash -c "$1" >"$2" 2>&1 </dev/null
   fi
@@ -1041,17 +1084,32 @@ for check in $checks; do
   # A failed test check runs once more (RV-166): the failed files only when
   # the runner's output names them, else the whole command. A check that timed
   # out does not, since a second run would double a limit already reached.
+  # In a plain (foreground) run the rerun gets only the time the first run
+  # left of the check's limit, so the check and its rerun together stay within
+  # validate_timeout_seconds, and so within one Bash call; with under 30
+  # seconds left it is skipped. A worker (--start) has no Bash call to fit and
+  # gives the rerun a full limit, which limit_s counts.
   rerun_json=""
   if [ "$check" = test ] && [ "$rc" -ne 0 ] && ! timed_out "$rc"; then
     plan_rerun "$cmd" "$log"
+    rlimit=$timeout_s
+    if [ "$mode" != worker ] && [ -n "$timeout_bin" ]; then rlimit=$((timeout_s - duration)); fi
+    if [ "$rlimit" -lt "${CCM_VALIDATE_RERUN_MIN_SECONDS:-30}" ]; then
+      # shellcheck disable=SC2016 # jq variables, expanded by jq
+      rerun_json=$(jq -n --arg m "$rerun_mode" --arg c "$rerun_cmd" --argjson left "$rlimit" --argjson t "$timeout_s" \
+        '{mode: $m, command: $c, status: "skipped",
+          reason: ("not rerun: only \($left)s of the \($t)s limit was left after the first run")}')
+    fi
+  fi
+  if [ -z "$rerun_json" ] && [ "$check" = test ] && [ "$rc" -ne 0 ] && ! timed_out "$rc"; then
     rlog="$logdir/test-rerun.log"
     rstart=$(date +%s)
-    run_bounded "$rerun_cmd" "$rlog" && rrc=0 || rrc=$?
+    run_bounded "$rerun_cmd" "$rlog" "$rlimit" && rrc=0 || rrc=$?
     rduration=$(($(date +%s) - rstart))
     rfailed=null
     if [ -n "$runner" ]; then rfailed=$(failed_files "$rlog" | jq -R . | jq -cs .); fi
     rreason=""
-    timed_out "$rrc" && rreason="timed out after ${timeout_s}s"
+    timed_out "$rrc" && rreason="timed out after ${rlimit}s"
     # shellcheck disable=SC2016 # jq variables, expanded by jq
     rerun_json=$(jq -n --arg m "$rerun_mode" --arg rn "$runner" --argjson f "$rerun_files" --arg c "$rerun_cmd" \
       --argjson rc "$rrc" --argjson d "$rduration" --arg l "$rlog" --argjson ff "$rfailed" --arg r "$rreason" \
