@@ -212,6 +212,7 @@ needs_human_state: Blocked     # where parked tickets go (falls back to the labe
 needs_human_label: needs-human # applied when the state doesn't exist / on GitHub
 # merge_owner: reeve           # hand off to an external merge gate instead of merging
 # merge_handoff_state: Awaiting Merge # tracker state a handed-off ticket moves to
+# draft_until_finish: true    # open the PR as a draft; mark it ready only at finish
 max_feedback_passes: 3         # cap on the pr-feedback loop before parking
 # Other autonomous loop bounds (skill defaults shown — set only to override):
 # max_review_fix_passes: 3     # ticket-review fix loop

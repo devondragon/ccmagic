@@ -206,6 +206,7 @@ Create as draft if:
 - WIP commits present
 - Tests failing
 - User specifies draft mode
+- `draft_until_finish` is `true` (a `draft_until_finish: true` line in the grounding block, else `config` from `ccm-context`): always pass `--draft`. `/ccmagic:finish-ticket` marks the PR ready for review at its Step 5b.
 
 ## Post-Creation Actions
 

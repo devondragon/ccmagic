@@ -32,6 +32,7 @@ If `.claude/ccmagic.local.md` exists at the repo root (`git rev-parse --show-top
 - `default_qa_workflow:` — if `true`, the QA path is on by default
 - `merge_owner:` — `self` (default) | `reeve`. With `reeve`, this repo's merges belong to an external gate (Reeve). The autonomous path hands the PR off instead of merging (see *Autonomous mode → Merge hand-off*); the interactive path offers the hand-off at Step 5.
 - `merge_handoff_state:` — tracker state a handed-off ticket moves to. Default `Awaiting Merge`. Linear and JIRA only; on GitHub Issues the hand-off applies the label `awaiting-merge` instead.
+- `draft_until_finish:` `false` (default) | `true`. With `true`, the PR was opened as a draft, and Step 5b marks it ready for review before the merge or the hand-off.
 
 The `--qa` argument always forces the QA path regardless of config.
 
@@ -279,6 +280,28 @@ Wait for explicit confirmation. If the user says "no" or wants to change somethi
 
 ---
 
+## Step 5b: Mark the PR ready for review (`draft_until_finish: true`)
+
+Only when `draft_until_finish` resolves to `true` (a line in the grounding block wins over config). Absent the key, or with `false`, skip this step and nothing below changes.
+
+This runs on both paths, after Step 3's gate passes and Step 5's confirmation, and before Step 6's merge or Step 7's hand-off: GitHub refuses to merge a draft, and the merge gate a hand-off goes to expects a PR ready for review. Read the draft flag, as its own Bash call:
+
+```bash
+gh pr view {pr_number} --json isDraft --jq .isDraft
+```
+
+If it prints `true`, mark the PR ready, then read the flag again, each as its own Bash call:
+
+```bash
+gh pr ready {pr_number}
+```
+
+The PR is ready only when the second read prints `false`. A failed `gh pr ready`, a failed read, or a PR still a draft stops the finish: do not merge and do not hand off. Interactively, say so with the command's first error line and stop. In autonomous mode, return `needs-human` with `reason: draft_until_finish: could not mark PR #{pr_number} ready for review: {first error line, or "still a draft after gh pr ready"}`. If the first read prints `false` (the PR was already ready, as when a person marked it), go on.
+
+With `merge_owner: self`, marking the PR ready can start checks that run on GitHub's `ready_for_review` event. After `gh pr ready`, run Step 3's merge gate once more, waiting out `pending` or `not-registered` CI as Step 3 describes, and merge only if it exits 0; a blocker is `needs-human` in autonomous mode, as at Step 3. With `merge_owner: reeve` skip that second gate: Reeve checks CI on the head again before it merges.
+
+---
+
 ## Step 6: Merge the PR
 
 **If you took the hand-off at Step 5, or `merge_owner: reeve` applies in autonomous mode, skip this step entirely. Nothing is merged on that path.**
@@ -458,11 +481,12 @@ Absent all three, run the interactive path exactly as documented above. Also rea
 - **Step 3 (Sanity check) — this is the merge gate.** Merge **only if** `ccm-merge-gate` exits 0 (after waiting out `pending` / `not-registered` CI with `"${CLAUDE_PLUGIN_ROOT}/bin/ccm-ci-status" --watch` as Step 3 describes). **Never ask a human to confirm CI, and never emit a question as the run's result** — an autonomous run ends by merging or by route-and-stop, never by asking. If the gate fails → `needs-human` (do **not** merge; the `reason` is the gate's `blockers` joined with `; `). Do not take the interactive "proceed anyway" option. The PreToolUse hook denies `gh pr merge` in autonomous runs while the gate fails, so a merge attempt past a failed gate is refused, and the refusal means `needs-human`.
 - **Step 4 (Disposition):** always take the **Done** path. The QA path needs an interactive hand-off (QA-assignee lookup, status confirmation) that would hang an unattended run, so autonomous mode never enters it — **even if `default_qa_workflow: true`**. If the QA path was explicitly forced (`--qa` passed *together with* an autonomous signal), that's a conflict autonomous mode can't satisfy → `needs-human` (reason: "QA disposition requires a human — re-run without `--qa`, or complete QA manually"); do **not** merge. A project that requires QA on every ticket should not be driven by `/ccmagic:auto-ticket`.
 - **Step 5 (Merge confirmation):** proceed with the determined strategy — squash for `feature/`/`bugfix/`/`hotfix/`/`chore/`, merge commit for `release/` — no pause.
+- **Step 5b (Mark ready, `draft_until_finish: true` only):** mark the PR ready for review before the merge, as Step 5b says; a failure is `needs-human`, and the run neither merges nor hands off.
 - **Step 6 (Merge conflicts):** auto-resolve **trivial** conflicts (version bumps, import lists, config values) exactly as Step 6 already describes. A **business-logic** conflict → `needs-human` (do not merge; leave the branch unmerged, `reason` names the conflicting files).
 
 ### Merge hand-off (`merge_owner: reeve`)
 
-When `merge_owner` resolves to `reeve`, the run **never merges**. The Step 3 merge gate still runs as a preflight and still parks on any blocker exactly as above (a red or conflicting PR is not handed off). When the gate is satisfied: skip Step 4's disposition question (its `--qa` conflict rule still applies), Step 5, and Step 6 entirely (no `gh pr merge`, no branch deletion), take the *Hand-off branch* of Step 7, and emit:
+When `merge_owner` resolves to `reeve`, the run **never merges**. The Step 3 merge gate still runs as a preflight and still parks on any blocker exactly as above (a red or conflicting PR is not handed off). When the gate is satisfied: skip Step 4's disposition question (its `--qa` conflict rule still applies), Step 5, and Step 6 entirely (no `gh pr merge`, no branch deletion). With `draft_until_finish: true`, run Step 5b first and hand off only once the PR is ready for review; a failure there is `needs-human`, never a hand-off of a draft. Then take the *Hand-off branch* of Step 7, and emit:
 
 ```
 status: done

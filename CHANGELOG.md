@@ -2,6 +2,12 @@
 
 All notable changes to ccmagic are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.29.0] - 2026-11
+
+### Added
+
+- `draft_until_finish` (default `false`): with `true` in `.claude/ccmagic.local.md`, the work step opens the PR as a draft (`gh pr create --draft`), and only the finish step marks it ready for review, so a reviewer that triggers on GitHub's `ready_for_review` event runs once, on the head the run finishes with (RV-106, question 5). `/ccmagic:auto-ticket` passes `draft_until_finish: true` in the grounding block when config sets it. `finish-ticket` Step 5b runs after the merge gate passes and before the merge or the Reeve hand-off: it reads `isDraft`, runs `gh pr ready` when the PR is a draft, and reads `isDraft` again. A failed command, a failed read, or a PR still a draft stops the finish with `needs-human` (`draft_until_finish: could not mark PR #N ready for review: ...`), so a draft is never merged or handed off. With `merge_owner: self` the merge gate runs once more after `gh pr ready`, since marking the PR ready can start checks; with `merge_owner: reeve` it does not, since Reeve checks CI on the head again. A run that parks leaves the PR a draft. `gh pr ready` is covered by the existing `Bash(gh:*)` grant.
+
 ## [3.28.0] - 2026-10
 
 ### Added

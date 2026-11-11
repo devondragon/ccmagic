@@ -184,6 +184,27 @@ context_config_precedence() {
     "reeve,project-label,12,3"
 }
 
+context_draft_until_finish_default_off() {
+  run "$BIN/ccm-context" --offline
+  check "$(jqval .config.draft_until_finish)" "false"
+  config 'draft_until_finish: true'
+  run "$BIN/ccm-context" --offline
+  check "$(jqval .config.draft_until_finish)" "true"
+}
+
+# draft_until_finish (RV-106): the PR opens as a draft and only finish marks it ready.
+# shellcheck disable=SC2016 # literal backticks in the markdown being matched
+skills_draft_until_finish_wired() {
+  local missing=
+  grep -qF 'pass `--draft` to `gh pr create`' "$ROOT/skills/work-ticket/SKILL.md" || missing+=" work-ticket"
+  grep -qF '## Step 5b: Mark the PR ready for review' "$ROOT/skills/finish-ticket/SKILL.md" || missing+=" finish-step"
+  grep -qF 'gh pr ready {pr_number}' "$ROOT/skills/finish-ticket/SKILL.md" || missing+=" finish-command"
+  grep -qF 'never a hand-off of a draft' "$ROOT/skills/finish-ticket/SKILL.md" || missing+=" handoff"
+  grep -qF 'draft_until_finish: {true' "$ROOT/skills/auto-ticket/autonomous-contract.md" || missing+=" grounding"
+  grep -qF 'draft_until_finish: true' "$ROOT/agents/auto-finish.md" || missing+=" agent"
+  check "${missing# }" ""
+}
+
 context_no_ticket_on_main() {
   run "$BIN/ccm-context" --offline
   check "$(jqval .ticket_id),$(jqval .branch)" "null,main"
