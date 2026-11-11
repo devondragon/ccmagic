@@ -33,6 +33,7 @@ needs_human_state: {value}
 needs_human_label: {value}
 merge_owner: {self | reeve}
 merge_handoff_state: {value}
+draft_until_finish: {true, only when config sets it; absent otherwise}
 max_feedback_passes: {n}
 review_pass: {n, only on re-reviews (Step 3 fix loop, Step 4f late push); absent on the first review pass}
 fix_pass: {n, only on a fix pass of the work step (Step 2b, 3, or 4b); absent otherwise}
@@ -42,6 +43,8 @@ ci_handoff: {true, only to the finish step, and only when Step 4d found the pass
 ```
 
 `merge_owner` and `merge_handoff_state` come from config (§5) with defaults `self` and `Awaiting Merge`; only `finish-ticket` acts on them. `ci_handoff: true` (RV-165) tells the finish step that CI is red and the orchestrator found no failure attributable to the PR (`ccm-ci-status` with `--attribute`); the finish step runs `ccm-merge-gate` with `--red-ci-handoff`, which checks the attribution again and takes it only under `merge_owner: reeve`, and hands off with CI red. It never lets a run merge.
+
+`draft_until_finish: true` comes from config (§5, default `false`). With it, the work step opens the PR as a draft (`gh pr create --draft`), and only the finish step marks it ready for review (`gh pr ready`), after its merge gate passes and before it merges or hands off (`finish-ticket` Step 5b). A reviewer that triggers on GitHub's `ready_for_review` event then runs once, on the head the run finishes with, instead of on every push. A run that parks leaves the PR a draft. If marking it ready fails, the finish step returns `needs-human` and neither merges nor hands off.
 
 The block always carries the ticket content, on every transport. The orchestrator fetches the ticket once in its Step 0 (under prompt-relay it takes the content from the invocation instead, §7) and appends a `ticket_content:` section:
 
@@ -292,6 +295,7 @@ When the run is on the **prompt-relay transport** (§7), the park routine change
 | `needs_human_label` | string | `needs-human` | Fallback label applied when `needs_human_state` doesn't exist (and always on GitHub). |
 | `merge_owner` | string | `self` | Who owns merging the PR: `self` merges here, `reeve` hands off to an external merge gate instead of merging. |
 | `merge_handoff_state` | string | `Awaiting Merge` | Tracker state a handed-off ticket moves to when `merge_owner: reeve`. |
+| `draft_until_finish` | bool | `false` | `true` opens the PR as a draft and marks it ready for review only at the finish step, before the merge or hand-off (§2). |
 | `max_feedback_passes` | int | `3` | Cap on the `pr-feedback` loop (orchestrator Step 4) before parking. |
 | `max_review_fix_passes` | int | `3` | Cap on the ticket-review fix loop (orchestrator Step 3) before parking. Visual fix passes (Step 2b) do not count against it; `visual_round`, at most 3, bounds them. |
 | `max_validate_attempts` | int | `2` | Cap on local `/ccmagic:validate` fix attempts (orchestrator Step 4b) before parking. |

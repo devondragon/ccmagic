@@ -62,6 +62,12 @@ needs_human_label: needs-human
 # merge_owner: self
 # merge_handoff_state: Awaiting Merge
 
+# Open the PR as a draft and mark it ready for review only at the finish step,
+# after the merge gate passes and before the merge or hand-off, so a reviewer
+# that triggers on GitHub's ready_for_review event runs once, on the final head.
+# If marking it ready fails, the run parks instead of merging or handing off.
+# draft_until_finish: false
+
 # Interactive merge guard. ccmagic's PreToolUse hook always enforces the merge
 # gate (bin/ccm-merge-gate: PR open, mergeable, CI green, no outstanding change
 # requests) on `gh pr merge` during autonomous runs. With `merge_guard: on` it
@@ -162,6 +168,7 @@ Copy this file to **`.claude/ccmagic.local.md`** in your project root and edit t
 | `needs_human_label` | Fallback label applied when `needs_human_state` doesn't exist (and always on GitHub). | `needs-human` |
 | `merge_owner` | `self` merges from the run; `reeve` hands off to an external gate and never merges. | `self` |
 | `merge_handoff_state` | Tracker state a handed-off ticket moves to on Linear/JIRA; applies the `awaiting-merge` label instead and leaves the issue open on GitHub, which has no custom states. | `Awaiting Merge` |
+| `draft_until_finish` | `true` opens the PR as a draft and marks it ready for review only at the finish step, before the merge or hand-off. | `false` |
 | `max_feedback_passes` | Cap on the `pr-feedback` loop in an autonomous run before parking. | `3` |
 | `max_review_fix_passes` | Cap on the ticket-review fix loop in an autonomous run before parking. | `3` |
 | `max_validate_attempts` | Cap on local `/ccmagic:validate` fix attempts in an autonomous run before parking. | `2` |

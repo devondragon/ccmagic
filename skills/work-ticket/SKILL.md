@@ -326,6 +326,8 @@ Invoke `/ccmagic:pr`. The PR skill will:
 
 Confirm the PR with the user before creating it.
 
+**Draft until finish.** When `draft_until_finish` is `true` (a `draft_until_finish: true` line in the grounding block, else the `config` object from `ccm-context`), create the PR as a draft: pass `--draft` to `gh pr create`. `/ccmagic:finish-ticket` marks it ready for review at its Step 5b. Never mark it ready here, and never in a fix pass. Absent the key, or with `false`, open the PR as before.
+
 <!-- ccmagic:plain-delta -->
 **Only when the base has `openspec/specs/` and the grounding block has no `spec:` section** (Step 5's spec delta block ran its decision). The PR body gets a `## OpenSpec` section, one of:
 

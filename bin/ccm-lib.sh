@@ -20,6 +20,7 @@ CCM_CONFIG_DEFAULTS='{
   "needs_human_label": "needs-human",
   "merge_owner": "self",
   "merge_handoff_state": "Awaiting Merge",
+  "draft_until_finish": "false",
   "max_feedback_passes": "3",
   "max_review_fix_passes": "3",
   "max_validate_attempts": "2",
