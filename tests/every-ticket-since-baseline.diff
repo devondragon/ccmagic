@@ -845,16 +845,37 @@
  ---
  
 ### skills/review/SKILL.md
-@@ -1,7 +1,7 @@
+@@ -1,9 +1,9 @@
  ---
  name: review
  user-invocable: true
 -allowed-tools: Read(*), Edit(*), Bash(git diff:*, git log:*, git status:*, git branch:*, git show:*, git rev-parse:*, git merge-base:*, git ls-files:*, git blame:*, gh pr view:*, gh pr diff:*, gh pr list:*, gh repo view:*, codex:*, which:*, command:*, timeout:*, gtimeout:*, echo:*, date:*, mktemp:*), Bash(${CLAUDE_PLUGIN_ROOT}/bin/ccm-review-route *), Bash(ccm-review-route *), Bash(${CLAUDE_PLUGIN_ROOT}/bin/ccm-external-review *), Bash(ccm-external-review *), Glob(*), Grep(*), Agent(*), Task(*), TodoWrite(*), AskUserQuestion(*), mcp__pal__codereview(*)
 +allowed-tools: Read(*), Edit(*), Bash(git diff:*, git log:*, git status:*, git branch:*, git show:*, git rev-parse:*, git merge-base:*, git ls-files:*, git blame:*, gh pr view:*, gh pr diff:*, gh pr list:*, gh repo view:*, codex:*, which:*, command:*, timeout:*, gtimeout:*, echo:*, date:*, mktemp:*), Bash(${CLAUDE_PLUGIN_ROOT}/bin/ccm-review-route *), Bash(ccm-review-route *), Bash(${CLAUDE_PLUGIN_ROOT}/bin/ccm-review-guide *), Bash(ccm-review-guide *), Bash(${CLAUDE_PLUGIN_ROOT}/bin/ccm-external-review *), Bash(ccm-external-review *), Glob(*), Grep(*), Agent(*), Task(*), TodoWrite(*), AskUserQuestion(*), mcp__pal__codereview(*)
  description: Use when the user asks for a code review of a change, diff, branch, or PR, including a diff pasted inline and phrasings like "review this before I open the PR", "can you code review this?", or "look over this change". Auto-routes between a fast inline checklist (QUICK) and the full multi-agent pipeline (DEEP), biased toward depth, with confidence scoring and convention awareness.
- argument-hint: "[branch|full|PR#] [--quick|--deep] [--fix] [--threshold N]"
+-argument-hint: "[branch|full|PR#] [--quick|--deep] [--fix] [--threshold N]"
++argument-hint: "[branch|full|42|#42|PR #42] [--quick|--deep] [--fix] [--threshold N]"
  model: sonnet
-@@ -79,6 +79,8 @@ Print the same line again as the **first line of the final report** (QUICK outpu
+ ---
+ 
+@@ -31,7 +31,7 @@ Parse `$ARGUMENTS` to determine review mode and options:
+ | *(empty)* | `branch` | Diff current branch against main (default) |
+ | `branch` | `branch` | Explicit branch diff |
+ | `full` | `full` | Full codebase review — partition into modules |
+-| `<number>` | `pr` | Review PR by number (e.g., `42`) |
++| `<number>` | `pr` | Review PR by number. Accept any of `42`, `#42`, `PR 42`, `PR #42`, `PR#42`, `pr42` (any case), or a PR URL ending in `/pull/42`, and use the bare number (`42`) from then on. |
+ | `--quick` | *(override)* | Force QUICK inline checklist pass. |
+ | `--deep` | *(override)* | Force DEEP multi-agent pipeline. |
+ | `--fix` | *(modifier)* | Apply mechanical fixes to the working tree after reporting (Step 7a). Off by default — without it the review makes no code changes at all. Never commits or pushes, with or without the flag. |
+@@ -39,6 +39,8 @@ Parse `$ARGUMENTS` to determine review mode and options:
+ | `--no-codex` | *(modifier)* | Skip Codex CLI review in DEEP mode even if installed |
+ | `--all-specialists` | *(modifier)* | Force all conditional specialists in DEEP, bypass adaptive gating |
+ 
++Never fall back to `branch` mode because an argument didn't match a row. If `$ARGUMENTS` holds anything other than the forms above, stop and print `Unrecognized argument: <arg>. Expected branch, full, a PR number (42, #42, PR #42), or a PR URL.`
++
+ If on `main` with no changes and no argument:
+ > "No branch changes detected. Use `/ccmagic:review full` for a full codebase review, or switch to a feature branch."
+ 
+@@ -79,6 +81,8 @@ Print the same line again as the **first line of the final report** (QUICK outpu
  
  If Step 0.5 selected QUICK, walk this checklist line by line against the diff. Don't skip categories. Work from the diff; when a finding depends on code outside the hunk, read only the lines around it (`Read` with `offset` and `limit`), not whole files.
  
@@ -863,7 +884,7 @@
  Before reporting, read `${CLAUDE_SKILL_DIR}/finding-schema.md` and apply its **What NOT to Report** exclusions. Formatting and whitespace, import ordering, TODO/FIXME/HACK markers, and missing or removed comments and JSDoc (absent an explicit documented convention requiring them) are never CRITICAL or WARNING findings, and usually are not findings at all.
  
  ### Correctness
-@@ -109,12 +111,12 @@ Group findings by severity:
+@@ -109,12 +113,12 @@ Group findings by severity:
  - **WARNING** — should fix (perf issues, maintainability, missing tests for important paths).
  - **INFO** — consider improving (style, minor naming, optional refactors).
  
@@ -879,7 +900,7 @@
  
  After producing the report, **stop**. Do not continue into DEEP mode steps. (If another skill invoked this one, such as `/ccmagic:review-ticket` or `/ccmagic:work-ticket`, stopping ends the review only: go back to that skill's next step.)
  
-@@ -135,6 +137,8 @@ Read these files if they exist (silent skip if missing):
+@@ -135,6 +139,8 @@ Read these files if they exist (silent skip if missing):
  
  Collect their content into a `{PROJECT_CONVENTIONS}` string. This is injected into every agent prompt via `${CLAUDE_SKILL_DIR}/agent-instructions.md`. If none found, agents use language-generic best practices only.
  
@@ -888,7 +909,7 @@
  ## Step 2: Gather Changes and Prioritize Files
  
  ### Branch mode
-@@ -240,7 +244,7 @@ Load `${CLAUDE_SKILL_DIR}/finding-schema.md` for the output format agents must u
+@@ -240,7 +246,7 @@ Load `${CLAUDE_SKILL_DIR}/finding-schema.md` for the output format agents must u
  Each agent receives:
  - The file list (prioritized per Step 2)
  - The actual diff or file contents
@@ -897,7 +918,7 @@
  - Instructions to use the finding schema exactly
  - The **Universal reporting rules (all agents)** and **Scratch programs** sections from agent-instructions.md, prepended verbatim
  
-@@ -290,7 +294,7 @@ After the review completes, record the counts as in Step 7d.
+@@ -290,7 +296,7 @@ After the review completes, record the counts as in Step 7d.
  
  Load `${CLAUDE_SKILL_DIR}/codex-pass.md` and follow it. It covers running the pass with `ccm-external-review` and acting on the status it reports.
  
@@ -906,7 +927,7 @@
  
  ---
  
-@@ -316,11 +320,12 @@ Merge MCP findings into the pool using the same finding schema. MCP findings ent
+@@ -316,11 +322,12 @@ Merge MCP findings into the pool using the same finding schema. MCP findings ent
  Load `${CLAUDE_SKILL_DIR}/triage-instructions.md` for the full triage process.
  
  ### 5a. Deduplicate
@@ -920,7 +941,7 @@
  
  ### 5c. Verify Critical and High findings
  For each Critical/High finding that survived, launch a parallel **verification Explore agent** (capped at 4 concurrent):
-@@ -347,6 +352,9 @@ If MCP and Explore agents disagree on a finding → flag for user decision in St
+@@ -347,6 +354,9 @@ If MCP and Explore agents disagree on a finding → flag for user decision in St
  # Code Review Report
  
  ## Summary
@@ -930,7 +951,7 @@
  - **Scope**: branch changes | full codebase | PR #X
  - **Branch**: [current branch or PR base]
  - **Files Analyzed**: N total (M in Tier 1/2)
-@@ -354,7 +362,6 @@ If MCP and Explore agents disagree on a finding → flag for user decision in St
+@@ -354,7 +364,6 @@ If MCP and Explore agents disagree on a finding → flag for user decision in St
  - **Coverage**: list any dimension that did not report as `unavailable — did not report`, and Codex as `findings | completed — 0 findings | timed out | unparseable | unavailable | auth failed | failed (exit N)`. If everything ran, say `full`. Never leave a dimension unlisted — an omission reads as "came back clean".
  - **Confidence Threshold**: [threshold used]
  - **Convention Sources**: [files loaded, or "none found"]
@@ -938,7 +959,7 @@
  
  ## Scope Check
  [Output from Step 2.5 — CLEAN / DRIFT DETECTED / REQUIREMENTS MISSING]
-@@ -384,6 +391,9 @@ For each:
+@@ -384,6 +393,9 @@ For each:
  ## Low Priority / Suggestions ({count})
  [grouped by file]
  
@@ -948,7 +969,7 @@
  ## Dismissed Findings ({count})
  For each:
  > ~~`file:line` — [original issue]~~
-@@ -418,7 +428,7 @@ Preconditions, both required:
+@@ -418,7 +430,7 @@ Preconditions, both required:
  - `--fix` present in `$ARGUMENTS`.
  - Working tree clean — run `git status --porcelain` before touching any file. If it returns anything, apply nothing and say so: mixing your edits into the user's uncommitted work makes the two indistinguishable.
  
@@ -957,7 +978,7 @@
  - Apply each fix directly in source code with `Edit`
  - Prefer minimal changes — one fix per finding
  - Output per fix: `[FIXED] file:line — issue → what was changed`
-@@ -449,9 +459,7 @@ I fixed N issues in the working tree. M need your input:
+@@ -449,9 +461,7 @@ I fixed N issues in the working tree. M need your input:
  RECOMMENDATION: Fix #1 because [reason]. Skip #2 because [reason].
  ```
  
@@ -968,7 +989,7 @@
  
  ### 7c. Track remaining findings
  
-@@ -462,7 +470,7 @@ Create **TodoWrite** entries for all remaining (unfixed) findings, grouped by se
+@@ -462,7 +472,7 @@ Create **TodoWrite** entries for all remaining (unfixed) findings, grouped by se
  
  ### 7d. Update review stats
  

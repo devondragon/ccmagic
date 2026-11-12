@@ -3,7 +3,7 @@ name: review
 user-invocable: true
 allowed-tools: Read(*), Edit(*), Bash(git diff:*, git log:*, git status:*, git branch:*, git show:*, git rev-parse:*, git merge-base:*, git ls-files:*, git blame:*, gh pr view:*, gh pr diff:*, gh pr list:*, gh repo view:*, codex:*, which:*, command:*, timeout:*, gtimeout:*, echo:*, date:*, mktemp:*), Bash(${CLAUDE_PLUGIN_ROOT}/bin/ccm-review-route *), Bash(ccm-review-route *), Bash(${CLAUDE_PLUGIN_ROOT}/bin/ccm-review-guide *), Bash(ccm-review-guide *), Bash(${CLAUDE_PLUGIN_ROOT}/bin/ccm-external-review *), Bash(ccm-external-review *), Glob(*), Grep(*), Agent(*), Task(*), TodoWrite(*), AskUserQuestion(*), mcp__pal__codereview(*)
 description: Use when the user asks for a code review of a change, diff, branch, or PR, including a diff pasted inline and phrasings like "review this before I open the PR", "can you code review this?", or "look over this change". Auto-routes between a fast inline checklist (QUICK) and the full multi-agent pipeline (DEEP), biased toward depth, with confidence scoring and convention awareness.
-argument-hint: "[branch|full|PR#] [--quick|--deep] [--fix] [--threshold N]"
+argument-hint: "[branch|full|42|#42|PR #42] [--quick|--deep] [--fix] [--threshold N]"
 model: sonnet
 ---
 
@@ -31,13 +31,15 @@ Parse `$ARGUMENTS` to determine review mode and options:
 | *(empty)* | `branch` | Diff current branch against main (default) |
 | `branch` | `branch` | Explicit branch diff |
 | `full` | `full` | Full codebase review — partition into modules |
-| `<number>` | `pr` | Review PR by number (e.g., `42`) |
+| `<number>` | `pr` | Review PR by number. Accept any of `42`, `#42`, `PR 42`, `PR #42`, `PR#42`, `pr42` (any case), or a PR URL ending in `/pull/42`, and use the bare number (`42`) from then on. |
 | `--quick` | *(override)* | Force QUICK inline checklist pass. |
 | `--deep` | *(override)* | Force DEEP multi-agent pipeline. |
 | `--fix` | *(modifier)* | Apply mechanical fixes to the working tree after reporting (Step 7a). Off by default — without it the review makes no code changes at all. Never commits or pushes, with or without the flag. |
 | `--threshold N` | *(modifier)* | Confidence threshold for DEEP, default 80. Findings below this are dropped. |
 | `--no-codex` | *(modifier)* | Skip Codex CLI review in DEEP mode even if installed |
 | `--all-specialists` | *(modifier)* | Force all conditional specialists in DEEP, bypass adaptive gating |
+
+Never fall back to `branch` mode because an argument didn't match a row. If `$ARGUMENTS` holds anything other than the forms above, stop and print `Unrecognized argument: <arg>. Expected branch, full, a PR number (42, #42, PR #42), or a PR URL.`
 
 If on `main` with no changes and no argument:
 > "No branch changes detected. Use `/ccmagic:review full` for a full codebase review, or switch to a feature branch."
