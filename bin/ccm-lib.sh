@@ -36,10 +36,10 @@ CCM_CONFIG_DEFAULTS='{
 }'
 
 # Print the frontmatter of a markdown file as a JSON object of string values.
-# Missing file or no frontmatter prints {}.
+# Missing file or no frontmatter prints {}. FILE - reads stdin.
 ccm_frontmatter_json() {
   local file=$1
-  if [ ! -f "$file" ]; then
+  if [ "$file" != - ] && [ ! -f "$file" ]; then
     echo '{}'
     return
   fi
@@ -64,17 +64,60 @@ ccm_frontmatter_json() {
     done | jq -s 'add // {}'
 }
 
+# Where the project config is read from: "working-tree" when the file is in
+# the checkout, else a ref whose tree has .claude/ccmagic.local.md, else
+# empty (no project config). An old checkout, such as a worktree reused from
+# before the file was committed, must not fall back to the built-in defaults
+# while the base branch has settings (cclens CCL-20: merge_owner: reeve was
+# read as self). The fallback ref is CCM_CONFIG_BASE_REF when set (ccm-context
+# sets it to origin/<base branch>), else origin/HEAD, origin/main, or
+# origin/master. CCM_CONFIG_REF names a ref read ahead of the checkout:
+# ccm-context --config-ref sets it when auto-ticket could not merge the base
+# into the branch, so the checkout's copy may be stale. Reads local refs only.
+ccm_project_config_source() {
+  local root project ref cand
+  root=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
+  project=${CCM_PROJECT_CONFIG:-$root/.claude/ccmagic.local.md}
+  if [ -n "${CCM_CONFIG_REF:-}" ] && git cat-file -e "$CCM_CONFIG_REF:.claude/ccmagic.local.md" 2>/dev/null; then
+    printf '%s' "$CCM_CONFIG_REF"
+    return
+  fi
+  if [ -f "$project" ]; then
+    printf 'working-tree'
+    return
+  fi
+  ref=""
+  if [ -n "${CCM_CONFIG_BASE_REF:-}" ]; then
+    ref=$CCM_CONFIG_BASE_REF
+  else
+    for cand in "$(git symbolic-ref -q --short refs/remotes/origin/HEAD 2>/dev/null || true)" origin/main origin/master; do
+      [ -n "$cand" ] || continue
+      if git rev-parse -q --verify "$cand^{commit}" >/dev/null 2>&1; then ref=$cand; break; fi
+    done
+  fi
+  if [ -n "$ref" ] && git cat-file -e "$ref:.claude/ccmagic.local.md" 2>/dev/null; then
+    printf '%s' "$ref"
+  fi
+}
+
 # Print the resolved config as JSON: defaults < user file < project file.
 # CCM_USER_CONFIG and CCM_PROJECT_CONFIG override the paths (used by tests).
+# The project file is read from where ccm_project_config_source says.
 ccm_config_json() {
-  local root project user
+  local root project user src pj
   root=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
   project=${CCM_PROJECT_CONFIG:-$root/.claude/ccmagic.local.md}
   user=${CCM_USER_CONFIG:-$HOME/.claude/ccmagic.local.md}
+  src=$(ccm_project_config_source)
+  case $src in
+    '') pj='{}' ;;
+    working-tree) pj=$(ccm_frontmatter_json "$project") ;;
+    *) pj=$(git show "$src:.claude/ccmagic.local.md" 2>/dev/null | ccm_frontmatter_json -) ;;
+  esac
   jq -n \
     --argjson d "$CCM_CONFIG_DEFAULTS" \
     --argjson u "$(ccm_frontmatter_json "$user")" \
-    --argjson p "$(ccm_frontmatter_json "$project")" \
+    --argjson p "$pj" \
     '$d + $u + $p'
 }
 

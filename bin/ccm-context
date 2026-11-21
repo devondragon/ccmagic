@@ -1,15 +1,23 @@
 #!/usr/bin/env bash
 # ccm-context: print the facts every ccmagic ticket skill starts from, as JSON.
 #
-# Usage: ccm-context [--offline] [TICKET-ID]
+# Usage: ccm-context [--offline] [--config-ref REF] [TICKET-ID]
 #
-#   --offline   skip gh calls (no PR lookup, base branch from local refs only)
-#   TICKET-ID   use this ticket instead of parsing the current branch
+#   --offline     skip gh calls (no PR lookup, base branch from local refs only)
+#   --config-ref  read the project config from REF's tree (origin/main) ahead
+#                 of the checkout's copy, when REF has one
+#   TICKET-ID     use this ticket instead of parsing the current branch
 #
 # Output keys: repo_root, branch, checkout (primary|worktree), ticket_id,
 # ticket_source (arg|branch|null), ticket_kind (key|integer|null),
 # tracker_hint (linear|jira|github|linear-or-jira|null), gh_available,
-# base_branch, pr (object or null), config (resolved settings).
+# base_branch, pr (object or null), config (resolved settings),
+# project_config (where the project .claude/ccmagic.local.md was read from:
+# "working-tree", a ref such as "origin/main", or null for none).
+#
+# Without the file in the checkout, the project config is read from
+# origin/<base_branch> when that ref has it, so an old checkout never runs on
+# the built-in defaults while its base has settings (cclens CCL-20).
 #
 # MCP servers (Linear, Atlassian) are visible to the model, not to a shell, so
 # this script never decides the tracker on its own; tracker_hint only reports
@@ -21,13 +29,18 @@ set -euo pipefail
 
 offline=false
 arg_ticket=""
-for a in "$@"; do
-  case $a in
+config_ref=""
+while [ $# -gt 0 ]; do
+  case $1 in
     --offline) offline=true ;;
-    -h|--help) sed -n '2,17p' "$0"; exit 0 ;;
-    -*) echo "ccm-context: unknown flag $a" >&2; exit 4 ;;
-    *) arg_ticket=$a ;;
+    --config-ref)
+      [ $# -ge 2 ] || { echo "ccm-context: --config-ref needs a ref" >&2; exit 4; }
+      config_ref=$2; shift ;;
+    -h|--help) sed -n '2,24p' "$0"; exit 0 ;;
+    -*) echo "ccm-context: unknown flag $1" >&2; exit 4 ;;
+    *) arg_ticket=$1 ;;
   esac
+  shift
 done
 
 if ! repo_root=$(git rev-parse --show-toplevel 2>/dev/null); then
@@ -35,6 +48,28 @@ if ! repo_root=$(git rev-parse --show-toplevel 2>/dev/null); then
   exit 3
 fi
 
+gh_available=false
+if [ "$offline" = false ] && command -v gh >/dev/null 2>&1; then
+  gh_available=true
+fi
+
+base_branch=""
+if [ "$gh_available" = true ]; then
+  base_branch=$(gh repo view --json defaultBranchRef -q .defaultBranchRef.name 2>/dev/null || true)
+fi
+if [ -z "$base_branch" ]; then
+  if git show-ref --verify --quiet refs/heads/develop || git show-ref --verify --quiet refs/remotes/origin/develop; then
+    base_branch=develop
+  else
+    base_branch=main
+  fi
+fi
+
+if git rev-parse -q --verify "refs/remotes/origin/$base_branch" >/dev/null 2>&1; then
+  export CCM_CONFIG_BASE_REF="origin/$base_branch"
+fi
+[ -z "$config_ref" ] || export CCM_CONFIG_REF="$config_ref"
+project_config=$(ccm_project_config_source)
 config=$(ccm_config_json)
 regex=$(jq -r '.ticket_id_regex' <<<"$config")
 url_base=$(jq -r '.ticket_url_base' <<<"$config")
@@ -88,25 +123,9 @@ case $tracker_cfg in
     ;;
 esac
 
-gh_available=false
-if [ "$offline" = false ] && command -v gh >/dev/null 2>&1; then
-  gh_available=true
-fi
-
 pr=null
-base_branch=""
-if [ "$gh_available" = true ]; then
-  if [ -n "$branch" ]; then
-    pr=$(gh pr view --json number,url,state,title,baseRefName,headRefName,headRefOid 2>/dev/null || echo null)
-  fi
-  base_branch=$(gh repo view --json defaultBranchRef -q .defaultBranchRef.name 2>/dev/null || true)
-fi
-if [ -z "$base_branch" ]; then
-  if git show-ref --verify --quiet refs/heads/develop || git show-ref --verify --quiet refs/remotes/origin/develop; then
-    base_branch=develop
-  else
-    base_branch=main
-  fi
+if [ "$gh_available" = true ] && [ -n "$branch" ]; then
+  pr=$(gh pr view --json number,url,state,title,baseRefName,headRefName,headRefOid 2>/dev/null || echo null)
 fi
 
 jq -n \
@@ -121,8 +140,9 @@ jq -n \
   --arg base_branch "$base_branch" \
   --argjson pr "$pr" \
   --argjson config "$config" \
+  --arg project_config "$project_config" \
   'def nul: if . == "" then null else . end;
    {$repo_root, branch: ($branch | nul), $checkout,
     ticket_id: ($ticket_id | nul), ticket_source: ($ticket_source | nul),
     ticket_kind: ($ticket_kind | nul), tracker_hint: ($tracker_hint | nul),
-    $gh_available, $base_branch, $pr, $config}'
+    $gh_available, $base_branch, $pr, $config, project_config: ($project_config | nul)}'

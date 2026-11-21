@@ -210,6 +210,258 @@ context_no_ticket_on_main() {
   check "$(jqval .ticket_id),$(jqval .branch)" "null,main"
 }
 
+# Project config from the base when the checkout has none (cclens CCL-20).
+context_config_from_base_when_checkout_has_none() {
+  bs_origin
+  upstream_commit .claude/ccmagic.local.md $'---\nmerge_owner: reeve\n---\n' "chore: ccmagic config"
+  git fetch -q origin
+  run "$BIN/ccm-context" --offline
+  check "$(jqval .config.merge_owner),$(jqval .project_config)" "reeve,origin/main"
+  # A checkout with its own copy reads that copy.
+  config 'merge_owner: self'
+  run "$BIN/ccm-context" --offline
+  check "$(jqval .config.merge_owner),$(jqval .project_config)" "self,working-tree"
+  # --config-ref reads the ref ahead of the checkout's copy.
+  run "$BIN/ccm-context" --offline --config-ref origin/main
+  check "$(jqval .config.merge_owner),$(jqval .project_config)" "reeve,origin/main"
+  # A --config-ref without the file falls through to the checkout, then the base.
+  rm -f .claude/ccmagic.local.md
+  run "$BIN/ccm-context" --offline --config-ref origin/nope
+  check "$(jqval .config.merge_owner),$(jqval .project_config)" "reeve,origin/main"
+}
+
+context_no_project_config_anywhere() {
+  run "$BIN/ccm-context" --offline
+  check "$(jqval .config.merge_owner),$(jqval .project_config)" "self,null"
+}
+
+# The PreToolUse guard reads the same config, so a merge under the base's
+# merge_owner: reeve is refused even from an old checkout.
+guard_reads_merge_owner_from_base() {
+  bs_origin
+  upstream_commit .claude/ccmagic.local.md $'---\nmerge_owner: reeve\nautonomous: true\n---\n' "chore: ccmagic config"
+  git fetch -q origin
+  hook 'gh pr merge 7 --squash'
+  check "$(denied)" "deny"
+  [[ $(jq -r .hookSpecificOutput.permissionDecisionReason <<<"$OUT") == *"merge_owner is reeve"* ]]
+}
+
+# ---- ccm-base-sync -----------------------------------------------------------
+
+# bs_origin: a bare origin holding main, and committer identity for the merges.
+bs_origin() {
+  export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
+  git init -q --bare "$T/origin.git"
+  git remote add origin "$T/origin.git"
+  git push -q origin main
+  git fetch -q origin
+}
+
+# upstream_commit PATH CONTENT MSG: commit PATH on origin's main from another clone.
+upstream_commit() {
+  [ -d "$T/up" ] || git clone -q "$T/origin.git" "$T/up"
+  (cd "$T/up" && git pull -q origin main && mkdir -p "$(dirname "$1")" && printf '%s' "$2" >"$1" &&
+    git add -A && git commit -qm "$3" && git push -q origin HEAD:main)
+}
+
+# local_commit PATH CONTENT MSG: commit on the current branch.
+local_commit() {
+  mkdir -p "$(dirname "$1")"
+  printf '%s' "$2" >"$1"
+  git add -A && git commit -qm "$3"
+}
+
+bs() { run "$BIN/ccm-base-sync" "$@"; }
+
+basesync_not_applicable_without_origin() {
+  bs sync --base main
+  check "$(jqval .status),$RC,$(jqval .reason)" "not-applicable,0,no origin remote"
+  bs_origin
+  git checkout -q --detach
+  bs sync --base main
+  check "$(jqval .status),$RC" "not-applicable,0"
+}
+
+basesync_up_to_date() {
+  bs_origin
+  git checkout -q -b feature/ENG-1-x
+  local_commit a.txt a "feat: a"
+  bs sync --base main
+  check "$(jqval .status),$RC,$(jqval .behind),$(jqval .head)" "up-to-date,0,0,$(git rev-parse HEAD)"
+}
+
+# CCL-20: a reused checkout from before the config commit fast-forwards to it.
+basesync_fast_forwards_a_stale_checkout() {
+  bs_origin
+  git checkout -q -b feature/CCL-20-x
+  upstream_commit .claude/ccmagic.local.md $'---\nmerge_owner: reeve\n---\n' "chore: ccmagic config"
+  bs sync --base main
+  check "$(jqval .status),$RC,$(jqval .fast_forward),$(jqval .behind),$(jqval .pushed)" "merged,0,true,1,false"
+  check "$(git rev-parse HEAD)" "$(git rev-parse origin/main)"
+  run "$BIN/ccm-context" --offline
+  check "$(jqval .config.merge_owner),$(jqval .project_config)" "reeve,working-tree"
+}
+
+# CCL-39: a branch with its own commits, two behind main, gets a merge commit.
+basesync_merges_a_branch_behind_its_base() {
+  bs_origin
+  git checkout -q -b feature/CCL-39-x
+  local_commit a.txt a "feat: a"
+  local mine
+  mine=$(git rev-parse HEAD)
+  upstream_commit b.txt b "feat: b"
+  upstream_commit c.txt c "feat: c"
+  bs sync --base main
+  check "$(jqval .status),$RC,$(jqval .fast_forward),$(jqval .behind),$(jqval .head_before)" "merged,0,false,2,$mine"
+  check "$(git rev-parse HEAD^1),$(git rev-parse HEAD^2)" "$mine,$(git rev-parse origin/main)"
+  check "$(git log -1 --format=%s)" "Merge origin/main into feature/CCL-39-x"
+  # Not pushed without --push.
+  check "$(git ls-remote origin refs/heads/feature/CCL-39-x | wc -l | tr -d ' ')" "0"
+}
+
+basesync_push_pushes_the_merge() {
+  bs_origin
+  git checkout -q -b feature/ENG-2-x
+  local_commit a.txt a "feat: a"
+  git push -q origin HEAD:refs/heads/feature/ENG-2-x
+  upstream_commit b.txt b "feat: b"
+  bs sync --base main --push
+  check "$(jqval .status),$RC,$(jqval .pushed)" "merged,0,true"
+  check "$(git ls-remote origin refs/heads/feature/ENG-2-x | cut -f1)" "$(git rev-parse HEAD)"
+  bs push
+  check "$(jqval .status),$RC,$(jqval .pushed)" "up-to-date,0,false"
+}
+
+basesync_push_never_forces() {
+  bs_origin
+  git checkout -q -b feature/ENG-3-x
+  local_commit a.txt a "feat: a"
+  git push -q origin HEAD:refs/heads/feature/ENG-3-x
+  git reset -q --hard HEAD~1
+  local_commit z.txt z "feat: z"
+  bs push
+  check "$(jqval .status),$RC,$(jqval .pushed)" "push-failed,2,false"
+}
+
+# conflict_setup: feature/ENG-4-x and origin/main both change a.txt.
+conflict_setup() {
+  bs_origin
+  upstream_commit a.txt base0 "feat: a"
+  git pull -q origin main
+  git checkout -q -b feature/ENG-4-x
+  local_commit a.txt mine "feat: mine"
+  upstream_commit a.txt theirs "feat: theirs"
+}
+
+basesync_sync_aborts_a_conflicting_merge() {
+  conflict_setup
+  local before
+  before=$(git rev-parse HEAD)
+  bs sync --base main
+  check "$(jqval .status),$RC,$(jq -c .conflicts <<<"$OUT")" 'conflicting,1,["a.txt"]'
+  check "$(git rev-parse HEAD),$(git status --porcelain),$(cat a.txt)" "$before,,mine"
+  [ ! -e .git/MERGE_HEAD ]
+  [[ $(jqval .reason) == *"conflicts in a.txt"* ]]
+}
+
+basesync_begin_resolve_conclude() {
+  conflict_setup
+  local before
+  before=$(git rev-parse HEAD)
+  bs begin --base main
+  check "$(jqval .status),$RC,$(jq -c .conflicts <<<"$OUT")" 'conflicting,0,["a.txt"]'
+  [ -e .git/MERGE_HEAD ]
+  grep -q '^<<<<<<< ' a.txt
+  # Markers left: unresolved, nothing committed.
+  bs conclude
+  check "$(jqval .status),$RC,$(git rev-parse HEAD)" "unresolved,1,$before"
+  # A new file is refused.
+  printf 'resolved' >a.txt
+  printf 'new' >extra.txt
+  bs conclude
+  check "$(jqval .status),$RC" "error,2"
+  [[ $(jqval .reason) == *"extra.txt"* ]]
+  rm -f extra.txt
+  bs conclude
+  check "$(jqval .status),$RC,$(cat a.txt)" "merged,0,resolved"
+  check "$(git rev-parse HEAD^1),$(git rev-parse HEAD^2)" "$before,$(git rev-parse origin/main)"
+  [ ! -e .git/MERGE_HEAD ]
+  [ -z "$(git status --porcelain)" ]
+}
+
+basesync_conclude_refuses_a_merge_it_did_not_begin() {
+  conflict_setup
+  bs conclude
+  check "$(jqval .status),$RC" "error,2"
+  git fetch -q origin && { git merge -q origin/main >/dev/null 2>&1 || true; }
+  [ -e .git/MERGE_HEAD ]
+  bs conclude
+  check "$(jqval .status),$RC" "error,2"
+  [[ $(jqval .reason) == *"no record"* ]]
+}
+
+basesync_abort_restores_the_tree() {
+  conflict_setup
+  local before
+  before=$(git rev-parse HEAD)
+  bs begin --base main
+  bs abort
+  check "$(jqval .status),$RC,$(git rev-parse HEAD),$(cat a.txt)" "aborted,0,$before,mine"
+  [ ! -e .git/MERGE_HEAD ]
+  bs abort
+  check "$(jqval .status),$RC" "not-applicable,0"
+}
+
+basesync_leaves_a_dirty_tree_alone() {
+  conflict_setup
+  printf 'wip' >a.txt
+  bs sync --base main
+  check "$(jqval .status),$RC,$(cat a.txt)" "dirty,2,wip"
+  git checkout -q -- a.txt
+  bs begin --base main
+  bs sync --base main
+  check "$(jqval .status),$RC" "dirty,2"
+  [[ $(jqval .reason) == *"MERGE_HEAD"* ]]
+}
+
+basesync_fetch_failure() {
+  bs_origin
+  git checkout -q -b feature/ENG-5-x
+  bs sync --base nosuch
+  check "$(jqval .status),$RC" "fetch-failed,2"
+}
+
+basesync_base_from_the_pr_then_default() {
+  bs_origin
+  git checkout -q -b feature/ENG-6-x
+  fx pr-view '{"baseRefName":"main"}'
+  bs sync
+  check "$(jqval .base),$(jqval .status)" "main,up-to-date"
+  fx_err pr-view 'no pull requests found' 1
+  bs sync
+  check "$(jqval .base),$(jqval .status)" "main,up-to-date"
+}
+
+basesync_on_the_base_branch_fast_forwards_only() {
+  bs_origin
+  upstream_commit b.txt b "feat: b"
+  bs sync --base main
+  check "$(jqval .status),$(jqval .fast_forward),$(git rev-parse HEAD)" "merged,true,$(git rev-parse origin/main)"
+  local_commit c.txt c "feat: c"
+  upstream_commit d.txt d "feat: d"
+  bs sync --base main
+  check "$(jqval .status),$RC" "error,2"
+}
+
+basesync_usage() {
+  OUT=$("$BIN/ccm-base-sync" 2>/dev/null) && RC=0 || RC=$?
+  check "$RC" "4"
+  OUT=$("$BIN/ccm-base-sync" begin --push 2>/dev/null) && RC=0 || RC=$?
+  check "$RC" "4"
+  OUT=$("$BIN/ccm-base-sync" frob 2>/dev/null) && RC=0 || RC=$?
+  check "$RC" "4"
+}
+
 # ---- ccm-ci-status ---------------------------------------------------------
 
 ci_green() {
@@ -4609,6 +4861,18 @@ finish_guard_fails_change_after_validate() {
   check "$(jqval .status),$RC" "pass,0"
 }
 
+# The orchestrator's base-sync entries (a merge of the base it made itself)
+# are not code changes by a step, so they need no validate after them; a
+# conflict fix pass is a work-ticket entry and does.
+finish_guard_base_sync_entries() {
+  run_finish_guard '[{"step": "base-sync", "status": "done", "reason": "merged origin/main at abc1234 into feature/x (2 commits behind)"}, {"step": "work-ticket", "status": "done"}, {"step": "review-ticket", "status": "clean"}, {"step": "validate", "status": "done"}, {"step": "base-sync", "status": "done", "reason": "merged origin/main at def5678: the PR conflicted with its base"}, {"step": "review-ticket", "status": "clean"}]'
+  check "$(jqval .status),$RC" "pass,0"
+  run_finish_guard '[{"step": "work-ticket", "status": "done"}, {"step": "review-ticket", "status": "clean"}, {"step": "validate", "status": "done"}, {"step": "work-ticket", "status": "done", "reason": "fix pass 1 (conflict): applied 1 items"}, {"step": "base-sync", "status": "done"}, {"step": "review-ticket", "status": "clean"}]'
+  check "$(jqval .rule),$RC" "changed-after-validate,1"
+  run_finish_guard '[{"step": "work-ticket", "status": "done"}, {"step": "review-ticket", "status": "clean"}, {"step": "validate", "status": "done"}, {"step": "work-ticket", "status": "done", "reason": "fix pass 1 (conflict): applied 1 items"}, {"step": "base-sync", "status": "done"}, {"step": "validate", "status": "done"}, {"step": "review-ticket", "status": "clean"}]'
+  check "$(jqval .status),$RC" "pass,0"
+}
+
 finish_guard_fails_closed_on_unreadable_steps() {
   run_finish_guard 'AUTONOMOUS RUN CONTEXT
 autonomous: true'
@@ -7092,7 +7356,7 @@ harness_docker_env_passes_proxy_not_secrets() {
 MIRRORS=$(mktemp -d)
 trap 'rm -rf "$MIRRORS"' EXIT
 
-for fn in $(declare -F | awk '{print $3}' | grep -E '^(context|ci|merge_gate|guard|post|postreview|stop|threads|reply|validate|route|guide|doctor|extreview|skills|spec_block|scope|finish|baseline|propose|specpolish|specdelta|openspecver|harness|followup|acceptance)_'); do
+for fn in $(declare -F | awk '{print $3}' | grep -E '^(context|ci|merge_gate|guard|post|postreview|stop|threads|reply|validate|route|guide|doctor|extreview|skills|spec_block|scope|finish|baseline|propose|specpolish|specdelta|openspecver|harness|followup|acceptance|basesync)_'); do
   t "$fn" "$fn"
 done
 
