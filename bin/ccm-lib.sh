@@ -36,10 +36,10 @@ CCM_CONFIG_DEFAULTS='{
 }'
 
 # Print the frontmatter of a markdown file as a JSON object of string values.
-# Missing file or no frontmatter prints {}.
+# Missing file or no frontmatter prints {}. FILE - reads stdin.
 ccm_frontmatter_json() {
   local file=$1
-  if [ ! -f "$file" ]; then
+  if [ "$file" != - ] && [ ! -f "$file" ]; then
     echo '{}'
     return
   fi
@@ -64,18 +64,105 @@ ccm_frontmatter_json() {
     done | jq -s 'add // {}'
 }
 
-# Print the resolved config as JSON: defaults < user file < project file.
+# ccm_base_branch [pr|default|local]: the base branch name, resolved in one
+# order for every script: the open PR's base (pr only), then the repository's
+# default branch from gh (pr and default), then origin/HEAD, then develop when
+# it exists locally or on origin, then main. local makes no gh call, for the
+# config reads the hooks make on every tool call. CCM_OFFLINE=1 skips gh too.
+ccm_base_branch() {
+  local how=${1:-default} b=""
+  if [ "$how" != local ] && [ "${CCM_OFFLINE:-}" != 1 ] && command -v gh >/dev/null 2>&1; then
+    if [ "$how" = pr ]; then
+      b=$(gh pr view --json baseRefName -q .baseRefName 2>/dev/null || true)
+      [ "$b" != null ] || b=""
+    fi
+    [ -n "$b" ] || b=$(gh repo view --json defaultBranchRef -q .defaultBranchRef.name 2>/dev/null || true)
+    [ "$b" != null ] || b=""
+  fi
+  if [ -z "$b" ]; then
+    b=$(git symbolic-ref -q --short refs/remotes/origin/HEAD 2>/dev/null || true)
+    b=${b#origin/}
+  fi
+  if [ -z "$b" ]; then
+    if git show-ref --verify --quiet refs/heads/develop || git show-ref --verify --quiet refs/remotes/origin/develop; then
+      b=develop
+    else
+      b=main
+    fi
+  fi
+  printf '%s' "$b"
+}
+
+# The ref whose .claude/ccmagic.local.md is the base branch's copy:
+# CCM_CONFIG_BASE_REF when set (ccm-context sets it to origin/<base branch>),
+# else origin/<ccm_base_branch local>. Empty when that ref lacks the file.
+ccm_config_base_ref() {
+  local ref=${CCM_CONFIG_BASE_REF:-}
+  [ -n "$ref" ] || ref=origin/$(ccm_base_branch local)
+  if git cat-file -e "$ref:.claude/ccmagic.local.md" 2>/dev/null; then printf '%s' "$ref"; fi
+}
+
+# Where the project config is read from: "working-tree" when the file is in
+# the checkout, else the base branch's copy (ccm_config_base_ref), else empty
+# (no project config). An old checkout, such as a worktree reused from before
+# the file was committed, must not fall back to the built-in defaults while
+# the base branch has settings (cclens CCL-20: merge_owner: reeve was read as
+# self). CCM_CONFIG_REF names a ref read ahead of the checkout: ccm-context
+# --config-ref sets it when auto-ticket could not merge the base into the
+# branch, so the checkout's copy may be stale. Reads local refs only.
+ccm_project_config_source() {
+  local root project
+  root=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
+  project=${CCM_PROJECT_CONFIG:-$root/.claude/ccmagic.local.md}
+  if [ -n "${CCM_CONFIG_REF:-}" ] && git cat-file -e "$CCM_CONFIG_REF:.claude/ccmagic.local.md" 2>/dev/null; then
+    printf '%s' "$CCM_CONFIG_REF"
+    return
+  fi
+  if [ -f "$project" ]; then
+    printf 'working-tree'
+    return
+  fi
+  ccm_config_base_ref
+}
+
+# The keys that decide who merges. Whenever the base branch's copy of the
+# project config exists, they come from it (over the user file and the
+# defaults), never from the checkout or CCM_CONFIG_REF: a branch, or a work
+# step steered by ticket text, could otherwise set merge_owner: self and merge
+# past an external gate. Every other key keeps the checkout's precedence, so a
+# branch can still change validate commands or loop limits it is judged by in
+# review.
+# shellcheck disable=SC2034 # used by ccm_config_json below
+CCM_BASE_ONLY_KEYS='["merge_owner", "merge_handoff_state"]'
+
+# Print the resolved config as JSON: defaults < user file < project file, with
+# CCM_BASE_ONLY_KEYS from the base branch's copy when it exists.
 # CCM_USER_CONFIG and CCM_PROJECT_CONFIG override the paths (used by tests).
 ccm_config_json() {
-  local root project user
+  local root project user src pj baseref bj='{}'
   root=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
   project=${CCM_PROJECT_CONFIG:-$root/.claude/ccmagic.local.md}
   user=${CCM_USER_CONFIG:-$HOME/.claude/ccmagic.local.md}
+  src=$(ccm_project_config_source)
+  case $src in
+    '') pj='{}' ;;
+    working-tree) pj=$(ccm_frontmatter_json "$project") ;;
+    *) pj=$(git show "$src:.claude/ccmagic.local.md" 2>/dev/null | ccm_frontmatter_json -) ;;
+  esac
+  baseref=$(ccm_config_base_ref)
+  if [ -n "$baseref" ]; then
+    if [ "$baseref" = "$src" ]; then bj=$pj; else bj=$(git show "$baseref:.claude/ccmagic.local.md" 2>/dev/null | ccm_frontmatter_json -); fi
+  fi
   jq -n \
     --argjson d "$CCM_CONFIG_DEFAULTS" \
     --argjson u "$(ccm_frontmatter_json "$user")" \
-    --argjson p "$(ccm_frontmatter_json "$project")" \
-    '$d + $u + $p'
+    --argjson p "$pj" \
+    --argjson b "$bj" \
+    --arg has_base "$baseref" \
+    --argjson keys "$CCM_BASE_ONLY_KEYS" \
+    '($d + $u + $p) as $all
+     | if $has_base == "" then $all
+       else ($d + $u + $b) as $base | reduce $keys[] as $k ($all; .[$k] = $base[$k]) end'
 }
 
 # Read one resolved config value.

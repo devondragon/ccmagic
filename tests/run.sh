@@ -192,6 +192,32 @@ context_draft_until_finish_default_off() {
   check "$(jqval .config.draft_until_finish)" "true"
 }
 
+# Base sync (cclens CCL-20, CCL-39): auto-ticket syncs before config, resolves a
+# conflict at the CI wait, and every park it decides is a step in the record.
+# shellcheck disable=SC2016 # literal backticks in the markdown being matched
+skills_auto_ticket_base_sync_wired() {
+  local s=$ROOT/skills/auto-ticket/SKILL.md c=$ROOT/skills/auto-ticket/autonomous-contract.md
+  local b=$ROOT/skills/auto-ticket/base-sync.md missing=
+  # Step 0 runs the sync before the ccm-context call.
+  [ "$(grep -n 'bin/ccm-base-sync" sync --push`' "$s" | head -1 | cut -d: -f1)" -lt "$(grep -n 'bin/ccm-context" {TICKET-ID}' "$s" | head -1 | cut -d: -f1)" ] || missing+=" step0-order"
+  grep -qF -- '--config-ref {base_ref}' "$s" || missing+=" config-ref"
+  grep -qF '## Step 0b: Merge conflict with the base' "$s" || missing+=" step0b"
+  grep -qF 'follow *Conflict at the CI wait*' "$s" || missing+=" ci-wait"
+  grep -qF 'A park this skill decides is a step in the record.' "$s" || missing+=" park-entry"
+  grep -qF '### The step that parked the run' "$c" || missing+=" contract-table"
+  grep -qF '| `ci-wait` |' "$c" || missing+=" contract-ci-wait"
+  grep -qF 'fix_source: {review | validate | visual | conflict' "$c" || missing+=" contract-fix-source"
+  for m in 'base-sync" begin' 'base-sync" conclude' 'base-sync" abort' 'base-sync" sync --base {BASE_BRANCH}`' 'base-sync" push'; do
+    grep -qF "$m" "$b" || missing+=" [$m]"
+  done
+  grep -qF 'base-conflict.md' "$ROOT/skills/work-ticket/SKILL.md" || missing+=" work-ticket"
+  grep -qF 'fix_source: conflict' "$ROOT/agents/auto-work.md" || missing+=" auto-work"
+  grep -qF '"Bash(ccm-base-sync *)"' "$ROOT/docs/cyrus-deployment.md" || missing+=" cyrus-deployment"
+  # The CI wait's entry is shown in the contract, the skill, and base-sync.md.
+  for f in "$c" "$s" "$b"; do grep -qF '{"step": "ci-wait", "status": "needs-human"' "$f" || missing+=" ci-wait-entry:${f##*/}"; done
+  check "${missing# }" ""
+}
+
 # draft_until_finish (RV-106): the PR opens as a draft and only finish marks it ready.
 # shellcheck disable=SC2016 # literal backticks in the markdown being matched
 skills_draft_until_finish_wired() {
@@ -208,6 +234,398 @@ skills_draft_until_finish_wired() {
 context_no_ticket_on_main() {
   run "$BIN/ccm-context" --offline
   check "$(jqval .ticket_id),$(jqval .branch)" "null,main"
+}
+
+# Project config from the base when the checkout has none (cclens CCL-20).
+context_config_from_base_when_checkout_has_none() {
+  bs_origin
+  upstream_commit .claude/ccmagic.local.md $'---\nmerge_owner: reeve\nmax_feedback_passes: 7\n---\n' "chore: ccmagic config"
+  git fetch -q origin
+  run "$BIN/ccm-context" --offline
+  check "$(jqval .config.merge_owner),$(jqval .config.max_feedback_passes),$(jqval .project_config)" "reeve,7,origin/main"
+  # A checkout with its own copy reads that copy, except for who merges.
+  config $'merge_owner: self\nmax_feedback_passes: 4'
+  run "$BIN/ccm-context" --offline
+  check "$(jqval .config.merge_owner),$(jqval .config.max_feedback_passes),$(jqval .project_config)" "reeve,4,working-tree"
+  # --config-ref reads the ref ahead of the checkout's copy.
+  run "$BIN/ccm-context" --offline --config-ref origin/main
+  check "$(jqval .config.max_feedback_passes),$(jqval .project_config)" "7,origin/main"
+  # A --config-ref without the file falls through to the checkout, then the base.
+  rm -f .claude/ccmagic.local.md
+  run "$BIN/ccm-context" --offline --config-ref origin/nope
+  check "$(jqval .config.merge_owner),$(jqval .project_config)" "reeve,origin/main"
+}
+
+context_no_project_config_anywhere() {
+  run "$BIN/ccm-context" --offline
+  check "$(jqval .config.merge_owner),$(jqval .project_config)" "self,null"
+}
+
+# The PreToolUse guard reads the same config, so a merge under the base's
+# merge_owner: reeve is refused even from an old checkout.
+guard_reads_merge_owner_from_base() {
+  bs_origin
+  upstream_commit .claude/ccmagic.local.md $'---\nmerge_owner: reeve\nautonomous: true\n---\n' "chore: ccmagic config"
+  git fetch -q origin
+  hook 'gh pr merge 7 --squash'
+  check "$(denied)" "deny"
+  [[ $(jq -r .hookSpecificOutput.permissionDecisionReason <<<"$OUT") == *"merge_owner is reeve"* ]]
+}
+
+# ---- ccm-base-sync -----------------------------------------------------------
+
+# bs_origin: a bare origin holding main, and committer identity for the merges.
+bs_origin() {
+  export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
+  git init -q --bare "$T/origin.git"
+  git remote add origin "$T/origin.git"
+  git push -q origin main
+  git fetch -q origin
+}
+
+# upstream_commit PATH CONTENT MSG: commit PATH on origin's main from another clone.
+upstream_commit() {
+  [ -d "$T/up" ] || git clone -q "$T/origin.git" "$T/up"
+  (cd "$T/up" && git pull -q origin main && mkdir -p "$(dirname "$1")" && printf '%s' "$2" >"$1" &&
+    git add -A && git commit -qm "$3" && git push -q origin HEAD:main)
+}
+
+# local_commit PATH CONTENT MSG: commit on the current branch.
+local_commit() {
+  mkdir -p "$(dirname "$1")"
+  printf '%s' "$2" >"$1"
+  git add -A && git commit -qm "$3"
+}
+
+bs() { run "$BIN/ccm-base-sync" "$@"; }
+
+basesync_not_applicable_without_origin() {
+  bs sync --base main
+  check "$(jqval .status),$RC,$(jqval .reason)" "not-applicable,0,no origin remote"
+  bs_origin
+  git checkout -q --detach
+  bs sync --base main
+  check "$(jqval .status),$RC" "not-applicable,0"
+}
+
+basesync_up_to_date() {
+  bs_origin
+  git checkout -q -b feature/ENG-1-x
+  local_commit a.txt a "feat: a"
+  bs sync --base main
+  check "$(jqval .status),$RC,$(jqval .behind),$(jqval .head)" "up-to-date,0,0,$(git rev-parse HEAD)"
+}
+
+# CCL-20: a reused checkout from before the config commit fast-forwards to it.
+basesync_fast_forwards_a_stale_checkout() {
+  bs_origin
+  git checkout -q -b feature/CCL-20-x
+  upstream_commit .claude/ccmagic.local.md $'---\nmerge_owner: reeve\n---\n' "chore: ccmagic config"
+  bs sync --base main
+  check "$(jqval .status),$RC,$(jqval .fast_forward),$(jqval .behind),$(jqval .pushed)" "merged,0,true,1,false"
+  check "$(git rev-parse HEAD)" "$(git rev-parse origin/main)"
+  run "$BIN/ccm-context" --offline
+  check "$(jqval .config.merge_owner),$(jqval .project_config)" "reeve,working-tree"
+}
+
+# CCL-39: a branch with its own commits, two behind main, gets a merge commit.
+basesync_merges_a_branch_behind_its_base() {
+  bs_origin
+  git checkout -q -b feature/CCL-39-x
+  local_commit a.txt a "feat: a"
+  local mine
+  mine=$(git rev-parse HEAD)
+  upstream_commit b.txt b "feat: b"
+  upstream_commit c.txt c "feat: c"
+  bs sync --base main
+  check "$(jqval .status),$RC,$(jqval .fast_forward),$(jqval .behind),$(jqval .head_before)" "merged,0,false,2,$mine"
+  check "$(git rev-parse HEAD^1),$(git rev-parse HEAD^2)" "$mine,$(git rev-parse origin/main)"
+  check "$(git log -1 --format=%s)" "Merge origin/main into feature/CCL-39-x"
+  # Not pushed without --push.
+  check "$(git ls-remote origin refs/heads/feature/CCL-39-x | wc -l | tr -d ' ')" "0"
+}
+
+basesync_push_pushes_the_merge() {
+  bs_origin
+  git checkout -q -b feature/ENG-2-x
+  local_commit a.txt a "feat: a"
+  git push -q origin HEAD:refs/heads/feature/ENG-2-x
+  upstream_commit b.txt b "feat: b"
+  bs sync --base main --push
+  check "$(jqval .status),$RC,$(jqval .pushed)" "merged,0,true"
+  check "$(git ls-remote origin refs/heads/feature/ENG-2-x | cut -f1)" "$(git rev-parse HEAD)"
+  bs push
+  check "$(jqval .status),$RC,$(jqval .pushed)" "up-to-date,0,false"
+}
+
+basesync_push_never_forces() {
+  bs_origin
+  git checkout -q -b feature/ENG-3-x
+  local_commit a.txt a "feat: a"
+  git push -q origin HEAD:refs/heads/feature/ENG-3-x
+  git reset -q --hard HEAD~1
+  local_commit z.txt z "feat: z"
+  bs push
+  check "$(jqval .status),$RC,$(jqval .pushed)" "push-failed,2,false"
+}
+
+# conflict_setup: feature/ENG-4-x and origin/main both change a.txt.
+conflict_setup() {
+  bs_origin
+  upstream_commit a.txt base0 "feat: a"
+  git pull -q origin main
+  git checkout -q -b feature/ENG-4-x
+  local_commit a.txt mine "feat: mine"
+  upstream_commit a.txt theirs "feat: theirs"
+}
+
+basesync_sync_aborts_a_conflicting_merge() {
+  conflict_setup
+  local before
+  before=$(git rev-parse HEAD)
+  bs sync --base main
+  check "$(jqval .status),$RC,$(jq -c .conflicts <<<"$OUT")" 'conflicting,1,["a.txt"]'
+  check "$(git rev-parse HEAD),$(git status --porcelain),$(cat a.txt)" "$before,,mine"
+  [ ! -e .git/MERGE_HEAD ]
+  [[ $(jqval .reason) == *"conflicts in a.txt"* ]]
+}
+
+basesync_begin_resolve_conclude() {
+  conflict_setup
+  local before
+  before=$(git rev-parse HEAD)
+  bs begin --base main
+  check "$(jqval .status),$RC,$(jq -c .conflicts <<<"$OUT")" 'conflicting,0,["a.txt"]'
+  [ -e .git/MERGE_HEAD ]
+  grep -q '^<<<<<<< ' a.txt
+  # Markers left: unresolved, nothing committed.
+  bs conclude
+  check "$(jqval .status),$RC,$(git rev-parse HEAD)" "unresolved,1,$before"
+  # A new file is refused.
+  printf 'resolved' >a.txt
+  printf 'new' >extra.txt
+  bs conclude
+  check "$(jqval .status),$RC" "error,2"
+  [[ $(jqval .reason) == *"extra.txt"* ]]
+  rm -f extra.txt
+  bs conclude
+  check "$(jqval .status),$RC,$(cat a.txt)" "merged,0,resolved"
+  check "$(git rev-parse HEAD^1),$(git rev-parse HEAD^2)" "$before,$(git rev-parse origin/main)"
+  [ ! -e .git/MERGE_HEAD ]
+  [ -z "$(git status --porcelain)" ]
+}
+
+basesync_conclude_refuses_a_merge_it_did_not_begin() {
+  conflict_setup
+  bs conclude
+  check "$(jqval .status),$RC" "error,2"
+  git fetch -q origin && { git merge -q origin/main >/dev/null 2>&1 || true; }
+  [ -e .git/MERGE_HEAD ]
+  bs conclude
+  check "$(jqval .status),$RC" "error,2"
+  [[ $(jqval .reason) == *"no record"* ]]
+}
+
+basesync_abort_restores_the_tree() {
+  conflict_setup
+  local before
+  before=$(git rev-parse HEAD)
+  bs begin --base main
+  bs abort
+  check "$(jqval .status),$RC,$(git rev-parse HEAD),$(cat a.txt)" "aborted,0,$before,mine"
+  [ ! -e .git/MERGE_HEAD ]
+  bs abort
+  check "$(jqval .status),$RC" "not-applicable,0"
+}
+
+basesync_leaves_a_dirty_tree_alone() {
+  conflict_setup
+  printf 'wip' >a.txt
+  bs sync --base main
+  check "$(jqval .status),$RC,$(cat a.txt)" "dirty,2,wip"
+}
+
+# Review finding 1, the reviewer's repro: the fix pass edited the conflicted
+# file, a file the merge changed cleanly, a file the merge did not touch, and
+# added one. abort puts all of it back to the HEAD begin recorded.
+abort_setup() {
+  bs_origin
+  printf 'a\n' >conf.txt; printf '1\n2\n3\n' >clean.txt; printf 'x\n' >other.txt
+  git add -A && git commit -qm "chore: files" && git push -q origin main
+  git checkout -q -b feat
+  printf 'feat\n' >conf.txt && git commit -qam "feat: feat"
+  git checkout -q main
+  printf 'main\n' >conf.txt; printf '1\n2\n3\n4\n' >clean.txt
+  git commit -qam "feat: m2" && git push -q origin main
+  git checkout -q feat
+}
+
+basesync_abort_undoes_any_fix_pass_edit() {
+  abort_setup
+  printf 'old untracked' >keep.txt
+  local before
+  before=$(git rev-parse HEAD)
+  bs begin --base main
+  check "$(jqval .status),$(jq -c .conflicts <<<"$OUT")" 'conflicting,["conf.txt"]'
+  printf 'resolved\n' >conf.txt; printf 'z\n' >>clean.txt; printf 'y\n' >other.txt; printf 'new' >added.txt
+  bs abort
+  check "$(jqval .status),$RC,$(git rev-parse HEAD)" "aborted,0,$before"
+  [ ! -e .git/MERGE_HEAD ]
+  check "$(git status --porcelain --untracked-files=no)" ""
+  check "$(cat conf.txt),$(cat other.txt),$(cat keep.txt)" "feat,x,old untracked"
+  [ ! -e added.txt ]
+}
+
+basesync_abort_leaves_a_foreign_merge_alone() {
+  abort_setup
+  git merge -q origin/main >/dev/null 2>&1 || true
+  [ -e .git/MERGE_HEAD ]
+  bs abort
+  check "$(jqval .status),$RC" "error,2"
+  [ -e .git/MERGE_HEAD ]
+}
+
+# Review finding 2: a later sync never goes on over a merge in progress. One
+# an earlier begin left is undone first; any other is in-progress.
+basesync_sync_recovers_a_merge_begin_left() {
+  abort_setup
+  bs begin --base main
+  printf 'half\n' >other.txt
+  bs sync --base main
+  check "$(jqval .status),$RC,$(jqval .recovered)" "conflicting,1,true"
+  [ ! -e .git/MERGE_HEAD ]
+  check "$(git status --porcelain --untracked-files=no),$(cat other.txt)" ",x"
+}
+
+basesync_sync_stops_on_a_foreign_merge() {
+  abort_setup
+  git merge -q origin/main >/dev/null 2>&1 || true
+  bs sync --base main
+  check "$(jqval .status),$RC" "in-progress,2"
+  [[ $(jqval .reason) == *"MERGE_HEAD"* ]]
+  bs begin --base main
+  check "$(jqval .status),$RC" "in-progress,2"
+}
+
+# Review finding 5b: a binary conflict has no markers, so it is unresolved
+# until its content changes.
+basesync_conclude_binary_conflict() {
+  bs_origin
+  printf '\000a' >b.bin && git add b.bin && git commit -qm "chore: bin" && git push -q origin main
+  git checkout -q -b feat
+  printf '\000mine' >b.bin && git commit -qam "feat: mine"
+  upstream_commit b.bin $'\001theirs' "feat: theirs"
+  bs begin --base main
+  check "$(jqval .status),$(jq -c .conflicts <<<"$OUT")" 'conflicting,["b.bin"]'
+  bs conclude
+  check "$(jqval .status),$RC" "unresolved,1"
+  printf '\000both' >b.bin
+  bs conclude
+  check "$(jqval .status),$RC" "merged,0"
+}
+
+# Review finding 5c: an ignored file the fix pass leaves (a build output)
+# does not count as an added file.
+basesync_conclude_ignores_ignored_files() {
+  conflict_setup
+  printf 'out/\n' >.gitignore && git add .gitignore && git commit -qm "chore: ignore"
+  bs begin --base main
+  printf 'resolved' >a.txt
+  mkdir -p out && printf 'x' >out/build.log
+  bs conclude
+  check "$(jqval .status),$RC" "merged,0"
+}
+
+# Review finding 4: --push pushes a merge an earlier call left unpushed, and
+# never creates a branch origin does not have.
+basesync_push_on_up_to_date_and_never_creates() {
+  bs_origin
+  git checkout -q -b feature/ENG-7-x
+  local_commit a.txt a "feat: a"
+  git push -q origin HEAD:refs/heads/feature/ENG-7-x
+  upstream_commit b.txt b "feat: b"
+  bs sync --base main
+  check "$(jqval .status),$(jqval .pushed)" "merged,false"
+  bs sync --base main --push
+  check "$(jqval .status),$RC,$(jqval .pushed)" "up-to-date,0,true"
+  check "$(git ls-remote origin refs/heads/feature/ENG-7-x | cut -f1)" "$(git rev-parse HEAD)"
+  git checkout -q -b feature/ENG-8-x
+  upstream_commit c.txt c "feat: c"
+  bs sync --base main --push
+  check "$(jqval .status),$RC,$(jqval .pushed)" "merged,0,false"
+  [[ $(jqval .reason) == *"origin has no branch feature/ENG-8-x"* ]]
+  bs push
+  check "$(jqval .status),$RC" "no-remote-branch,0"
+  check "$(git ls-remote origin refs/heads/feature/ENG-8-x | wc -l | tr -d ' ')" "0"
+}
+
+# Review finding 5d: one base-branch resolver. Without gh, origin/HEAD wins
+# over a local develop in both scripts.
+basesync_and_context_agree_on_the_base() {
+  bs_origin
+  git remote set-head origin main
+  git branch develop
+  git checkout -q -b feature/ENG-9-x
+  CCM_OFFLINE=1 run "$BIN/ccm-base-sync" sync
+  check "$(jqval .base)" "main"
+  run "$BIN/ccm-context" --offline
+  check "$(jqval .base_branch)" "main"
+}
+
+# Review finding 3: the branch's own copy cannot change who merges.
+guard_branch_cannot_override_base_merge_owner() {
+  bs_origin
+  upstream_commit .claude/ccmagic.local.md $'---\nmerge_owner: reeve\nmerge_handoff_state: Awaiting Merge\nmax_feedback_passes: 3\n---\n' "chore: ccmagic config"
+  git pull -q origin main
+  git checkout -q -b feature/ENG-10-x
+  config $'merge_owner: self\nmerge_handoff_state: Done\nmax_feedback_passes: 5'
+  hook 'gh pr merge 7 --squash' ccmagic:auto-finish
+  check "$(denied)" "deny"
+  [[ $(jq -r .hookSpecificOutput.permissionDecisionReason <<<"$OUT") == *"merge_owner is reeve"* ]]
+  run "$BIN/ccm-context" --offline
+  check "$(jqval .config.merge_owner),$(jqval .config.merge_handoff_state),$(jqval .config.max_feedback_passes)" "reeve,Awaiting Merge,5"
+  # With no base copy, the checkout's copy still decides.
+  git update-ref -d refs/remotes/origin/main
+  run "$BIN/ccm-context" --offline
+  check "$(jqval .config.merge_owner)" "self"
+}
+
+basesync_fetch_failure() {
+  bs_origin
+  git checkout -q -b feature/ENG-5-x
+  bs sync --base nosuch
+  check "$(jqval .status),$RC" "fetch-failed,2"
+}
+
+basesync_base_from_the_pr_then_default() {
+  bs_origin
+  git checkout -q -b feature/ENG-6-x
+  fx pr-view '{"baseRefName":"main"}'
+  bs sync
+  check "$(jqval .base),$(jqval .status)" "main,up-to-date"
+  fx_err pr-view 'no pull requests found' 1
+  bs sync
+  check "$(jqval .base),$(jqval .status)" "main,up-to-date"
+}
+
+basesync_on_the_base_branch_fast_forwards_only() {
+  bs_origin
+  upstream_commit b.txt b "feat: b"
+  bs sync --base main
+  check "$(jqval .status),$(jqval .fast_forward),$(git rev-parse HEAD)" "merged,true,$(git rev-parse origin/main)"
+  local_commit c.txt c "feat: c"
+  upstream_commit d.txt d "feat: d"
+  bs sync --base main
+  check "$(jqval .status),$RC" "error,2"
+}
+
+basesync_usage() {
+  OUT=$("$BIN/ccm-base-sync" 2>/dev/null) && RC=0 || RC=$?
+  check "$RC" "4"
+  OUT=$("$BIN/ccm-base-sync" begin --push 2>/dev/null) && RC=0 || RC=$?
+  check "$RC" "4"
+  OUT=$("$BIN/ccm-base-sync" frob 2>/dev/null) && RC=0 || RC=$?
+  check "$RC" "4"
 }
 
 # ---- ccm-ci-status ---------------------------------------------------------
@@ -1245,7 +1663,7 @@ stop_orchestrator_doing_the_work_sent_back() {
   check "$RC,$(blocked)" "0,block"
   local r
   r=$(jq -r .reason <<<"$OUT")
-  [[ $r == *"Continue from Step 0"* && $r == *"Do not redo"* && $r == *"Edit"* && $r == *"gh pr create"* && $r == *"without running any step agent"* ]]
+  [[ $r == *"Continue from Step 0"* && $r == *"ccm-base-sync sync --push"* && $r == *"Step 0b"* && $r == *"Do not redo"* && $r == *"Edit"* && $r == *"gh pr create"* && $r == *"without running any step agent"* ]]
   [[ $r != *"Route-and-stop"* ]]
 }
 
@@ -1369,7 +1787,7 @@ stop_orchestrator_malformed_input_passes() {
 skills_auto_ticket_orchestrator_guard() {
   local s f=$ROOT/skills/auto-ticket/SKILL.md missing=
   # shellcheck disable=SC2016 # literal backticks and ${...} from the skill text
-  for s in 'You are the orchestrator, never the implementer.' 'Your first tool call is `Read` of `${CLAUDE_SKILL_DIR}/autonomous-contract.md`, then the `ccm-context` call, then Step 0.' 'A trivial or one-line ticket changes nothing' 'or run `git commit`, `git push`, or `gh pr create` yourself, stop and go to Step 0'; do
+  for s in 'You are the orchestrator, never the implementer.' 'Your first tool call is `Read` of `${CLAUDE_SKILL_DIR}/autonomous-contract.md`, then the `ccm-base-sync` call and the `ccm-context` call, then Step 0.' 'A trivial or one-line ticket changes nothing' 'or run `git commit`, `git push`, or `gh pr create` yourself, stop and go to Step 0'; do
     grep -qF "$s" "$f" || missing+=" [$s]"
   done
   # The guard sits before the lifecycle overview.
@@ -4609,6 +5027,21 @@ finish_guard_fails_change_after_validate() {
   check "$(jqval .status),$RC" "pass,0"
 }
 
+# A base-sync entry (the orchestrator's merge of the base) changes code,
+# so a validate must follow it, as one must follow a conflict fix pass (a
+# work-ticket entry). One before the latest validate is fine.
+finish_guard_base_sync_entries() {
+  run_finish_guard '[{"step": "base-sync", "status": "done", "reason": "merged origin/main at abc1234 into feature/x (2 commits behind)"}, {"step": "work-ticket", "status": "done"}, {"step": "review-ticket", "status": "clean"}, {"step": "validate", "status": "done"}, {"step": "base-sync", "status": "done", "reason": "merged origin/main at def5678: the PR conflicted with its base"}, {"step": "review-ticket", "status": "clean"}]'
+  check "$(jqval .rule),$RC" "changed-after-validate,1"
+  [[ $(jqval .detail) == *"a base-sync step ran after the latest validate"* ]]
+  run_finish_guard '[{"step": "base-sync", "status": "done"}, {"step": "work-ticket", "status": "done"}, {"step": "review-ticket", "status": "clean"}, {"step": "validate", "status": "done"}, {"step": "base-sync", "status": "done"}, {"step": "validate", "status": "done"}, {"step": "review-ticket", "status": "clean"}]'
+  check "$(jqval .status),$RC" "pass,0"
+  run_finish_guard '[{"step": "work-ticket", "status": "done"}, {"step": "review-ticket", "status": "clean"}, {"step": "validate", "status": "done"}, {"step": "work-ticket", "status": "done", "reason": "fix pass 1 (conflict): applied 1 items"}, {"step": "base-sync", "status": "done"}, {"step": "review-ticket", "status": "clean"}]'
+  check "$(jqval .rule),$RC" "changed-after-validate,1"
+  run_finish_guard '[{"step": "work-ticket", "status": "done"}, {"step": "review-ticket", "status": "clean"}, {"step": "validate", "status": "done"}, {"step": "work-ticket", "status": "done", "reason": "fix pass 1 (conflict): applied 1 items"}, {"step": "base-sync", "status": "done"}, {"step": "validate", "status": "done"}, {"step": "review-ticket", "status": "clean"}]'
+  check "$(jqval .status),$RC" "pass,0"
+}
+
 finish_guard_fails_closed_on_unreadable_steps() {
   run_finish_guard 'AUTONOMOUS RUN CONTEXT
 autonomous: true'
@@ -4715,7 +5148,8 @@ ADDED_AGENTS_SINCE_BASELINE=(agents/auto-visual.md)
 # there to keep SKILL.md under 500 lines) and acceptance.md the acceptance-test
 # rules (issue 111); review-guidance.md holds REVIEW.md and pre-existing findings
 # (issue 109).
-ADDED_SKILL_FILES_SINCE_BASELINE=(skills/work-ticket/spec-delta.md skills/work-ticket/acceptance.md skills/review/review-guidance.md)
+ADDED_SKILL_FILES_SINCE_BASELINE=(skills/work-ticket/spec-delta.md skills/work-ticket/acceptance.md skills/review/review-guidance.md
+  skills/auto-ticket/base-sync.md skills/work-ticket/base-conflict.md)
 
 spec_prompt_files() {
   { git -C "$ROOT" ls-tree -r --name-only "$SPEC_BASELINE" -- skills agents
@@ -4797,6 +5231,8 @@ skills_auto_ticket_follow_up_dedupe() {
 # force-push message also changed (one line): it now says
 # `git pull --rebase origin <branch>`, because branches in sandboxed sessions
 # have no upstream (ccmagic 3.18.3 fixed the same assumption in ccm-pr-reply).
+# The orchestrator's send-back message also changed (one line): it names
+# Step 0 item 0's ccm-base-sync call and Step 0b (ccmagic 3.30.0).
 skills_hooks_only_accept_tasks_done() {
   local changed
   changed=$(git -C "$ROOT" diff "$SPEC_BASELINE" -- hooks ':(exclude)hooks/hooks.json' ':(exclude)hooks/pre-tool-use-finish-guard.sh' |
@@ -4823,7 +5259,9 @@ skills_hooks_only_accept_tasks_done() {
 -      deny \"ccmagic: autonomous runs never force-push (target: \${target:-unknown}). If the branch has diverged, rebase onto the remote (git pull --rebase) and push normally; if that conflicts, return needs-human.\"
 +      deny \"ccmagic: autonomous runs never force-push (target: \${target:-unknown}). If the branch has diverged, rebase onto the remote (git pull --rebase origin \${target:-<branch>}) and push normally; if that conflicts, return needs-human.\"
 -  ccmagic:auto-work|ccmagic:auto-feedback|ccmagic:auto-validate|ccmagic:auto-finish|ccmagic:auto-push) allowed=\"done needs-human\" ;;
-+  ccmagic:auto-work|ccmagic:auto-feedback|ccmagic:auto-validate|ccmagic:auto-finish|ccmagic:auto-push|ccmagic:auto-visual) allowed=\"done needs-human\" ;;"
++  ccmagic:auto-work|ccmagic:auto-feedback|ccmagic:auto-validate|ccmagic:auto-finish|ccmagic:auto-push|ccmagic:auto-visual) allowed=\"done needs-human\" ;;
+-  r=\"\$lead Continue from Step 0: read autonomous-contract.md, run ccm-context, then run Steps 1 to 6 through run_step. If the work step finds the change already made and the PR open, that is its done. \$end_rule\"
++  r=\"\$lead Continue from Step 0: read autonomous-contract.md, run ccm-base-sync sync --push (Step 0 item 0), then ccm-context, then Step 0b when the sync returned conflicting, then Steps 1 to 6 through run_step. If the work step finds the change already made and the PR open, that is its done. \$end_rule\""
   git -C "$ROOT" show "$SPEC_BASELINE:hooks/hooks.json" | jq -S . >"$T/hooks-base"
   jq -S 'del(.hooks.PreToolUse[] | select(.matcher == "Agent|Task" and .hooks == [{type: "command",
     command: "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/pre-tool-use-finish-guard.sh\"", timeout: 10}]))' \
@@ -7092,7 +7530,7 @@ harness_docker_env_passes_proxy_not_secrets() {
 MIRRORS=$(mktemp -d)
 trap 'rm -rf "$MIRRORS"' EXIT
 
-for fn in $(declare -F | awk '{print $3}' | grep -E '^(context|ci|merge_gate|guard|post|postreview|stop|threads|reply|validate|route|guide|doctor|extreview|skills|spec_block|scope|finish|baseline|propose|specpolish|specdelta|openspecver|harness|followup|acceptance)_'); do
+for fn in $(declare -F | awk '{print $3}' | grep -E '^(context|ci|merge_gate|guard|post|postreview|stop|threads|reply|validate|route|guide|doctor|extreview|skills|spec_block|scope|finish|baseline|propose|specpolish|specdelta|openspecver|harness|followup|acceptance|basesync)_'); do
   t "$fn" "$fn"
 done
 

@@ -18,8 +18,11 @@
 #     feedback pass, and only a `done` lets the run go on);
 #   - a review-ticket entry, and the latest one is `clean` (Step 5 is reached
 #     only from a clean review of the PR head);
-#   - no work-ticket or pr-feedback entry after the latest validate: those
-#     steps change code, and every change is validated before the run ends.
+#   - no work-ticket, pr-feedback, or base-sync entry after the latest
+#     validate: those steps change code (base-sync is the orchestrator's merge
+#     of the base, made with ccm-base-sync), and every change is validated
+#     before the run ends. A conflict fix pass is a work-ticket entry like any
+#     fix pass. The needs-human entries of a park never reach this guard.
 # The first rule that fails is reported. A missing, empty, or malformed step
 # list fails as `steps-unreadable`, so the guard never passes on input it
 # could not read.
@@ -36,7 +39,7 @@ set -euo pipefail
 
 for a in "$@"; do
   case $a in
-    -h|--help) sed -n '2,33p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,36p' "$0"; exit 0 ;;
     *) echo "ccm-finish-guard: unexpected argument $a" >&2; exit 4 ;;
   esac
 done
@@ -87,7 +90,7 @@ r=$(latest review-ticket)
   fail review-not-clean review-ticket "the latest review-ticket step returned $(describe "$r"), not clean"
 
 after=$(jq -r --argjson i "$(jq .key <<<"$v")" '[.[] | select(.step != "finish-ticket")] | .[($i + 1):]
-  | map(select(.step == "work-ticket" or .step == "pr-feedback")) | first | .step // empty' <<<"$steps")
+  | map(select(.step == "work-ticket" or .step == "pr-feedback" or .step == "base-sync")) | first | .step // empty' <<<"$steps")
 [ -z "$after" ] ||
   fail changed-after-validate validate "a $after step ran after the latest validate step, so its changes were not validated"
 
