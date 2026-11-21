@@ -84,7 +84,7 @@ end_rule="End the run the way Step 6 says: the run summary, and under the prompt
 if [ "$state" = merged ]; then
   r="$lead The PR is already merged, so do not rerun any step. Route-and-stop now (contract §4) with stage finish-ticket, skipping its step 1 since the PR is already merged, and reason: the orchestrator merged the PR itself without the work, review, validate, or finish steps, so the merged change was not reviewed. Post the parked note with its run record (outcome parked). $end_rule"
 else
-  r="$lead Continue from Step 0: read autonomous-contract.md, run ccm-context, then run Steps 1 to 6 through run_step. If the work step finds the change already made and the PR open, that is its done. $end_rule"
+  r="$lead Continue from Step 0: read autonomous-contract.md, run ccm-base-sync sync --push (Step 0 item 0), then ccm-context, then Step 0b when the sync returned conflicting, then Steps 1 to 6 through run_step. If the work step finds the change already made and the PR open, that is its done. $end_rule"
 fi
 jq -n --arg r "$r" '{decision: "block", reason: $r}' 2>/dev/null
 exit 0
