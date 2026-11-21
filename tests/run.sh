@@ -199,7 +199,7 @@ skills_auto_ticket_base_sync_wired() {
   local s=$ROOT/skills/auto-ticket/SKILL.md c=$ROOT/skills/auto-ticket/autonomous-contract.md
   local b=$ROOT/skills/auto-ticket/base-sync.md missing=
   # Step 0 runs the sync before the ccm-context call.
-  [ "$(grep -n 'bin/ccm-base-sync" sync`' "$s" | head -1 | cut -d: -f1)" -lt "$(grep -n 'bin/ccm-context" {TICKET-ID}' "$s" | head -1 | cut -d: -f1)" ] || missing+=" step0-order"
+  [ "$(grep -n 'bin/ccm-base-sync" sync --push`' "$s" | head -1 | cut -d: -f1)" -lt "$(grep -n 'bin/ccm-context" {TICKET-ID}' "$s" | head -1 | cut -d: -f1)" ] || missing+=" step0-order"
   grep -qF -- '--config-ref {base_ref}' "$s" || missing+=" config-ref"
   grep -qF '## Step 0b: Merge conflict with the base' "$s" || missing+=" step0b"
   grep -qF 'follow *Conflict at the CI wait*' "$s" || missing+=" ci-wait"
@@ -207,7 +207,7 @@ skills_auto_ticket_base_sync_wired() {
   grep -qF '### The step that parked the run' "$c" || missing+=" contract-table"
   grep -qF '| `ci-wait` |' "$c" || missing+=" contract-ci-wait"
   grep -qF 'fix_source: {review | validate | visual | conflict' "$c" || missing+=" contract-fix-source"
-  for m in 'base-sync" begin' 'base-sync" conclude' 'base-sync" abort' 'base-sync" sync --base {BASE_BRANCH} --push' 'base-sync" push'; do
+  for m in 'base-sync" begin' 'base-sync" conclude' 'base-sync" abort' 'base-sync" sync --base {BASE_BRANCH}`' 'base-sync" push'; do
     grep -qF "$m" "$b" || missing+=" [$m]"
   done
   grep -qF 'base-conflict.md' "$ROOT/skills/work-ticket/SKILL.md" || missing+=" work-ticket"
@@ -1663,7 +1663,7 @@ stop_orchestrator_doing_the_work_sent_back() {
   check "$RC,$(blocked)" "0,block"
   local r
   r=$(jq -r .reason <<<"$OUT")
-  [[ $r == *"Continue from Step 0"* && $r == *"Do not redo"* && $r == *"Edit"* && $r == *"gh pr create"* && $r == *"without running any step agent"* ]]
+  [[ $r == *"Continue from Step 0"* && $r == *"ccm-base-sync sync --push"* && $r == *"Step 0b"* && $r == *"Do not redo"* && $r == *"Edit"* && $r == *"gh pr create"* && $r == *"without running any step agent"* ]]
   [[ $r != *"Route-and-stop"* ]]
 }
 
@@ -5027,11 +5027,14 @@ finish_guard_fails_change_after_validate() {
   check "$(jqval .status),$RC" "pass,0"
 }
 
-# The orchestrator's base-sync entries (a merge of the base it made itself)
-# are not code changes by a step, so they need no validate after them; a
-# conflict fix pass is a work-ticket entry and does.
+# A base-sync entry (the orchestrator's merge of the base) changes code,
+# so a validate must follow it, as one must follow a conflict fix pass (a
+# work-ticket entry). One before the latest validate is fine.
 finish_guard_base_sync_entries() {
   run_finish_guard '[{"step": "base-sync", "status": "done", "reason": "merged origin/main at abc1234 into feature/x (2 commits behind)"}, {"step": "work-ticket", "status": "done"}, {"step": "review-ticket", "status": "clean"}, {"step": "validate", "status": "done"}, {"step": "base-sync", "status": "done", "reason": "merged origin/main at def5678: the PR conflicted with its base"}, {"step": "review-ticket", "status": "clean"}]'
+  check "$(jqval .rule),$RC" "changed-after-validate,1"
+  [[ $(jqval .detail) == *"a base-sync step ran after the latest validate"* ]]
+  run_finish_guard '[{"step": "base-sync", "status": "done"}, {"step": "work-ticket", "status": "done"}, {"step": "review-ticket", "status": "clean"}, {"step": "validate", "status": "done"}, {"step": "base-sync", "status": "done"}, {"step": "validate", "status": "done"}, {"step": "review-ticket", "status": "clean"}]'
   check "$(jqval .status),$RC" "pass,0"
   run_finish_guard '[{"step": "work-ticket", "status": "done"}, {"step": "review-ticket", "status": "clean"}, {"step": "validate", "status": "done"}, {"step": "work-ticket", "status": "done", "reason": "fix pass 1 (conflict): applied 1 items"}, {"step": "base-sync", "status": "done"}, {"step": "review-ticket", "status": "clean"}]'
   check "$(jqval .rule),$RC" "changed-after-validate,1"
@@ -5228,6 +5231,8 @@ skills_auto_ticket_follow_up_dedupe() {
 # force-push message also changed (one line): it now says
 # `git pull --rebase origin <branch>`, because branches in sandboxed sessions
 # have no upstream (ccmagic 3.18.3 fixed the same assumption in ccm-pr-reply).
+# The orchestrator's send-back message also changed (one line): it names
+# Step 0 item 0's ccm-base-sync call and Step 0b (ccmagic 3.30.0).
 skills_hooks_only_accept_tasks_done() {
   local changed
   changed=$(git -C "$ROOT" diff "$SPEC_BASELINE" -- hooks ':(exclude)hooks/hooks.json' ':(exclude)hooks/pre-tool-use-finish-guard.sh' |
@@ -5254,7 +5259,9 @@ skills_hooks_only_accept_tasks_done() {
 -      deny \"ccmagic: autonomous runs never force-push (target: \${target:-unknown}). If the branch has diverged, rebase onto the remote (git pull --rebase) and push normally; if that conflicts, return needs-human.\"
 +      deny \"ccmagic: autonomous runs never force-push (target: \${target:-unknown}). If the branch has diverged, rebase onto the remote (git pull --rebase origin \${target:-<branch>}) and push normally; if that conflicts, return needs-human.\"
 -  ccmagic:auto-work|ccmagic:auto-feedback|ccmagic:auto-validate|ccmagic:auto-finish|ccmagic:auto-push) allowed=\"done needs-human\" ;;
-+  ccmagic:auto-work|ccmagic:auto-feedback|ccmagic:auto-validate|ccmagic:auto-finish|ccmagic:auto-push|ccmagic:auto-visual) allowed=\"done needs-human\" ;;"
++  ccmagic:auto-work|ccmagic:auto-feedback|ccmagic:auto-validate|ccmagic:auto-finish|ccmagic:auto-push|ccmagic:auto-visual) allowed=\"done needs-human\" ;;
+-  r=\"\$lead Continue from Step 0: read autonomous-contract.md, run ccm-context, then run Steps 1 to 6 through run_step. If the work step finds the change already made and the PR open, that is its done. \$end_rule\"
++  r=\"\$lead Continue from Step 0: read autonomous-contract.md, run ccm-base-sync sync --push (Step 0 item 0), then ccm-context, then Step 0b when the sync returned conflicting, then Steps 1 to 6 through run_step. If the work step finds the change already made and the PR open, that is its done. \$end_rule\""
   git -C "$ROOT" show "$SPEC_BASELINE:hooks/hooks.json" | jq -S . >"$T/hooks-base"
   jq -S 'del(.hooks.PreToolUse[] | select(.matcher == "Agent|Task" and .hooks == [{type: "command",
     command: "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/pre-tool-use-finish-guard.sh\"", timeout: 10}]))' \
