@@ -53,16 +53,10 @@ if [ "$offline" = false ] && command -v gh >/dev/null 2>&1; then
   gh_available=true
 fi
 
-base_branch=""
 if [ "$gh_available" = true ]; then
-  base_branch=$(gh repo view --json defaultBranchRef -q .defaultBranchRef.name 2>/dev/null || true)
-fi
-if [ -z "$base_branch" ]; then
-  if git show-ref --verify --quiet refs/heads/develop || git show-ref --verify --quiet refs/remotes/origin/develop; then
-    base_branch=develop
-  else
-    base_branch=main
-  fi
+  base_branch=$(ccm_base_branch default)
+else
+  base_branch=$(ccm_base_branch local)
 fi
 
 if git rev-parse -q --verify "refs/remotes/origin/$base_branch" >/dev/null 2>&1; then
