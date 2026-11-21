@@ -2,6 +2,23 @@
 
 All notable changes to ccmagic are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.30.0] - 2026-11
+
+### Fixed
+
+- `/ccmagic:auto-ticket` brings the run's branch up to date with its base before it loads config. On 2026-11-21 two runs Reeve dispatched to Cyrus parked on stale checkouts, since Cyrus reuses a ticket's worktree (one a read-only refinement session made hours earlier, for one). On cclens CCL-20 the checkout predated the commit that added `.claude/ccmagic.local.md` with `merge_owner: reeve`, so the run used the default `merge_owner: self`, tried `gh pr merge`, and parked on the PreToolUse hook's refusal although the PR was clean. On CCL-39 the branch was two commits behind main and the PR conflicted with it. Step 0 now first runs `ccm-base-sync sync`, which fetches the base (the PR's base branch, else the default branch) and, when the branch's history does not contain `origin/{base}`, merges it in: a merge, never a rebase or a force push, since the branch may back an open PR. A clean merge is kept and pushed with the work. A merge that conflicts is aborted, so config is never read from a half-merged tree; the run reads its project config from `origin/{base}` (`ccm-context --config-ref`), and a new Step 0b starts the merge again, runs one conflict fix pass on the work step (`fix_source: conflict`, rules in `skills/work-ticket/base-conflict.md`), and commits the merge, or aborts it and parks with the conflicted files named.
+- With no `.claude/ccmagic.local.md` in the checkout, the project config is read from the base branch's copy (`origin/<base>`, else `origin/HEAD`, `origin/main`, or `origin/master`, local refs only), in `ccm-context` and every script and hook that reads config through `bin/ccm-lib.sh`, so settings never fall back to the defaults because of an old checkout. `ccm-context` reports where it read the file in a new `project_config` key (`working-tree`, a ref, or null), and `--config-ref REF` reads REF's copy ahead of the checkout's.
+- A PR that conflicts with its base at the CI wait (Step 4c, `ccm-ci-status` says `conflicting`) is no longer parked at once. The first time in a run, the orchestrator merges `origin/{base}` into the branch with `ccm-base-sync sync --push`. A clean merge is pushed; a conflicting one gets one conflict fix pass, a validate (with Step 4b's fix attempts), and a push. CI is then waited for again, and the moved head gets the 4f re-review. Only a second `conflicting`, or a merge that cannot be made, parks. `merge_owner: reeve` hand-offs and the finish guard are unchanged: a conflict fix pass is a `work-ticket` entry, so `ccm-finish-guard` still requires a validate after it.
+- The run record names the step that parked the run. On CCL-39 the run parked at the CI wait while every entry in `steps` said `done`, so Reeve could not tell the park was a merge conflict. Every route-and-stop the orchestrator decides itself (a CI timeout, a conflict, unreadable CI, a pass cap, a stale head, a fix-pass check, the finish guard, a missing hand-off state) now appends one needs-human entry with a fixed step name (contract §4, *The step that parked the run*), for example `{"step": "ci-wait", "status": "needs-human", "reason": "PR has merge conflicts with its base, so CI cannot run: ..."}`. The CI wait's name contains none of `validate`, `review`, or `feedback`, so Reeve maps a conflict park there to `merge-conflict`. Each merge of the base adds a `base-sync` entry with status `done`.
+
+### Added
+
+- `bin/ccm-base-sync` with modes `sync` (merge `origin/{base}` when the branch lacks it; on the base branch itself, fast-forward only; abort a conflicting merge; `--push` pushes a merge it made), `begin` (start the merge and leave its conflicts for a fix pass, recording the base commit and the untracked files in the git dir), `conclude` (commit that merge once no conflicted file keeps a conflict marker line and the pass added no file; stages tracked changes only), `push` (never forced, to the upstream's branch name on origin or the local branch's), and `abort`. `/auto-ticket` grants it, and `docs/cyrus-deployment.md` lists `Bash(ccm-base-sync *)`.
+
+### Deploy
+
+- A Cyrus session needs a git committer identity for the merge commit, which it already has for its own commits. Add `Bash(ccm-base-sync *)` to a harness that grants Bash narrowly.
+
 ## [3.29.0] - 2026-11
 
 ### Added

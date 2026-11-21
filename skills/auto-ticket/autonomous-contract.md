@@ -36,8 +36,8 @@ merge_handoff_state: {value}
 draft_until_finish: {true, only when config sets it; absent otherwise}
 max_feedback_passes: {n}
 review_pass: {n, only on re-reviews (Step 3 fix loop, Step 4f late push); absent on the first review pass}
-fix_pass: {n, only on a fix pass of the work step (Step 2b, 3, or 4b); absent otherwise}
-fix_source: {review | validate | visual, only with fix_pass}
+fix_pass: {n, only on a fix pass of the work step (Step 0b, 2b, 3, 4b, or 4c); absent otherwise}
+fix_source: {review | validate | visual | conflict, only with fix_pass}
 visual_round: {n, only to the visual step (Step 2b): 1 on the first round, up to 3}
 ci_handoff: {true, only to the finish step, and only when Step 4d found the pass clean with red CI; absent otherwise}
 ```
@@ -107,8 +107,11 @@ findings_to_fix:
 {review: each CRITICAL finding and fixable missing-AC item, copied from the review report as written,
  with its id, title, file and line, detail, systemic: enumeration, and Reproduction}
 {validate: the validate step's failures: section as reported (§3)}
+{conflict: one line per conflicted path, conflict: {path} | origin/{base} at {sha7}}
 ~~~
 ```
+
+A **conflict fix pass** (`fix_source: conflict`) resolves a merge of the base into the branch that the `begin` mode of `ccm-base-sync` left in progress, at the orchestrator's Step 0b or 4c (`skills/auto-ticket/base-sync.md`). The work step follows `skills/work-ticket/base-conflict.md`: it keeps both sides' intent, adds no file, and leaves the resolution uncommitted; the orchestrator commits the merge with the `conclude` mode of `ccm-base-sync`, never the push step. A conflict a human must decide is a `needs-human` whose `reason` starts `merge conflict with origin/{base} in {path}:`. Each entry point runs at most one conflict fix pass in a run, and none counts against `max_review_fix_passes`.
 
 On a fix pass `work-ticket` skips its Steps 2 to 4 and follows its *Fix pass* section in place of Steps 5 to 8: it stays on the PR's branch, applies only the listed items (a `systemic:` finding as a class, a security or invariant finding under §9), runs the narrowest tests that cover them, and leaves the changes **uncommitted**. It does not re-implement the ticket, commit, push, or open a PR: the orchestrator's push step is the one commit and push of the pass, and it runs only after a `done`. All other sub-skills ignore the fix-pass keys. The orchestrator checks the git state around each fix pass (its Step 3, *Fix-pass git check*) and parks a pass that committed, switched branch, or changed no files.
 
@@ -235,6 +238,27 @@ A visual criterion is never a reason to park. When a run cannot check one (no ha
    - PR comment (`gh pr comment {PR} --body-file - <<'CCM_COMMENT_EOF'`, the body on stdin through the quoted heredoc; never a temp file, which a session with narrow Bash grants can't write under `/tmp` or delete from the repo) and ticket comment (`save_comment` / `gh issue comment` / Atlassian MCP), using the parked-comment template below.
 5. **Emit the run's final status** (see the orchestrator's Step 6 summary) and exit cleanly. Never wait for input.
 
+### The step that parked the run
+
+The run record must always name the step and the reason that parked it, since a merge gate reads the last `needs-human` entry in `steps` to decide what kind of park it was (Reeve maps a reason that names a merge conflict to `merge-conflict`, unless the step name contains `validate`, `review`, or `feedback`). When a step returned `needs-human` and the orchestrator parks on it, that step's entry already does. When the orchestrator decides the stop itself, it appends one entry before it posts the parked note, `{"step": "{name}", "status": "needs-human", "reason": "{the route-and-stop reason}"}`, with the name for that stop:
+
+| Stop the orchestrator decides | `step` |
+|------------------------------|--------|
+| No PR after the work step's `done` (Step 2) | `locate-pr` |
+| Visual criteria still not met after 3 rounds (Step 2b) | `visual-check` |
+| A fix pass that left out an item, committed, switched branch, or changed no files | `{fix_source}-fix-check`: `visual-fix-check`, `review-fix-check`, `validate-fix-check`, or `conflict-fix-check` |
+| Review fix passes used up, or a late-push re-review with findings and no passes left (Steps 3, 4f) | `review-fix-cap` |
+| The PR head cannot be read, or a re-review read another head (Steps 4e, 4f, 5) | `review-head-check` |
+| Local validation still failing after `max_validate_attempts` (Step 4b) | `validate-fix-cap` |
+| CI timed out, could not be read, or conflicts with the base and the merge of the base did not fix it (Step 4c) | `ci-wait` |
+| Still not clean after `max_feedback_passes` (Step 4e) | `feedback-cap` |
+| A merge of the base that could not be started or committed (Steps 0b, 4c) | `base-sync` |
+| `ccm-finish-guard` refused the finish step (Step 5) | `finish-guard` |
+| No state named `merge_handoff_state` on the team | `handoff-state` |
+| A step still had no `ticket_content` after one retry | `grounding` |
+
+The CI wait's name contains none of `validate`, `review`, or `feedback`, so a conflict park there is read as a merge conflict: `{"step": "ci-wait", "status": "needs-human", "reason": "PR has merge conflicts with its base, so CI cannot run: mergeable_state is dirty"}`. Every park on a merge conflict, at any step, has a reason that names it (`merge conflict with origin/{base}`, or the CI wait's wording above).
+
 ### Parked-comment template
 
 ````markdown
@@ -255,7 +279,7 @@ A visual criterion is never a reason to park. When a run cannot check one (no ha
 
 ### Run record
 ```json
-{"ccmagic": {"version": 2, "run_id": "{run_id}", "ticket": "{TICKET-ID}", "repo": "{owner/name}", "pr": {pr_number or null}, "head_sha": {"<PR head SHA>" or null}, "outcome": "parked", "classification": "{class}", "merge_owner": "{self | reeve}", "review_passes": {n}, "feedback_passes": {n}, "ci_attempts": {n}, "findings": {"critical": {n}, "high": {n}}, "steps": [{"step": "work-ticket", "status": "done"}, {"step": "review-ticket", "status": "needs-human", "reason": "{one line}"}], "follow_ups": []}}
+{"ccmagic": {"version": 2, "run_id": "{run_id}", "ticket": "{TICKET-ID}", "repo": "{owner/name}", "pr": {pr_number or null}, "head_sha": {"<PR head SHA>" or null}, "outcome": "parked", "classification": "{class}", "merge_owner": "{self | reeve}", "review_passes": {n}, "feedback_passes": {n}, "ci_attempts": {n}, "findings": {"critical": {n}, "high": {n}}, "steps": [{"step": "work-ticket", "status": "done"}, {"step": "review-ticket", "status": "clean"}, {"step": "validate", "status": "done"}, {"step": "ci-wait", "status": "needs-human", "reason": "PR has merge conflicts with its base, so CI cannot run: {one line}"}], "follow_ups": []}}
 ```
 
 Nothing was merged. Resolve the item above (and any uncommitted changes), then re-run `/ccmagic:auto-ticket {TICKET-ID}` (or continue manually).
@@ -267,7 +291,7 @@ The keys and rules are the same as the Step 6 `### Run record` block (contract �
 **Only when the grounding block has a `spec:` section.** The parked record carries the `openspec` key as the last key inside `ccmagic`, as `skills/auto-ticket/SKILL.md` Step 6 describes, with the ids the work step ticked before it stopped. When the `spec:` section's `section` is `parent`, leave the key out: the parked record is the ordinary one above, since Reeve accepts only a number or `"archive"` as `section` and drops a whole record that carries anything else. For a section or the archive ticket:
 
 ```json
-{"ccmagic": {"version": 2, "run_id": "{run_id}", "ticket": "{TICKET-ID}", "repo": "{owner/name}", "pr": {pr_number or null}, "head_sha": {"<PR head SHA>" or null}, "outcome": "parked", "classification": "{class}", "merge_owner": "{self | reeve}", "review_passes": {n}, "feedback_passes": {n}, "ci_attempts": {n}, "findings": {"critical": {n}, "high": {n}}, "steps": [{"step": "work-ticket", "status": "done"}, {"step": "review-ticket", "status": "needs-human", "reason": "{one line}"}], "follow_ups": [], "openspec": {"change": "{spec.change}", "section": {spec.section: a number, or "archive"}, "tasks_done": [{"task id", ...}]}}}
+{"ccmagic": {"version": 2, "run_id": "{run_id}", "ticket": "{TICKET-ID}", "repo": "{owner/name}", "pr": {pr_number or null}, "head_sha": {"<PR head SHA>" or null}, "outcome": "parked", "classification": "{class}", "merge_owner": "{self | reeve}", "review_passes": {n}, "feedback_passes": {n}, "ci_attempts": {n}, "findings": {"critical": {n}, "high": {n}}, "steps": [{"step": "work-ticket", "status": "done"}, {"step": "review-ticket", "status": "clean"}, {"step": "validate", "status": "done"}, {"step": "ci-wait", "status": "needs-human", "reason": "PR has merge conflicts with its base, so CI cannot run: {one line}"}], "follow_ups": [], "openspec": {"change": "{spec.change}", "section": {spec.section: a number, or "archive"}, "tasks_done": [{"task id", ...}]}}}
 ```
 <!-- /ccmagic:spec-only -->
 
@@ -275,7 +299,7 @@ The keys and rules are the same as the Step 6 `### Run record` block (contract �
 **Only when the base has `openspec/specs/` and the grounding block has no `spec:` section,** and only when the run has a `spec_delta` (`skills/auto-ticket/SKILL.md` Steps 1 and 6: when the run has a PR, the orchestrator first runs `"${CLAUDE_PLUGIN_ROOT}/bin/ccm-spec-delta" record {head_sha} {base-ref}`, and the archive folder the PR head carries is the run's `spec_delta`, whichever run archived it). The parked record carries the `spec_delta` key as the last key inside `ccmagic`:
 
 ```json
-{"ccmagic": {"version": 2, "run_id": "{run_id}", "ticket": "{TICKET-ID}", "repo": "{owner/name}", "pr": {pr_number or null}, "head_sha": {"<PR head SHA>" or null}, "outcome": "parked", "classification": "{class}", "merge_owner": "{self | reeve}", "review_passes": {n}, "feedback_passes": {n}, "ci_attempts": {n}, "findings": {"critical": {n}, "high": {n}}, "steps": [{"step": "work-ticket", "status": "done"}, {"step": "review-ticket", "status": "needs-human", "reason": "{one line}"}], "follow_ups": [], "spec_delta": "{spec_delta: none, or openspec/changes/archive/<folder>}"}}
+{"ccmagic": {"version": 2, "run_id": "{run_id}", "ticket": "{TICKET-ID}", "repo": "{owner/name}", "pr": {pr_number or null}, "head_sha": {"<PR head SHA>" or null}, "outcome": "parked", "classification": "{class}", "merge_owner": "{self | reeve}", "review_passes": {n}, "feedback_passes": {n}, "ci_attempts": {n}, "findings": {"critical": {n}, "high": {n}}, "steps": [{"step": "work-ticket", "status": "done"}, {"step": "review-ticket", "status": "clean"}, {"step": "validate", "status": "done"}, {"step": "ci-wait", "status": "needs-human", "reason": "PR has merge conflicts with its base, so CI cannot run: {one line}"}], "follow_ups": [], "spec_delta": "{spec_delta: none, or openspec/changes/archive/<folder>}"}}
 ```
 <!-- /ccmagic:plain-delta -->
 
@@ -325,7 +349,8 @@ A project file overrides the user file, which overrides the built-in default. Th
 - **Every decision is recorded** in the PR body/comments and/or a ticket comment, so an unattended run leaves an audit trail.
 - **Never finish past a failed validate.** The run reaches `finish-ticket` only when its latest validate step returned `done` and its latest review `clean`; `ccm-finish-guard` checks the `steps:` section (§2) in the PreToolUse hook and again in the finish agent. A failed check gets the bounded fix passes of orchestrator Step 4b, an `environment:` result parks, and no orchestrator judgment (such as "the failure is environmental") replaces either. The one failed check that can end in `done` is a test check that `ccm-validate` itself reran, and only on its rerun passing or on `--ci-confirm` reporting `ci-green` (RV-166).
 - **Never finish on a stale review.** The last clean review's `head:` must be the PR head when `finish-ticket` runs. A late push (Step 4a or 4b) gets a re-review (orchestrator Step 4f) within the existing loop limits, and a run that can't re-review the pushed head parks.
-- **Every exit is `merged`, `handed-off` (only with `merge_owner: reeve`), or `parked-needs-human` (with a reason).** Never `stalled`, never a silent hang, never a merge on a guess.
+- **Every exit is `merged`, `handed-off` (only with `merge_owner: reeve`), or `parked-needs-human` (with a reason).** Never `stalled`, never a silent hang, never a merge on a guess. A parked run's record names the step and reason that parked it (§4, *The step that parked the run*).
+- **The run starts from its base.** Before config is read, the orchestrator merges `origin/{base}` into a branch whose history lacks it (the `sync` mode of `ccm-base-sync`), and with no project config in the checkout `ccm-context` reads the base's copy, so a reused, old checkout never runs on default settings. The base is always merged in, never rebased onto, and nothing is force-pushed, since the branch may back an open PR.
 - **Red CI is handed off only when it is not the PR's** (RV-165): only with `merge_owner: reeve`, with no open threads, a clean review of the PR head, and a `done` validate on that head that records no local test failure, and only when `ccm-ci-status` with `--attribute` finds every counted failure to be an Actions job whose log cannot be read or a check the base tip fails too. The run record carries the red CI in its `ci` key, never as a step status. A red PR never merges.
 
 ## 7. Prompt-relay transport

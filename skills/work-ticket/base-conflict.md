@@ -1,0 +1,12 @@
+# Conflict fix pass (`fix_source: conflict`)
+
+`/ccmagic:auto-ticket` sends this fix pass when merging the base into the PR's branch conflicts, at the start of a run or when CI reports the PR conflicting (`skills/auto-ticket/base-sync.md`). Before it starts you, the `begin` mode of `ccm-base-sync` has started the merge: `MERGE_HEAD` is the base commit, and the conflicted files hold conflict markers. Each `findings_to_fix:` item is `conflict: {path} | origin/{base} at {sha7}`.
+
+1. **Read both sides before editing.** For each path, read what the base changed (`git log --oneline HEAD..MERGE_HEAD -- {path}` and `git diff HEAD...MERGE_HEAD -- {path}`) and what the branch changed (`git diff MERGE_HEAD...HEAD -- {path}`), and the ticket from `ticket_content:`.
+2. **Keep both sides' intent.** Resolve each conflict so the base's change and the branch's change both hold. Taking one side whole is right only when the other side's change is already in it or no longer applies; say which in `applied_findings:`. Remove every conflict marker line (`<<<<<<<`, `=======`, `|||||||`, `>>>>>>>`).
+3. **Change only what the merge needs.** Beyond the conflicted files, change a tracked file only where the merged code needs it to build or pass (a renamed symbol the branch still calls, for example). Add no new file: the orchestrator commits tracked changes only (`git add -u`), and the `conclude` mode of `ccm-base-sync` refuses a pass that added one. Never disable, skip, or loosen a test or check.
+4. **Do not finish the merge.** No `git add`, `git commit`, `git merge --continue`, `git merge --abort`, `git checkout --ours/--theirs` on the whole tree, `git reset`, or `git push`: the orchestrator commits the merge with the `conclude` mode of `ccm-base-sync` after a `done`.
+5. **Run the narrowest tests that cover the merged files** (see *Build and test runs* in `SKILL.md`).
+6. **Stop when a human must decide.** When the two sides make choices that contradict each other and the ticket does not settle which holds, or a resolution would change behavior the ticket does not cover, stop with `needs-human`. The `reason` starts `merge conflict with origin/{base} in {path}:` and says what has to be decided, so the merge gate can tell the park was a merge conflict.
+
+Report `applied_findings:` with one line per item, `- conflict: {path}: {path}` (add `; took {base | branch}: {why}` when one side was taken whole), before the handshake, as every fix pass does. The handshake `reason` on `done` is `fix pass {n} (conflict): applied {k} items`.

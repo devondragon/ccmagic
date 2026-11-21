@@ -192,6 +192,32 @@ context_draft_until_finish_default_off() {
   check "$(jqval .config.draft_until_finish)" "true"
 }
 
+# Base sync (cclens CCL-20, CCL-39): auto-ticket syncs before config, resolves a
+# conflict at the CI wait, and every park it decides is a step in the record.
+# shellcheck disable=SC2016 # literal backticks in the markdown being matched
+skills_auto_ticket_base_sync_wired() {
+  local s=$ROOT/skills/auto-ticket/SKILL.md c=$ROOT/skills/auto-ticket/autonomous-contract.md
+  local b=$ROOT/skills/auto-ticket/base-sync.md missing=
+  # Step 0 runs the sync before the ccm-context call.
+  [ "$(grep -n 'bin/ccm-base-sync" sync`' "$s" | head -1 | cut -d: -f1)" -lt "$(grep -n 'bin/ccm-context" {TICKET-ID}' "$s" | head -1 | cut -d: -f1)" ] || missing+=" step0-order"
+  grep -qF -- '--config-ref {base_ref}' "$s" || missing+=" config-ref"
+  grep -qF '## Step 0b: Merge conflict with the base' "$s" || missing+=" step0b"
+  grep -qF 'follow *Conflict at the CI wait*' "$s" || missing+=" ci-wait"
+  grep -qF 'A park this skill decides is a step in the record.' "$s" || missing+=" park-entry"
+  grep -qF '### The step that parked the run' "$c" || missing+=" contract-table"
+  grep -qF '| `ci-wait` |' "$c" || missing+=" contract-ci-wait"
+  grep -qF 'fix_source: {review | validate | visual | conflict' "$c" || missing+=" contract-fix-source"
+  for m in 'base-sync" begin' 'base-sync" conclude' 'base-sync" abort' 'base-sync" sync --base {BASE_BRANCH} --push' 'base-sync" push'; do
+    grep -qF "$m" "$b" || missing+=" [$m]"
+  done
+  grep -qF 'base-conflict.md' "$ROOT/skills/work-ticket/SKILL.md" || missing+=" work-ticket"
+  grep -qF 'fix_source: conflict' "$ROOT/agents/auto-work.md" || missing+=" auto-work"
+  grep -qF '"Bash(ccm-base-sync *)"' "$ROOT/docs/cyrus-deployment.md" || missing+=" cyrus-deployment"
+  # The CI wait's entry is shown in the contract, the skill, and base-sync.md.
+  for f in "$c" "$s" "$b"; do grep -qF '{"step": "ci-wait", "status": "needs-human"' "$f" || missing+=" ci-wait-entry:${f##*/}"; done
+  check "${missing# }" ""
+}
+
 # draft_until_finish (RV-106): the PR opens as a draft and only finish marks it ready.
 # shellcheck disable=SC2016 # literal backticks in the markdown being matched
 skills_draft_until_finish_wired() {
@@ -1621,7 +1647,7 @@ stop_orchestrator_malformed_input_passes() {
 skills_auto_ticket_orchestrator_guard() {
   local s f=$ROOT/skills/auto-ticket/SKILL.md missing=
   # shellcheck disable=SC2016 # literal backticks and ${...} from the skill text
-  for s in 'You are the orchestrator, never the implementer.' 'Your first tool call is `Read` of `${CLAUDE_SKILL_DIR}/autonomous-contract.md`, then the `ccm-context` call, then Step 0.' 'A trivial or one-line ticket changes nothing' 'or run `git commit`, `git push`, or `gh pr create` yourself, stop and go to Step 0'; do
+  for s in 'You are the orchestrator, never the implementer.' 'Your first tool call is `Read` of `${CLAUDE_SKILL_DIR}/autonomous-contract.md`, then the `ccm-base-sync` call and the `ccm-context` call, then Step 0.' 'A trivial or one-line ticket changes nothing' 'or run `git commit`, `git push`, or `gh pr create` yourself, stop and go to Step 0'; do
     grep -qF "$s" "$f" || missing+=" [$s]"
   done
   # The guard sits before the lifecycle overview.
@@ -4979,7 +5005,8 @@ ADDED_AGENTS_SINCE_BASELINE=(agents/auto-visual.md)
 # there to keep SKILL.md under 500 lines) and acceptance.md the acceptance-test
 # rules (issue 111); review-guidance.md holds REVIEW.md and pre-existing findings
 # (issue 109).
-ADDED_SKILL_FILES_SINCE_BASELINE=(skills/work-ticket/spec-delta.md skills/work-ticket/acceptance.md skills/review/review-guidance.md)
+ADDED_SKILL_FILES_SINCE_BASELINE=(skills/work-ticket/spec-delta.md skills/work-ticket/acceptance.md skills/review/review-guidance.md
+  skills/auto-ticket/base-sync.md skills/work-ticket/base-conflict.md)
 
 spec_prompt_files() {
   { git -C "$ROOT" ls-tree -r --name-only "$SPEC_BASELINE" -- skills agents
