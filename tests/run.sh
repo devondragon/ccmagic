@@ -239,17 +239,17 @@ context_no_ticket_on_main() {
 # Project config from the base when the checkout has none (cclens CCL-20).
 context_config_from_base_when_checkout_has_none() {
   bs_origin
-  upstream_commit .claude/ccmagic.local.md $'---\nmerge_owner: reeve\n---\n' "chore: ccmagic config"
+  upstream_commit .claude/ccmagic.local.md $'---\nmerge_owner: reeve\nmax_feedback_passes: 7\n---\n' "chore: ccmagic config"
   git fetch -q origin
   run "$BIN/ccm-context" --offline
-  check "$(jqval .config.merge_owner),$(jqval .project_config)" "reeve,origin/main"
-  # A checkout with its own copy reads that copy.
-  config 'merge_owner: self'
+  check "$(jqval .config.merge_owner),$(jqval .config.max_feedback_passes),$(jqval .project_config)" "reeve,7,origin/main"
+  # A checkout with its own copy reads that copy, except for who merges.
+  config $'merge_owner: self\nmax_feedback_passes: 4'
   run "$BIN/ccm-context" --offline
-  check "$(jqval .config.merge_owner),$(jqval .project_config)" "self,working-tree"
+  check "$(jqval .config.merge_owner),$(jqval .config.max_feedback_passes),$(jqval .project_config)" "reeve,4,working-tree"
   # --config-ref reads the ref ahead of the checkout's copy.
   run "$BIN/ccm-context" --offline --config-ref origin/main
-  check "$(jqval .config.merge_owner),$(jqval .project_config)" "reeve,origin/main"
+  check "$(jqval .config.max_feedback_passes),$(jqval .project_config)" "7,origin/main"
   # A --config-ref without the file falls through to the checkout, then the base.
   rm -f .claude/ccmagic.local.md
   run "$BIN/ccm-context" --offline --config-ref origin/nope
@@ -443,11 +443,151 @@ basesync_leaves_a_dirty_tree_alone() {
   printf 'wip' >a.txt
   bs sync --base main
   check "$(jqval .status),$RC,$(cat a.txt)" "dirty,2,wip"
-  git checkout -q -- a.txt
+}
+
+# Review finding 1, the reviewer's repro: the fix pass edited the conflicted
+# file, a file the merge changed cleanly, a file the merge did not touch, and
+# added one. abort puts all of it back to the HEAD begin recorded.
+abort_setup() {
+  bs_origin
+  printf 'a\n' >conf.txt; printf '1\n2\n3\n' >clean.txt; printf 'x\n' >other.txt
+  git add -A && git commit -qm "chore: files" && git push -q origin main
+  git checkout -q -b feat
+  printf 'feat\n' >conf.txt && git commit -qam "feat: feat"
+  git checkout -q main
+  printf 'main\n' >conf.txt; printf '1\n2\n3\n4\n' >clean.txt
+  git commit -qam "feat: m2" && git push -q origin main
+  git checkout -q feat
+}
+
+basesync_abort_undoes_any_fix_pass_edit() {
+  abort_setup
+  printf 'old untracked' >keep.txt
+  local before
+  before=$(git rev-parse HEAD)
   bs begin --base main
+  check "$(jqval .status),$(jq -c .conflicts <<<"$OUT")" 'conflicting,["conf.txt"]'
+  printf 'resolved\n' >conf.txt; printf 'z\n' >>clean.txt; printf 'y\n' >other.txt; printf 'new' >added.txt
+  bs abort
+  check "$(jqval .status),$RC,$(git rev-parse HEAD)" "aborted,0,$before"
+  [ ! -e .git/MERGE_HEAD ]
+  check "$(git status --porcelain --untracked-files=no)" ""
+  check "$(cat conf.txt),$(cat other.txt),$(cat keep.txt)" "feat,x,old untracked"
+  [ ! -e added.txt ]
+}
+
+basesync_abort_leaves_a_foreign_merge_alone() {
+  abort_setup
+  git merge -q origin/main >/dev/null 2>&1 || true
+  [ -e .git/MERGE_HEAD ]
+  bs abort
+  check "$(jqval .status),$RC" "error,2"
+  [ -e .git/MERGE_HEAD ]
+}
+
+# Review finding 2: a later sync never goes on over a merge in progress. One
+# an earlier begin left is undone first; any other is in-progress.
+basesync_sync_recovers_a_merge_begin_left() {
+  abort_setup
+  bs begin --base main
+  printf 'half\n' >other.txt
   bs sync --base main
-  check "$(jqval .status),$RC" "dirty,2"
+  check "$(jqval .status),$RC,$(jqval .recovered)" "conflicting,1,true"
+  [ ! -e .git/MERGE_HEAD ]
+  check "$(git status --porcelain --untracked-files=no),$(cat other.txt)" ",x"
+}
+
+basesync_sync_stops_on_a_foreign_merge() {
+  abort_setup
+  git merge -q origin/main >/dev/null 2>&1 || true
+  bs sync --base main
+  check "$(jqval .status),$RC" "in-progress,2"
   [[ $(jqval .reason) == *"MERGE_HEAD"* ]]
+  bs begin --base main
+  check "$(jqval .status),$RC" "in-progress,2"
+}
+
+# Review finding 5b: a binary conflict has no markers, so it is unresolved
+# until its content changes.
+basesync_conclude_binary_conflict() {
+  bs_origin
+  printf '\000a' >b.bin && git add b.bin && git commit -qm "chore: bin" && git push -q origin main
+  git checkout -q -b feat
+  printf '\000mine' >b.bin && git commit -qam "feat: mine"
+  upstream_commit b.bin $'\001theirs' "feat: theirs"
+  bs begin --base main
+  check "$(jqval .status),$(jq -c .conflicts <<<"$OUT")" 'conflicting,["b.bin"]'
+  bs conclude
+  check "$(jqval .status),$RC" "unresolved,1"
+  printf '\000both' >b.bin
+  bs conclude
+  check "$(jqval .status),$RC" "merged,0"
+}
+
+# Review finding 5c: an ignored file the fix pass leaves (a build output)
+# does not count as an added file.
+basesync_conclude_ignores_ignored_files() {
+  conflict_setup
+  printf 'out/\n' >.gitignore && git add .gitignore && git commit -qm "chore: ignore"
+  bs begin --base main
+  printf 'resolved' >a.txt
+  mkdir -p out && printf 'x' >out/build.log
+  bs conclude
+  check "$(jqval .status),$RC" "merged,0"
+}
+
+# Review finding 4: --push pushes a merge an earlier call left unpushed, and
+# never creates a branch origin does not have.
+basesync_push_on_up_to_date_and_never_creates() {
+  bs_origin
+  git checkout -q -b feature/ENG-7-x
+  local_commit a.txt a "feat: a"
+  git push -q origin HEAD:refs/heads/feature/ENG-7-x
+  upstream_commit b.txt b "feat: b"
+  bs sync --base main
+  check "$(jqval .status),$(jqval .pushed)" "merged,false"
+  bs sync --base main --push
+  check "$(jqval .status),$RC,$(jqval .pushed)" "up-to-date,0,true"
+  check "$(git ls-remote origin refs/heads/feature/ENG-7-x | cut -f1)" "$(git rev-parse HEAD)"
+  git checkout -q -b feature/ENG-8-x
+  upstream_commit c.txt c "feat: c"
+  bs sync --base main --push
+  check "$(jqval .status),$RC,$(jqval .pushed)" "merged,0,false"
+  [[ $(jqval .reason) == *"origin has no branch feature/ENG-8-x"* ]]
+  bs push
+  check "$(jqval .status),$RC" "no-remote-branch,0"
+  check "$(git ls-remote origin refs/heads/feature/ENG-8-x | wc -l | tr -d ' ')" "0"
+}
+
+# Review finding 5d: one base-branch resolver. Without gh, origin/HEAD wins
+# over a local develop in both scripts.
+basesync_and_context_agree_on_the_base() {
+  bs_origin
+  git remote set-head origin main
+  git branch develop
+  git checkout -q -b feature/ENG-9-x
+  CCM_OFFLINE=1 run "$BIN/ccm-base-sync" sync
+  check "$(jqval .base)" "main"
+  run "$BIN/ccm-context" --offline
+  check "$(jqval .base_branch)" "main"
+}
+
+# Review finding 3: the branch's own copy cannot change who merges.
+guard_branch_cannot_override_base_merge_owner() {
+  bs_origin
+  upstream_commit .claude/ccmagic.local.md $'---\nmerge_owner: reeve\nmerge_handoff_state: Awaiting Merge\nmax_feedback_passes: 3\n---\n' "chore: ccmagic config"
+  git pull -q origin main
+  git checkout -q -b feature/ENG-10-x
+  config $'merge_owner: self\nmerge_handoff_state: Done\nmax_feedback_passes: 5'
+  hook 'gh pr merge 7 --squash' ccmagic:auto-finish
+  check "$(denied)" "deny"
+  [[ $(jq -r .hookSpecificOutput.permissionDecisionReason <<<"$OUT") == *"merge_owner is reeve"* ]]
+  run "$BIN/ccm-context" --offline
+  check "$(jqval .config.merge_owner),$(jqval .config.merge_handoff_state),$(jqval .config.max_feedback_passes)" "reeve,Awaiting Merge,5"
+  # With no base copy, the checkout's copy still decides.
+  git update-ref -d refs/remotes/origin/main
+  run "$BIN/ccm-context" --offline
+  check "$(jqval .config.merge_owner)" "self"
 }
 
 basesync_fetch_failure() {

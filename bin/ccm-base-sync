@@ -13,40 +13,52 @@
 # CCL-20, CCL-39 on 2026-11-21): one run read its settings from a checkout
 # that predated `.claude/ccmagic.local.md`, and another opened a PR two
 # commits behind main that conflicted with it. auto-ticket runs `sync` before
-# it loads config, and again (with --push) when CI reports the PR conflicting.
+# it loads config, and again when CI reports the PR conflicting.
 #
-# BASE is --base, else the open PR's base branch, else the repository's
-# default branch (gh), else origin/HEAD, else develop or main as ccm-context
-# picks them. Every mode but abort fetches it first.
+# BASE is --base, else ccm_base_branch pr (bin/ccm-lib.sh): the open PR's
+# base branch, the default branch (gh), origin/HEAD, develop, main.
 #
 # sync: merge origin/BASE into the current branch when its history does not
 #   contain it (on BASE itself, fast-forward only). A clean merge is kept
-#   (committed, not pushed unless --push). A merge that conflicts is aborted,
-#   so the tree is exactly as before, and the conflicted paths are listed.
+#   (committed). A merge that conflicts is aborted, so the tree is exactly as
+#   before, and the conflicted paths are listed. A merge left in progress by
+#   an earlier begin is first undone as abort does (recovered: true); any
+#   other git operation in progress is reported as in-progress and left
+#   alone. --push then pushes HEAD as push does, also when the branch was
+#   already up to date, so a merge an earlier call made is never left
+#   unpushed.
 # begin: start the same merge and leave its conflicts in the tree for a
 #   conflict fix pass (MERGE_HEAD set). A merge that turns out clean is
-#   committed, as in sync. Records the base commit and the untracked files in
-#   the git dir for conclude.
+#   committed, as in sync. Records the branch, HEAD, the base commit, each
+#   conflicted file's content, and the untracked files in the git dir.
 # conclude: commit the merge begin started, once the fix pass resolved it:
-#   MERGE_HEAD must be the commit begin recorded, no conflicted file may keep
-#   a conflict marker line, and the pass may add no untracked file. Stages
-#   tracked changes only (git add -u), then commits with git's merge message.
+#   MERGE_HEAD must be the commit begin recorded; a conflicted file may keep
+#   no conflict marker line and must differ from what begin left (so a binary
+#   conflict, which has no markers, still needs resolving); and the pass may
+#   add no untracked file (ignored files do not count). Stages tracked
+#   changes only (git add -u), then commits with git's merge message.
 # push: push HEAD to origin's branch of the same name (the upstream's name
-#   when it has one on origin), never forced.
-# abort: abort a merge in progress and forget begin's record.
+#   when it has one on origin), never forced, and only to a branch origin
+#   already has (no-remote-branch otherwise: the work step creates it).
+# abort: undo what begin started, whatever the fix pass did since: reset the
+#   tree to the HEAD begin recorded, remove files that were not there at
+#   begin (ignored ones stay), and check that no merge is left in progress
+#   and the tracked tree is clean. A merge in progress that begin did not
+#   start is left alone (error).
 #
 # Output: {mode, status, base, base_ref, base_sha, branch, head_before, head,
-#   behind, fast_forward, conflicts, pushed, reason}
+#   behind, fast_forward, conflicts, pushed, recovered, reason}
 #   status  not-applicable (no git repository, no origin remote, detached
-#           HEAD) | up-to-date | merged | pushed (push) | conflicting | unresolved (conclude:
-#           conflict markers left) | dirty (uncommitted tracked changes, or a
-#           merge, rebase, or cherry-pick in progress) | fetch-failed | error
-#           | push-failed | aborted
+#           HEAD; abort: nothing to undo) | up-to-date | merged | pushed |
+#           no-remote-branch (push) | conflicting | unresolved (conclude) |
+#           in-progress (a merge begin did not start, a rebase, a
+#           cherry-pick, or a revert) | dirty (uncommitted tracked changes) |
+#           fetch-failed | error | push-failed | aborted
 #   behind  commits on origin/BASE the branch did not have
 #
-# Exit codes: 0 not-applicable, up-to-date, merged, pushed, aborted, and begin's
-# conflicting; 1 sync's conflicting and unresolved; 2 dirty, fetch-failed,
-# error, push-failed; 4 usage error.
+# Exit codes: 0 not-applicable, up-to-date, merged, pushed, no-remote-branch,
+# aborted, and begin's conflicting; 1 sync's conflicting and unresolved;
+# 2 in-progress, dirty, fetch-failed, error, push-failed; 4 usage error.
 
 set -euo pipefail
 # shellcheck source=bin/ccm-lib.sh
@@ -55,7 +67,7 @@ set -euo pipefail
 mode="" base="" do_push=false
 for a in "$@"; do
   case $a in
-    -h|--help) sed -n '2,49p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,62p' "$0"; exit 0 ;;
   esac
 done
 [ $# -gt 0 ] || { echo "ccm-base-sync: a mode is required (sync, begin, conclude, push, abort)" >&2; exit 4; }
@@ -69,22 +81,26 @@ while [ $# -gt 0 ]; do
   esac
 done
 
-branch="" head_before="" head="" base_ref="" base_sha="" behind=0 ff=false pushed=false
-conflicts='[]'
+branch="" head_before="" head="" base_ref="" base_sha="" behind=0 ff=false pushed=false recovered=false
+conflicts='[]' push_note=""
 
 emit() { # STATUS EXIT REASON
+  local reason=$3
+  [ -z "$push_note" ] || reason="$reason; $push_note"
   jq -n --arg mode "$mode" --arg status "$1" --arg base "$base" --arg base_ref "$base_ref" \
     --arg base_sha "$base_sha" --arg branch "$branch" --arg head_before "$head_before" --arg head "$head" \
     --argjson behind "$behind" --argjson ff "$ff" --argjson conflicts "$conflicts" --argjson pushed "$pushed" \
-    --arg reason "$3" \
+    --argjson recovered "$recovered" --arg reason "$reason" \
     'def nul: if . == "" then null else . end;
      {$mode, $status, base: ($base | nul), base_ref: ($base_ref | nul), base_sha: ($base_sha | nul),
       branch: ($branch | nul), head_before: ($head_before | nul), head: ($head | nul), $behind,
-      fast_forward: $ff, $conflicts, $pushed, reason: ($reason | nul)}'
+      fast_forward: $ff, $conflicts, $pushed, $recovered, reason: ($reason | nul)}'
   exit "$2"
 }
 first_line() { tr -d '\r' | sed -n '/./{p;q;}' | cut -c1-300; }
 unmerged_json() { git diff --name-only --diff-filter=U 2>/dev/null | jq -R . | jq -sc .; }
+untracked_list() { git ls-files --others --exclude-standard | LC_ALL=C sort -u; }
+file_hash() { if [ -f "$1" ]; then git hash-object -- "$1"; else printf 'absent'; fi; }
 
 git rev-parse --show-toplevel >/dev/null 2>&1 || emit not-applicable 0 "not a git repository"
 cd "$(git rev-parse --show-toplevel)"
@@ -104,26 +120,51 @@ in_progress() {
   return 1
 }
 
-if [ "$mode" = abort ]; then
-  if [ -e "$gitdir/MERGE_HEAD" ]; then
-    err=$(git merge --abort 2>&1) || emit error 2 "git merge --abort failed: $(first_line <<<"$err")"
-    command rm -f "$state"
-    head=$(git rev-parse HEAD)
-    emit aborted 0 "aborted the merge in progress"
+# restore: undo a merge begin recorded, back to the recorded HEAD. Exits
+# through emit on anything it cannot undo or verify.
+restore() {
+  local rec_head rec_branch err extra
+  rec_head=$(jq -r '.head // empty' "$state")
+  rec_branch=$(jq -r '.branch // empty' "$state")
+  [ -n "$rec_head" ] || emit error 2 "the record of the merge begin started has no HEAD; left the tree as it is"
+  [ "$rec_branch" = "$branch" ] || emit error 2 "the merge begin started was on $rec_branch, not $branch; left the tree as it is"
+  [ "$(git rev-parse HEAD)" = "$rec_head" ] ||
+    emit error 2 "HEAD moved since begin (was $rec_head, now $(git rev-parse HEAD)); left the tree as it is"
+  err=$(git reset -q --hard "$rec_head" 2>&1) || emit error 2 "git reset --hard $rec_head failed: $(first_line <<<"$err")"
+  extra=$(comm -13 <(jq -r '.untracked[]?' "$state" | LC_ALL=C sort -u) <(untracked_list))
+  if [ -n "$extra" ]; then
+    while IFS= read -r f; do command rm -f -- "$f"; done <<<"$extra"
   fi
+  head=$(git rev-parse HEAD)
+  [ ! -e "$gitdir/MERGE_HEAD" ] || emit error 2 "a merge is still in progress after the reset"
+  [ -z "$(git status --porcelain --untracked-files=no)" ] || emit error 2 "tracked changes remain after the reset: $(git status --porcelain --untracked-files=no | head -5 | paste -sd, -)"
+  extra=$(comm -13 <(jq -r '.untracked[]?' "$state" | LC_ALL=C sort -u) <(untracked_list))
+  [ -z "$extra" ] || emit error 2 "files added since begin remain: $(paste -sd, - <<<"$extra")"
   command rm -f "$state"
+}
+
+if [ "$mode" = abort ]; then
+  if [ -f "$state" ]; then
+    restore
+    emit aborted 0 "reset the tree to $head, as it was before the merge began"
+  fi
+  [ ! -e "$gitdir/MERGE_HEAD" ] || emit error 2 "a merge is in progress that ccm-base-sync begin did not start; left it as it is"
   emit not-applicable 0 "no merge in progress"
 fi
 
 # push target: the upstream's branch name when it is on origin, else the
-# local branch's own name (sandboxed sessions have no upstream).
+# local branch's own name (sandboxed sessions have no upstream). Pushes only
+# to a branch origin already has, never forced.
 push_head() {
   local up target remote_sha err
   up=$(git rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>/dev/null || true)
   target=$branch
   case $up in origin/*) target=${up#origin/} ;; esac
-  remote_sha=$(git ls-remote origin "refs/heads/$target" 2>/dev/null | cut -f1 || true)
   head=$(git rev-parse HEAD)
+  if ! remote_sha=$(git ls-remote --exit-code origin "refs/heads/$target" 2>/dev/null | cut -f1); then
+    push_note="origin has no branch $target, so nothing was pushed"
+    return 1
+  fi
   if [ "$remote_sha" = "$head" ]; then return 0; fi
   if err=$(git push origin "HEAD:refs/heads/$target" 2>&1); then
     pushed=true
@@ -133,29 +174,14 @@ push_head() {
 }
 
 if [ "$mode" = push ]; then
-  push_head
+  push_head || emit no-remote-branch 0 "origin has no branch for $branch; the work step pushes it"
   if [ "$pushed" = true ]; then emit pushed 0 "pushed $head to origin"; fi
   emit up-to-date 0 "origin already has $head"
 fi
 
 # ---- base branch and fetch -------------------------------------------------
 
-if [ -z "$base" ] && command -v gh >/dev/null 2>&1; then
-  base=$(gh pr view --json baseRefName -q .baseRefName 2>/dev/null || true)
-  [ -n "$base" ] && [ "$base" != null ] || base=$(gh repo view --json defaultBranchRef -q .defaultBranchRef.name 2>/dev/null || true)
-  [ "$base" != null ] || base=""
-fi
-if [ -z "$base" ]; then
-  base=$(git symbolic-ref -q --short refs/remotes/origin/HEAD 2>/dev/null || true)
-  base=${base#origin/}
-fi
-if [ -z "$base" ]; then
-  if git show-ref --verify --quiet refs/heads/develop || git show-ref --verify --quiet refs/remotes/origin/develop; then
-    base=develop
-  else
-    base=main
-  fi
-fi
+[ -n "$base" ] || base=$(ccm_base_branch pr)
 base_ref=origin/$base
 
 if [ "$mode" = conclude ]; then
@@ -170,18 +196,20 @@ if [ "$mode" = conclude ]; then
   conflicts=$(jq -c '.conflicts // []' "$state")
   # The fix pass may add no file: the commit stages tracked changes only, so
   # a new file would be left out of the merge it was made for.
-  new_untracked=$(comm -13 <(jq -r '.untracked[]?' "$state" | LC_ALL=C sort -u) \
-    <(git ls-files --others --exclude-standard | LC_ALL=C sort -u))
+  new_untracked=$(comm -13 <(jq -r '.untracked[]?' "$state" | LC_ALL=C sort -u) <(untracked_list))
   [ -z "$new_untracked" ] ||
     emit error 2 "the conflict fix pass added untracked files, which a merge commit leaves out: $(paste -sd, - <<<"$new_untracked")"
-  left=$( { jq -r '.conflicts[]?' "$state"; git diff --name-only --diff-filter=U; } | LC_ALL=C sort -u |
+  # Unresolved: a conflict marker line in a text file, or content still what
+  # begin left (a binary conflict has no markers; git leaves our side).
+  left=$(jq -r '.conflicts[]?' "$state" | LC_ALL=C sort -u |
     while IFS= read -r f; do
-      [ -f "$f" ] || continue
-      if grep -IqE '^(<<<<<<<|>>>>>>>|\|\|\|\|\|\|\|)( |$)' -- "$f"; then printf '%s\n' "$f"; fi
+      was=$(jq -r --arg f "$f" '.hashes[$f] // "unknown"' "$state")
+      if [ "$(file_hash "$f")" = "$was" ]; then printf '%s\n' "$f"; continue; fi
+      if [ -f "$f" ] && grep -IqE '^(<<<<<<<|>>>>>>>|\|\|\|\|\|\|\|)( |$)' -- "$f"; then printf '%s\n' "$f"; fi
     done)
   if [ -n "$left" ]; then
     conflicts=$(jq -R . <<<"$left" | jq -sc .)
-    emit unresolved 1 "conflict markers are left in: $(paste -sd, - <<<"$left")"
+    emit unresolved 1 "conflicts are left unresolved (a conflict marker line, or unchanged since begin) in: $(paste -sd, - <<<"$left")"
   fi
   git add -u
   if ! err=$(git commit --no-edit 2>&1); then
@@ -193,41 +221,54 @@ if [ "$mode" = conclude ]; then
   emit merged 0 "committed the merge of $base_ref at ${rec_sha:0:7} into $branch"
 fi
 
-# sync and begin from here.
-if p=$(in_progress); then emit dirty 2 "a git operation is in progress ($p); left the tree as it is"; fi
+# sync and begin from here. A merge an earlier begin left (a run stopped
+# mid fix pass, or parked without undoing it) is undone first; a stale
+# record with no merge in progress is dropped.
+if [ -f "$state" ]; then
+  if [ -e "$gitdir/MERGE_HEAD" ]; then
+    restore
+    recovered=true head_before=$head
+  else
+    command rm -f "$state"
+  fi
+fi
+if p=$(in_progress); then emit in-progress 2 "a git operation is in progress ($p) that ccm-base-sync did not start; left the tree as it is"; fi
 if [ -n "$(git status --porcelain --untracked-files=no 2>/dev/null)" ]; then
   emit dirty 2 "the working tree has uncommitted changes to tracked files; left it as it is"
 fi
+note=""
+[ "$recovered" = false ] || note=" (first undid a merge an earlier begin left in progress)"
 if ! err=$(git fetch --quiet origin "+refs/heads/$base:refs/remotes/origin/$base" 2>&1); then
   base_sha=$(git rev-parse -q --verify "$base_ref^{commit}" 2>/dev/null || true)
-  emit fetch-failed 2 "git fetch origin $base failed: $(first_line <<<"$err")"
+  emit fetch-failed 2 "git fetch origin $base failed: $(first_line <<<"$err")$note"
 fi
 base_sha=$(git rev-parse -q --verify "$base_ref^{commit}" 2>/dev/null || true)
-[ -n "$base_sha" ] || emit fetch-failed 2 "$base_ref does not exist after the fetch"
+[ -n "$base_sha" ] || emit fetch-failed 2 "$base_ref does not exist after the fetch$note"
 
 if [ -z "$head_before" ]; then
   emit error 2 "the branch has no commit yet"
 fi
 if git merge-base --is-ancestor "$base_sha" HEAD; then
-  emit up-to-date 0 "$branch already contains $base_ref at ${base_sha:0:7}"
+  [ "$do_push" = false ] || push_head || true
+  emit up-to-date 0 "$branch already contains $base_ref at ${base_sha:0:7}$note"
 fi
 behind=$(git rev-list --count "HEAD..$base_sha")
 
 if [ "$branch" = "$base" ]; then
   if err=$(git merge --ff-only --quiet "$base_sha" 2>&1); then
     ff=true head=$(git rev-parse HEAD)
-    [ "$do_push" = false ] || push_head
-    emit merged 0 "fast-forwarded $branch to $base_ref at ${base_sha:0:7}"
+    [ "$do_push" = false ] || push_head || true
+    emit merged 0 "fast-forwarded $branch to $base_ref at ${base_sha:0:7}$note"
   fi
   emit error 2 "local $branch has diverged from $base_ref, so it cannot be fast-forwarded: $(first_line <<<"$err")"
 fi
 
-untracked_before=$(git ls-files --others --exclude-standard)
+untracked_before=$(untracked_list)
 if err=$(git merge --no-edit "$base_sha" -m "Merge $base_ref into $branch" 2>&1); then
   head=$(git rev-parse HEAD)
   if [ "$(git rev-parse -q --verify 'HEAD^2' 2>/dev/null || true)" = "" ]; then ff=true; fi
-  [ "$do_push" = false ] || push_head
-  emit merged 0 "merged $base_ref at ${base_sha:0:7} into $branch ($behind commits behind)"
+  [ "$do_push" = false ] || push_head || true
+  emit merged 0 "merged $base_ref at ${base_sha:0:7} into $branch ($behind commits behind)$note"
 fi
 
 conflicts=$(unmerged_json)
@@ -240,12 +281,18 @@ if [ "$conflicts" = '[]' ]; then
 fi
 
 if [ "$mode" = sync ]; then
-  git merge --abort >/dev/null 2>&1 || git reset --merge >/dev/null 2>&1 || true
+  git merge --abort >/dev/null 2>&1 || git reset -q --merge >/dev/null 2>&1 || true
   head=$(git rev-parse HEAD)
-  emit conflicting 1 "merging $base_ref at ${base_sha:0:7} into $branch conflicts in $(jq -r 'join(", ")' <<<"$conflicts"); the merge was aborted and the tree is as before"
+  [ ! -e "$gitdir/MERGE_HEAD" ] || emit error 2 "the conflicting merge could not be aborted"
+  emit conflicting 1 "merging $base_ref at ${base_sha:0:7} into $branch conflicts in $(jq -r 'join(", ")' <<<"$conflicts"); the merge was aborted and the tree is as before$note"
 fi
 
-# begin: leave the conflicts for the fix pass, and record what conclude checks.
-jq -n --arg base "$base" --arg sha "$base_sha" --argjson c "$conflicts" --arg u "$untracked_before" \
-  '{base: $base, base_sha: $sha, conflicts: $c, untracked: ($u | split("\n") | map(select(. != "")))}' >|"$state"
-emit conflicting 0 "merging $base_ref at ${base_sha:0:7} into $branch conflicts in $(jq -r 'join(", ")' <<<"$conflicts"); the merge is left in progress for a conflict fix pass"
+# begin: leave the conflicts for the fix pass, and record what conclude and
+# abort check.
+hashes=$(jq -r '.[]' <<<"$conflicts" | while IFS= read -r f; do
+  jq -n --arg f "$f" --arg h "$(file_hash "$f")" '{($f): $h}'; done | jq -s 'add // {}')
+jq -n --arg base "$base" --arg sha "$base_sha" --arg branch "$branch" --arg head "$head_before" \
+  --argjson c "$conflicts" --argjson h "$hashes" --arg u "$untracked_before" \
+  '{base: $base, base_sha: $sha, branch: $branch, head: $head, conflicts: $c, hashes: $h,
+    untracked: ($u | split("\n") | map(select(. != "")))}' >|"$state"
+emit conflicting 0 "merging $base_ref at ${base_sha:0:7} into $branch conflicts in $(jq -r 'join(", ")' <<<"$conflicts"); the merge is left in progress for a conflict fix pass$note"
