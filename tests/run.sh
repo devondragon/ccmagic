@@ -5223,6 +5223,61 @@ skills_auto_ticket_follow_up_dedupe() {
   check "${missing# }" ""
 }
 
+# RV-198 (cclens CCL-20): a parked run files its follow-ups before its note,
+# as a merged one does, and a run files what earlier runs left unfiled.
+# shellcheck disable=SC2016 # literal backticks in the markdown being matched
+skills_auto_ticket_follow_ups_filed_on_park() {
+  local s=$ROOT/skills/auto-ticket/SKILL.md c=$ROOT/skills/auto-ticket/autonomous-contract.md
+  local missing='' file_ln comment_ln template
+  # Route-and-stop files the follow-ups (step 4) before it comments (step 5).
+  file_ln=$(grep -n '^4\. \*\*File the follow-ups\.\*\*' "$c" | head -1 | cut -d: -f1)
+  comment_ln=$(grep -n '^5\. \*\*Comment the reason\*\*' "$c" | head -1 | cut -d: -f1)
+  { [ -n "$file_ln" ] && [ -n "$comment_ln" ] && [ "$file_ln" -lt "$comment_ln" ]; } || missing+=" park-order"
+  grep -qF 'with the same duplicate search by `Follow-up key:`' "$c" || missing+=" park-dedupe"
+  grep -qF '**Step 5 (comment)**' "$c" || missing+=" relay-step-number"
+  grep -qF '**Step 4 (follow-ups)** files nothing' "$c" || missing+=" relay-follow-ups"
+  # The parked template lists filed ids or reasons, and "to file" only under prompt-relay.
+  template=$(awk '/^### Parked-comment template/ { on = 1 } /^### Under the prompt-relay transport/ { on = 0 } on' "$c")
+  grep -qF '**Follow-ups:** {from step 4, one entry per item: `Filed: {id}: {one-liner}`' <<<"$template" || missing+=" template-line"
+  grep -qF 'under prompt-relay only, `To file: {item} (Follow-up key: {key})`' <<<"$template" || missing+=" template-relay"
+  grep -qF 'ending in its `Follow-up key:` line, ready to paste' <<<"$template" || missing+=" template-draft"
+  grep -qF '"outcome": "parked"' <<<"$template" &&
+    grep -qF '"follow_ups": [{"item": "{short description}", "step": "review-ticket", "ticket": "{id or null}", "reason": "{why not filed, or null}", "key": "{follow-up key}"}]' <<<"$template" ||
+    missing+=" template-record"
+  grep -qF 'under prompt-relay, "to file:"' "$c" && missing+=" old-template-line"
+  # Step 6 files on every outcome, carries earlier unfiled items over, and names the reasons.
+  grep -qF '**Follow-ups first, on every outcome.**' "$s" || missing+=" every-outcome"
+  grep -qF 'route-and-stop runs this routine as its step 4' "$s" || missing+=" skill-park"
+  grep -qF '**Carried over from earlier runs.**' "$s" || missing+=" carry-over"
+  grep -qF 'whose `reason` starts with `to file` or `create failed`' "$s" || missing+=" carry-over-match"
+  grep -qF 'a rerun that does not review again' "$s" || missing+=" rerun"
+  grep -qF '`to file: no create API under prompt-relay`' "$s" || missing+=" relay-reason"
+  grep -qF '`create failed: {error}`' "$s" || missing+=" create-failed-reason"
+  grep -qF 'A parked run does the same before route-and-stop posts its note.' "$s" && missing+=" old-park-sentence"
+  grep -qF 'file the follow-ups (Step 6 *Follow-ups first*' "$s" || missing+=" route-and-stop-summary"
+  grep -qF '| Any other tracker write fails (In Progress, In Review, Done, PR link, follow-up ticket), on any outcome, a park included | Not a park.' "$s" || missing+=" not-a-park"
+  grep -qF '**Follow-ups are filed on every outcome.**' "$c" || missing+=" invariant"
+  # Review of PR #125. 1: only a failed create goes unfiled.
+  grep -qF 'Only a failed create lists the item as not filed, with the reason `create failed: {error}`; after a failed search or comment the item is still filed' "$c" || missing+=" park-failed-create-only"
+  grep -qF 'A failed create, search, or comment is not a park reason' "$c" && missing+=" old-park-failure"
+  # 2: a parked run runs the routine once, and a re-entry reuses its ids.
+  grep -qF 'it skips the follow-up routine, since step 4 already ran it' "$s" || missing+=" skill-skip"
+  grep -qF "The parked run skips Step 6's follow-up routine here, since step 4 already ran it" "$c" || missing+=" contract-skip"
+  for f in "$s" "$c"; do grep -qF 'reuses the ids this run already filed and files nothing a second time' "$f" || missing+=" reuse-ids:${f##*/}"; done
+  # 3, 6, 7: keys printed and kept, hand-filed tickets found, comments only for this run's items.
+  grep -qF 'a ticket related to or mentioned on this ticket or PR that carries the key or clearly matches' "$s" || missing+=" hand-filed"
+  grep -qF 'reuse the key and draft description the earlier note or record kept' "$s" || missing+=" reuse-draft"
+  grep -qF 'only when a step of this run raised the item; a carried-over item that is already a ticket gets no comment' "$s" || missing+=" comment-own-only"
+  grep -qF 'so an unfiled item is repeated once at most' "$s" || missing+=" relay-repeat"
+  # 4: a carried-over item is checked at the current head before it is filed.
+  grep -qF 'confirm the defect still exists at the current PR head, or at `origin/{base}` when the PR has merged' "$s" || missing+=" head-check"
+  grep -qF 'drop it with the reason `fixed since run {earlier run_id}`' "$s" || missing+=" fixed-since"
+  # 8: an entry with an unknown reason (a raw error before 3.30.1) is carried over.
+  grep -qF "or is none of the known don't-file reasons above" "$s" || missing+=" unknown-reason"
+  grep -qF 'These, with `already filed`, are the known don' "$s" || missing+=" known-reasons"
+  check "${missing# }" ""
+}
+
 # The hooks change only to accept the work step's tasks_done: line (these two
 # added lines in hooks/lib-handshake.sh), to check the visual step's handshake
 # (the changed case arm in hooks/subagent-stop-handshake.sh, spec decision 4 of
