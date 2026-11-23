@@ -5228,7 +5228,7 @@ skills_auto_ticket_follow_up_dedupe() {
 # shellcheck disable=SC2016 # literal backticks in the markdown being matched
 skills_auto_ticket_follow_ups_filed_on_park() {
   local s=$ROOT/skills/auto-ticket/SKILL.md c=$ROOT/skills/auto-ticket/autonomous-contract.md
-  local missing= file_ln comment_ln template
+  local missing='' file_ln comment_ln template
   # Route-and-stop files the follow-ups (step 4) before it comments (step 5).
   file_ln=$(grep -n '^4\. \*\*File the follow-ups\.\*\*' "$c" | head -1 | cut -d: -f1)
   comment_ln=$(grep -n '^5\. \*\*Comment the reason\*\*' "$c" | head -1 | cut -d: -f1)
