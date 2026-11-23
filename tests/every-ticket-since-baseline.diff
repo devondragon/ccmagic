@@ -303,20 +303,24 @@
  
  ---
  
-@@ -210,17 +238,62 @@ Run the finish-ticket step via `run_step` — `/ccmagic:finish-ticket` with the
+@@ -210,17 +238,66 @@ Run the finish-ticket step via `run_step` — `/ccmagic:finish-ticket` with the
  
  Whatever the outcome, record it on the PR and the ticket so the unattended run leaves an audit trail.
  
 -**Follow-ups first.** Go through the run's follow-up list (every non-empty `follow_ups:` item from every step, including a `clean` review's optional items). For each item decide one of:
-+**Follow-ups first, on every outcome.** Merged, handed off, or parked, the run files its follow-ups before it posts the summary or the parked note. A park decides only whether the PR merges, so route-and-stop runs this routine as its step 4 (contract §4), before it comments, and files exactly what a merged run would. Go through the run's follow-up list (every non-empty `follow_ups:` item from every step, including a `clean` review's optional items) and the items carried over from earlier runs (below). Before filing any item, collect what was already filed for the same work, then search for the item. Collect the Follow-ups sections and run records (`follow_ups` entries with a `ticket` id) of earlier run summaries on this PR and on this ticket; a retry after a park or a second run on the same ticket can raise the same finding again. Then search the team's open tickets for the item's follow-up key (below): Linear `list_issues` with `query`, `gh issue list --search`, or a JIRA text search in JQL. For each item decide one of:
++**Follow-ups first, on every outcome.** Merged, handed off, or parked, the run files its follow-ups before it posts the summary or the parked note. A park decides only whether the PR merges, so route-and-stop runs this routine as its step 4 (contract §4), before it comments, and files exactly what a merged run would. A parked run then reaches this step only to emit its final status (contract §4 step 6): it skips the follow-up routine, since step 4 already ran it, and uses that step's results. Whenever the routine is entered again within one run, it reuses the ids this run already filed and files nothing a second time. Go through the run's follow-up list (every non-empty `follow_ups:` item from every step, including a `clean` review's optional items) and the items carried over from earlier runs (below). Before filing any item, collect what was already filed for the same work, then search for the item. Collect the Follow-ups sections and run records (`follow_ups` entries with a `ticket` id) of earlier run summaries on this PR and on this ticket; a retry after a park or a second run on the same ticket can raise the same finding again. Then search the team's open tickets for the item's follow-up key (below): Linear `list_issues` with `query`, `gh issue list --search`, or a JIRA text search in JQL. Also read the tickets related to this ticket and the ticket ids mentioned in comments on this ticket and PR: a human who filed an earlier note's item by hand made a ticket with no key line, or pasted the key the note printed. For each item decide one of:
 +
 +- **file it**: on mcp, create a ticket in the same tracker and team (Linear `save_issue` in the ticket's `project` and related to `{TICKET-ID}`, `gh issue create`, or the Atlassian MCP) with a title and a description in one of the two shapes under *Follow-up descriptions* below, then list its ID. The key names the file and symbol (for example `AbuseManager.ipMatchesCIDR`) or the config key or route the item is about, one key per item. The same finding must produce the same key, so use the most specific stable identifier, never prose. Never file a follow-up as a sub-issue of another issue: no `parentId`, since a parent the run does not own (a spec change's parent, for one) can reach Done with an open child; or
-+- **already filed**: an earlier filed id from the collection above, or an open ticket whose description holds the same `Follow-up key:` line or that plainly describes the same defect. Do not file. Comment on the existing ticket, "Also raised by run {run_id} on PR #{n} ({step}).", and list the item in the summary and the run record as already a ticket with that id, reason "already filed"; or
-+- **don't file it**, with a one-line reason: already a ticket ID the step named (list it as is), a duplicate of another item in this list, fixed later in this run (name the commit or pass), or too minor to track (say why).
++- **already filed**: an earlier filed id from the collection above, an open ticket whose description holds the same `Follow-up key:` line or that plainly describes the same defect, or a ticket related to or mentioned on this ticket or PR that carries the key or clearly matches the item's one-liner. Do not file. List the item in the summary and the run record as already a ticket with that id, reason `already filed`. Comment on the existing ticket, "Also raised by run {run_id} on PR #{n} ({step}).", only when a step of this run raised the item; a carried-over item that is already a ticket gets no comment, so a rerun does not comment on old tickets again; or
++- **don't file it**, with a one-line reason that starts with its kind: `already a ticket` (an ID the step named; list it as is), `duplicate of {item}` (another item in this list), `fixed later in this run: {commit or pass}`, `fixed since run {earlier run_id}` (a carried-over item, below), or `too minor: {why}`. These, with `already filed`, are the known don't-file reasons.
 +
-+If the search or the comment fails, that is not a park: file the item as in the first option and say in the summary that the duplicate search failed. If the create itself fails, that is not a park either: list the item as not filed with the reason `create failed: {error}`, go on with the next item, and let the run end as it would have.
++If the search or the comment fails, that is not a park: file the item as in the first option and say in the summary that the duplicate search or the comment failed. If the create itself fails, that is not a park either: list the item as not filed with the reason `create failed: {error}`, go on with the next item, and let the run end as it would have.
 +
-+**Carried over from earlier runs.** From the earlier run summaries and parked notes collected above, add to the run's follow-up list every item an earlier run left for a human to file: one listed under "To file" in its Follow-ups section or line, or a run record `follow_ups` entry with `ticket: null` whose `reason` starts with `to file` or `create failed`. This holds for every run, a rerun that does not review again included: such a run raises no items of its own, and without this step what a parked run listed would never be filed. Keep the item's step, name the earlier run in the summary line (`from {step}, run {earlier run_id}`), and derive its follow-up key from the item as for any other. An item a later summary lists as filed, or that the key search finds, is already filed; the same item carried from two earlier runs is one item, and the other copy is a duplicate.
++**Carried over from earlier runs.** From the earlier run summaries and parked notes collected above, add to the run's follow-up list every item an earlier run left for a human to file: one listed under "To file" in its Follow-ups section or line, or a run record `follow_ups` entry with `ticket: null` whose `reason` starts with `to file` or `create failed`, or is none of the known don't-file reasons above (a run before 3.30.1 recorded a failed create's raw error as its reason). This holds for every run, a rerun that does not review again included: such a run raises no items of its own, and without this step what a parked run listed would never be filed. Keep the item's step, name the earlier run in the summary line (`from {step}, run {earlier run_id}`), and reuse the key and draft description the earlier note or record kept (the record entry's `key` and `description`, or the note's `<details>` draft), so the key matches and the description passes `ccm-followup-check`; derive them as for any other item only when the earlier run kept none. Then, in this order:
++
++- **Drop what is already handled, with no comment.** An item a later summary lists as filed, or that the key search or the related and mentioned tickets show as filed, is `already filed` with that id. The same item carried from two earlier runs is one item, and the other copy is a duplicate.
++- **Check it still holds.** Before filing a carried-over item, confirm the defect still exists at the current PR head, or at `origin/{base}` when the PR has merged: read the file and symbol its key names at that commit (`git show {sha}:{path}`) and check the item's claim against it. When the defect is gone, drop it with the reason `fixed since run {earlier run_id}`. When the check cannot settle it (the file moved, the claim is not about code), file it.
++- **Under prompt-relay,** list a carried-over item "to file" again only when no note after the one that first listed it has listed it already, so an unfiled item is repeated once at most instead of on every rerun; one that was repeated is left out of the summary with nothing recorded.
 +
 +**Follow-up descriptions.** A filed follow-up holds one finding: file each extra finding as its own item, or drop it with a reason as above, and never append it as "Low-priority also: ...". Every description opens with a line naming the PR and the step that raised it, and ends with exactly one line `Follow-up key: <key>`, its last line. Between them it takes one of two shapes:
 +
@@ -333,19 +337,19 @@
 +
 +Follow-up key: AuthGuard.canActivate
 +```
-+
-+```text
-+Raised by the review step on PR #42 (ENG-123).
-+
-+## Change
-+
-+`src/net/abuse.ts`: make `AbuseManager.ipMatchesCIDR` reject a prefix length over 32 instead of matching every address.
  
 -- **file it**: on mcp, create a ticket in the same tracker and team (Linear `save_issue` related to `{TICKET-ID}`, `gh issue create`, or the Atlassian MCP) with a title and a description that names the PR and the step that raised it, then list its ID; or
 -- **don't file it**, with a one-line reason: already a ticket ID (list it as is), a duplicate of another item, fixed later in this run (name the commit or pass), or too minor to track (say why).
-+## Acceptance criteria
++```text
++Raised by the review step on PR #42 (ENG-123).
  
 -Under prompt-relay there is no create API, so list every item under "to file" for a human. Every item appears in the summary's Follow-ups section; "none" is correct only when the list is empty. A parked run does the same before route-and-stop posts its note.
++## Change
++
++`src/net/abuse.ts`: make `AbuseManager.ipMatchesCIDR` reject a prefix length over 32 instead of matching every address.
++
++## Acceptance criteria
++
 +- [ ] `ipMatchesCIDR("10.0.0.1", "10.0.0.0/33")` returns false, and a test covers it.
 +
 +Follow-up key: AbuseManager.ipMatchesCIDR
@@ -361,7 +365,7 @@
 +
 +Write the description's lines and the closing `CCM_FOLLOWUP_EOF` line at the start of the line. Its `shape` is `decision` or `change`. Exit 1: rewrite the description to clear each of its `problems`, and check again. If it still fails, file it as it is and name the remaining rules in the summary; a failed check is never a park.
 +
-+Under prompt-relay there is no create API, so list every item, carried-over ones included, under "to file" for a human, with the record reason `to file: no create API under prompt-relay`; an item that needs a decision lists its questions, options, and recommendation in the shape above. That is the only case an item is listed "to file": under mcp every item is filed, already filed, or not filed with a reason, whatever the outcome. Every item appears in the summary's Follow-ups section (or the parked note's Follow-ups line); "none" is correct only when the list is empty.
++Under prompt-relay there is no create API, so list every item (carried-over ones as above) under "to file" for a human, with the record reason `to file: no create API under prompt-relay`, its key, and its draft description in the shape above, checked with `ccm-followup-check`, so a human can paste it as it is. That is the only case an item is listed "to file": under mcp every item is filed, already filed, or not filed with a reason, whatever the outcome. Every item appears in the summary's Follow-ups section (or the parked note's Follow-ups line), and every item without a ticket shows its `Follow-up key:`; "none" is correct only when the list is empty.
  
  ````markdown
  ## 🤖 Autonomous run summary — {TICKET-ID}
@@ -371,7 +375,7 @@
  **PR:** {pr_url}
  **Run:** {run_id}
  **Requested state:** {Done | merge_handoff_state | needs_human_state} *(prompt-relay only — omit under mcp)*
-@@ -229,30 +302,46 @@ Under prompt-relay there is no create API, so list every item under "to file" fo
+@@ -229,30 +306,47 @@ Under prompt-relay there is no create API, so list every item under "to file" fo
  - Classified as **{class}**, branched, implemented, opened the PR.
  - Review: {clean first pass | N CRITICAL findings fixed and re-reviewed}{; re-reviewed after a late push in feedback pass P}.
  - PR feedback: {P} pass(es) — applied {A}, declined {D}, deferred {F}.
@@ -387,10 +391,12 @@
  
  ### Follow-ups
 -- Filed: {ticket id}: {one-liner} (from {step})
-+- Filed: {ticket id}: {one-liner} (from {step}{, run {earlier run_id} for a carried-over item})
- - Not filed: {item} (from {step}): {reason}
+-- Not filed: {item} (from {step}): {reason}
 -- To file (prompt-relay): {item} (from {step})
-+- To file (prompt-relay only): {item} (from {step})
++- Filed: {ticket id}: {one-liner} (from {step}{, run {earlier run_id} for a carried-over item})
++- Not filed: {item} (from {step}; Follow-up key: {key}): {reason}
++- To file (prompt-relay only): {item} (from {step}; Follow-up key: {key})
++- {after each item left for a human to file (to file, or create failed): its draft description in a `<details><summary>Draft</summary>` block, ending in its `Follow-up key:` line}
  - {or "none" when no step reported a follow-up}
  
 +### Visual check
@@ -408,7 +414,7 @@
  ### Run record
  ```json
 -{"ccmagic": {"version": 2, "run_id": "{run_id}", "ticket": "{TICKET-ID}", "repo": "{owner/name}", "pr": {pr_number or null}, "head_sha": {"<PR head SHA>" or null}, "outcome": "{merged | handed-off | parked}", "classification": "{class}", "merge_owner": "{self | reeve}", "review_passes": {n}, "feedback_passes": {n}, "ci_attempts": {n}, "findings": {"critical": {n}, "high": {n}}, "steps": [{"step": "work-ticket", "status": "done"}, {"step": "review-ticket", "status": "clean"}, {"step": "validate", "status": "needs-human", "reason": "{one line}"}, {"step": "validate", "status": "done"}, {"step": "finish-ticket", "status": "done", "reason": "handed off to reeve; PR #12 awaiting merge"}], "follow_ups": [{"item": "{short description}", "step": "review-ticket", "ticket": "{id or null}", "reason": "{why not filed, or null}"}]}}
-+{"ccmagic": {"version": 2, "run_id": "{run_id}", "ticket": "{TICKET-ID}", "repo": "{owner/name}", "pr": {pr_number or null}, "head_sha": {"<PR head SHA>" or null}, "outcome": "{merged | handed-off | parked}", "classification": "{class}", "merge_owner": "{self | reeve}", "review_passes": {n}, "feedback_passes": {n}, "ci_attempts": {n}, "findings": {"critical": {n}, "high": {n}}, "steps": [{"step": "base-sync", "status": "done", "reason": "merged origin/main at {sha7} into {branch} ({n} commits behind)"}, {"step": "work-ticket", "status": "done"}, {"step": "review-ticket", "status": "clean"}, {"step": "validate", "status": "needs-human", "reason": "{one line}"}, {"step": "validate", "status": "done"}, {"step": "finish-ticket", "status": "done", "reason": "handed off to reeve; PR #12 awaiting merge"}], "follow_ups": [{"item": "{short description}", "step": "review-ticket", "ticket": "{id or null}", "reason": "{why not filed, or null}"}]}}
++{"ccmagic": {"version": 2, "run_id": "{run_id}", "ticket": "{TICKET-ID}", "repo": "{owner/name}", "pr": {pr_number or null}, "head_sha": {"<PR head SHA>" or null}, "outcome": "{merged | handed-off | parked}", "classification": "{class}", "merge_owner": "{self | reeve}", "review_passes": {n}, "feedback_passes": {n}, "ci_attempts": {n}, "findings": {"critical": {n}, "high": {n}}, "steps": [{"step": "base-sync", "status": "done", "reason": "merged origin/main at {sha7} into {branch} ({n} commits behind)"}, {"step": "work-ticket", "status": "done"}, {"step": "review-ticket", "status": "clean"}, {"step": "validate", "status": "needs-human", "reason": "{one line}"}, {"step": "validate", "status": "done"}, {"step": "finish-ticket", "status": "done", "reason": "handed off to reeve; PR #12 awaiting merge"}], "follow_ups": [{"item": "{short description}", "step": "review-ticket", "ticket": "{id or null}", "reason": "{why not filed, or null}", "key": "{follow-up key}"}]}}
  ```
  ````
  
@@ -417,13 +423,13 @@
 +
 +**Head drift.** Only when the visual step's last report was `harness: ran` (otherwise `judged_head` is `none`), compare its `judged_head` with the PR head read for the run record: `git diff --name-only {judged_head} {head_sha}`. If any changed path is outside tests and docs (a test or doc path has a segment `test`, `tests`, `__tests__`, or `spec`, or a file name containing `.test.`, `.spec.`, or `_test.`, or lies under `docs/`, or ends in `.md`), say so under Visual check (`the PR head is now {sha}; {n} files changed since the check`) and put every visual criterion on the UAT checklist with the note `changed after the visual check`. The check is not run again.
 +
-+`steps` lists every sub-skill invocation of this run in order, one entry each, with the handshake `status` it returned; include `reason` whenever the sub-skill emitted one. Repeated review passes are separate entries, and each fix pass is a `work-ticket` entry whose `reason` starts with `fix pass {n} ({fix_source})`. Two kinds of entry come from this skill itself, in the order they happened: a `base-sync` entry, status `done`, for each merge of the base (`${CLAUDE_SKILL_DIR}/base-sync.md`), and, on a park this skill decided, the one needs-human entry contract §4 names (for example `{"step": "ci-wait", "status": "needs-human", "reason": "PR has merge conflicts with its base, so CI cannot run: ..."}`), so the record always names the step and reason that parked the run. `review_passes` is the total number of review-ticket calls in the run, 4f re-reviews included: the final `review_pass`, or 1 when there was no re-review. `follow_ups` has one entry per item on the run's follow-up list, carried-over items included (empty array when there were none), on every outcome, a park included: `ticket` is the filed ID (or the existing ticket's ID for "already filed") or null, and `reason` says why it wasn't filed (null when filed). The block is emitted on every outcome and under every transport. It is the machine-readable record an external gate reads, so its keys are fixed and must not be renamed; `follow_ups` was added in 3.13.0 as an additive key, and readers that don't know it ignore it.
++`steps` lists every sub-skill invocation of this run in order, one entry each, with the handshake `status` it returned; include `reason` whenever the sub-skill emitted one. Repeated review passes are separate entries, and each fix pass is a `work-ticket` entry whose `reason` starts with `fix pass {n} ({fix_source})`. Two kinds of entry come from this skill itself, in the order they happened: a `base-sync` entry, status `done`, for each merge of the base (`${CLAUDE_SKILL_DIR}/base-sync.md`), and, on a park this skill decided, the one needs-human entry contract §4 names (for example `{"step": "ci-wait", "status": "needs-human", "reason": "PR has merge conflicts with its base, so CI cannot run: ..."}`), so the record always names the step and reason that parked the run. `review_passes` is the total number of review-ticket calls in the run, 4f re-reviews included: the final `review_pass`, or 1 when there was no re-review. `follow_ups` has one entry per item on the run's follow-up list, carried-over items included (empty array when there were none), on every outcome, a park included: `ticket` is the filed ID (or the existing ticket's ID for "already filed") or null, `reason` says why it wasn't filed (null when filed), and `key` is the item's follow-up key. An entry left for a human to file (reason `to file` or `create failed`) also carries `description`, its draft description as one JSON string, after `key`, so a later run files it unchanged. `key` and `description` are additive like the rest of `follow_ups`. The block is emitted on every outcome and under every transport. It is the machine-readable record an external gate reads, so its keys are fixed and must not be renamed; `follow_ups` was added in 3.13.0 as an additive key, and readers that don't know it ignore it.
 +
 +**Only when the run handed off with red CI** (Step 4d). The record carries one more key, `ci`, as the last key inside `ccmagic`: `"ci": {"status": "failed", "handed_off": true, "checks": ["{failed check name}", ...], "reason": "{attribution.reason, one line}"}`. The red CI is recorded here and never as a step status, and no step entry is added for it: Reeve's gate parks `run-overrode-verdict` on a step that returned `needs-human` or `fixable-findings` and was never resolved, and its parser drops keys it does not know. Reeve reruns the failed Actions jobs once, or waits while the base fails the same check, before it parks `ci-red` (RV-160). The key is additive like `follow_ups`; every other record leaves it out.
  
  `version: 2` binds the record to what it describes, and Reeve treats a record whose binding doesn't match the PR it located as no record at all (RV-1). A version 2 record carries `repo`, `pr`, and `head_sha` on every outcome, never omitted (the one exception is the version 1 fallback below):
  
-@@ -286,7 +375,9 @@ Never write the summary to a temp file first: a session with narrow Bash grants
+@@ -286,7 +380,9 @@ Never write the summary to a temp file first: a session with narrow Bash grants
  
  ## Route-and-stop
  
@@ -434,7 +440,7 @@
  
  Every run ends in exactly one of these states:
  
-@@ -311,16 +402,24 @@ There is no stalled outcome. Never hang waiting for input.
+@@ -311,16 +407,24 @@ There is no stalled outcome. Never hang waiting for input.
  | A sub-skill emits no handshake (crash/tool error) | Treat as `needs-human` → route-and-stop with reason "{skill} produced no handshake". |
  | `work-ticket` → `needs-human` | route-and-stop (stage `work-ticket`). |
  | `review-ticket` → `needs-human`, or `fixable-findings` unresolved after the bounded loop | route-and-stop (stage `review-ticket`). |
@@ -582,11 +588,11 @@
     - **JIRA** — transition to the matching status via the Atlassian MCP; if no transition matches, apply `needs_human_label` as a label and leave the status unchanged.
  3. **List uncommitted changes.** Run `git status --porcelain`. A non-empty result is work that was not pushed, such as a fix pass that failed; it goes in the parked comment's **Uncommitted changes** line so a human reviews it before anything re-runs. Leave the files as they are.
 -4. **Comment the reason** on both surfaces (skip a surface only if it doesn't exist):
-+4. **File the follow-ups.** When the orchestrator parks, it runs its Step 6 follow-up routine now, before anything is posted (`skills/auto-ticket/SKILL.md`, *Follow-ups first, on every outcome* through *Follow-up descriptions*): over the run's follow-up list and the items earlier runs on this ticket or PR left unfiled (*Carried over from earlier runs*). A park decides only whether the PR merges, so a parked run files exactly what a merged run would, with the same duplicate search by `Follow-up key:` and the same "Also raised by run ..." comment on a match. The parked comment's **Follow-ups** line and the run record's `follow_ups` then give each item's filed ticket id, or a reason it was not filed. A failed create, search, or comment is not a park reason and never stops the routine: the item is listed with the error as its reason (`create failed: {error}`), and the park goes on. Under prompt-relay nothing can be filed, so every item is listed as "to file" (below). A standalone top-level sub-skill files its follow-ups by its own rules, as before.
++4. **File the follow-ups.** When the orchestrator parks, it runs its Step 6 follow-up routine now, before anything is posted: every follow-up rule of `skills/auto-ticket/SKILL.md` Step 6 from *Follow-ups first, on every outcome* up to the summary template, the spec-only collection from the change's other tickets and the prompt-relay paragraph included. It covers the run's follow-up list and the items earlier runs on this ticket or PR left unfiled (*Carried over from earlier runs*). A park decides only whether the PR merges, so a parked run files exactly what a merged run would, with the same duplicate search by `Follow-up key:` and the same "Also raised by run ..." comment when a step of this run raised an item that is already a ticket. The parked comment's **Follow-ups** line and the run record's `follow_ups` then give each item's filed ticket id, or a reason it was not filed, with the key (and, for an item left for a human, the draft description) of every item that has no ticket. A failure here is not a park reason and never stops the routine. Only a failed create lists the item as not filed, with the reason `create failed: {error}`; after a failed search or comment the item is still filed, and the summary says the search or comment failed. The park goes on either way. Under prompt-relay nothing can be filed, so items are listed as "to file" (below). A standalone top-level sub-skill files its follow-ups by its own rules, as before.
 +5. **Comment the reason** on both surfaces (skip a surface only if it doesn't exist):
     - PR comment (`gh pr comment {PR} --body-file - <<'CCM_COMMENT_EOF'`, the body on stdin through the quoted heredoc; never a temp file, which a session with narrow Bash grants can't write under `/tmp` or delete from the repo) and ticket comment (`save_comment` / `gh issue comment` / Atlassian MCP), using the parked-comment template below.
 -5. **Emit the run's final status** (see the orchestrator's Step 6 summary) and exit cleanly. Never wait for input.
-+6. **Emit the run's final status** (see the orchestrator's Step 6 summary) and exit cleanly. Never wait for input.
++6. **Emit the run's final status** (see the orchestrator's Step 6 summary) and exit cleanly. Never wait for input. The parked run skips Step 6's follow-up routine here, since step 4 already ran it, and uses step 4's results; if the routine is entered again within the same run, it reuses the ids this run already filed and files nothing a second time.
 +
 +### The step that parked the run
 +
@@ -616,12 +622,12 @@
  {bullet list: classification, minor choices made, drift flagged, and on a v1 fallback "Run record fell back to version 1: {fallback_reason}"}
  
 -**Follow-ups:** {filed ticket ids with one-liners; items not filed with the reason; under prompt-relay, "to file:" short descriptions; or "none"}
-+**Follow-ups:** {from step 4, one entry per item: `Filed: {id}: {one-liner}`, or `Not filed: {item}: {reason}` (an existing ticket's id with "already filed", a duplicate, fixed later, too minor, or `create failed: {error}`); under prompt-relay only, `To file: {item}`; or "none"}
++**Follow-ups:** {from step 4, one entry per item: `Filed: {id}: {one-liner}`, or `Not filed: {item} (Follow-up key: {key}): {reason}` (an existing ticket's id with "already filed", a duplicate, fixed later, fixed since an earlier run, too minor, or `create failed: {error}`); under prompt-relay only, `To file: {item} (Follow-up key: {key})`; an item left for a human to file (to file, or create failed) is followed by its draft description in a `<details>` block ending in its `Follow-up key:` line, ready to paste; or "none"}
  
  ### Run record
  ```json
 -{"ccmagic": {"version": 2, "run_id": "{run_id}", "ticket": "{TICKET-ID}", "repo": "{owner/name}", "pr": {pr_number or null}, "head_sha": {"<PR head SHA>" or null}, "outcome": "parked", "classification": "{class}", "merge_owner": "{self | reeve}", "review_passes": {n}, "feedback_passes": {n}, "ci_attempts": {n}, "findings": {"critical": {n}, "high": {n}}, "steps": [{"step": "work-ticket", "status": "done"}, {"step": "review-ticket", "status": "needs-human", "reason": "{one line}"}], "follow_ups": []}}
-+{"ccmagic": {"version": 2, "run_id": "{run_id}", "ticket": "{TICKET-ID}", "repo": "{owner/name}", "pr": {pr_number or null}, "head_sha": {"<PR head SHA>" or null}, "outcome": "parked", "classification": "{class}", "merge_owner": "{self | reeve}", "review_passes": {n}, "feedback_passes": {n}, "ci_attempts": {n}, "findings": {"critical": {n}, "high": {n}}, "steps": [{"step": "work-ticket", "status": "done"}, {"step": "review-ticket", "status": "clean"}, {"step": "validate", "status": "done"}, {"step": "ci-wait", "status": "needs-human", "reason": "PR has merge conflicts with its base, so CI cannot run: {one line}"}], "follow_ups": [{"item": "{short description}", "step": "review-ticket", "ticket": "{id or null}", "reason": "{why not filed, or null}"}]}}
++{"ccmagic": {"version": 2, "run_id": "{run_id}", "ticket": "{TICKET-ID}", "repo": "{owner/name}", "pr": {pr_number or null}, "head_sha": {"<PR head SHA>" or null}, "outcome": "parked", "classification": "{class}", "merge_owner": "{self | reeve}", "review_passes": {n}, "feedback_passes": {n}, "ci_attempts": {n}, "findings": {"critical": {n}, "high": {n}}, "steps": [{"step": "work-ticket", "status": "done"}, {"step": "review-ticket", "status": "clean"}, {"step": "validate", "status": "done"}, {"step": "ci-wait", "status": "needs-human", "reason": "PR has merge conflicts with its base, so CI cannot run: {one line}"}], "follow_ups": [{"item": "{short description}", "step": "review-ticket", "ticket": "{id or null}", "reason": "{why not filed, or null}", "key": "{follow-up key}"}]}}
  ```
  
  Nothing was merged. Resolve the item above (and any uncommitted changes), then re-run `/ccmagic:auto-ticket {TICKET-ID}` (or continue manually).
@@ -634,7 +640,7 @@
  
  - **Step 2 (state move) is skipped.** There is no Linear API in the environment, so the ticket state is not moved — the harness/human owns the transition. A park that can't move state is **never** a failure. Emit `Requested state: {needs_human_state}` as an intent line in the final output so the tracker (and the human reading the relay) knows where the ticket should go.
 -- **Step 4 (comment)** still posts the parked-comment template to the **PR** via `gh pr comment` (the GitHub side is intact). It is *additionally* emitted as the orchestrator's final top-level output, wrapped in the §7 final-message delimiters, so the relay delivers the parked note to the tracker as the run's single Linear-facing message.
-+- **Step 4 (follow-ups)** files nothing, since there is no create API: every item, carried-over ones included, is listed as `To file: {item}` for a human, with the record reason `to file: no create API under prompt-relay`. This is the only park whose note lists items "to file".
++- **Step 4 (follow-ups)** files nothing, since there is no create API: every item is listed as `To file: {item} (Follow-up key: {key})` for a human, with its draft description and the record reason `to file: no create API under prompt-relay`. A carried-over item is listed again only when no note after the one that first listed it has listed it already (`skills/auto-ticket/SKILL.md` Step 6). This is the only park whose note lists items "to file".
 +- **Step 5 (comment)** still posts the parked-comment template to the **PR** via `gh pr comment` (the GitHub side is intact). It is *additionally* emitted as the orchestrator's final top-level output, wrapped in the §7 final-message delimiters, so the relay delivers the parked note to the tracker as the run's single Linear-facing message.
  
  ## 5. Config keys
