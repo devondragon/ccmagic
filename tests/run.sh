@@ -3975,20 +3975,39 @@ skills_auto_ticket_rereviews_after_late_push() {
 # work-ticket/review-head.md; orchestrated runs leave it to auto-ticket 4e/4f.
 # shellcheck disable=SC2016 # literal ${...} in the markdown being matched
 skills_standalone_review_covers_pr_head() {
-  local rule=$ROOT/skills/work-ticket/review-head.md missing='' key f
+  local rule=$ROOT/skills/work-ticket/review-head.md conf=$ROOT/skills/finish-ticket/merge-conflicts.md missing='' key f
   [ -f "$rule" ] || missing+=" rule-file"
-  for key in 'headRefOid' 'head:' 'review_pass:' 'previous_findings:' 'max_review_fix_passes' 'orchestrator:' 'needs-human' 'git pull --ff-only' 'Never pick the second yourself'; do
+  for key in 'headRefOid' 'head:' 'review_pass:' 'previous_findings:' 'max_review_fix_passes' 'orchestrator:' 'needs-human' 'Never pick the second yourself' \
+    'git fetch origin {headRefName}' 'git merge --ff-only FETCH_HEAD' 'git checkout {headRefName}' 'no upstream' 'cannot fetch {headRefName}' 'has diverged' \
+    '**and** the verdict is `clean`' '`fixable-findings` goes to step 4' 'fixable-findings` verdict with no round left is a stop' \
+    'covers the first pushed head' 'whatever its handshake `head:` says' 'gh api user --jq .login' 'names as the commit it read'; do
     grep -qF -- "$key" "$rule" 2>/dev/null || missing+=" rule:$key"
   done
+  # A bare pull fails on a branch with no upstream (a Cyrus sandbox), so the
+  # rule never prescribes one.
+  grep -qF '`git pull --ff-only`' "$rule" && missing+=" rule:bare-pull"
+  grep -qF 'Never a bare `git pull`' "$rule" || missing+=" rule:no-bare-pull"
   f=$ROOT/skills/work-ticket/SKILL.md
   section "$f" '^## Step 7:' '^## Step 8:' | grep -F '${CLAUDE_SKILL_DIR}/review-head.md' | grep -qF 'headRefOid' || missing+=" work-ticket:step7"
   for f in pr-feedback finish-ticket; do
     grep -F '${CLAUDE_PLUGIN_ROOT}/skills/work-ticket/review-head.md' "$ROOT/skills/$f/SKILL.md" | grep -qF 'headRefOid' || missing+=" $f:check"
   done
-  # finish-ticket runs it again after it pushes a conflict merge, and parks in
-  # autonomous mode rather than merge or hand off on a stale review.
-  section "$ROOT/skills/finish-ticket/SKILL.md" '^### Handle merge conflicts' '^### Verify merge' | grep -qF 'review head check' || missing+=" finish-ticket:conflict-push"
+  # pr-feedback's done needs a clean review of the PR head, and a
+  # fixable-findings review gets a bounded fix loop.
+  grep -qF 'whose `status:` is `clean` (step 5)' "$ROOT/skills/pr-feedback/SKILL.md" || missing+=" pr-feedback:done-clean"
+  grep -F 'On `fixable-findings`, fix the findings' "$ROOT/skills/pr-feedback/SKILL.md" | grep -qF 'max_review_fix_passes' || missing+=" pr-feedback:fix-loop"
+  # finish-ticket runs it again after it pushes a conflict merge; orchestrated,
+  # where Step 3d skips itself, it returns needs-human instead of merging.
+  section "$ROOT/skills/finish-ticket/SKILL.md" '^### Handle merge conflicts' '^### Verify merge' | grep -qF '${CLAUDE_SKILL_DIR}/merge-conflicts.md' || missing+=" finish-ticket:conflict-file"
+  grep -qF "run Step 3d's review head check again on the new head" "$conf" 2>/dev/null || missing+=" conflicts:standalone"
+  grep -F '**Orchestrated**' "$conf" 2>/dev/null | grep -F 'Do not merge and do not hand off' | grep -qF 'needs-human' || missing+=" conflicts:orchestrated"
   grep -qF 'never merge or hand off on a stale review' "$ROOT/skills/finish-ticket/SKILL.md" || missing+=" finish-ticket:autonomous"
+  # The Review head line sits under Reviews, after Changes requested.
+  grep -A1 -F '  Changes requested by {reviewer}' "$ROOT/skills/finish-ticket/SKILL.md" | grep -qF '  Review head:' || missing+=" finish-ticket:report-line"
+  # Both skills stay under the 500-line rule in .claude/CLAUDE.md.
+  for f in work-ticket finish-ticket; do
+    [ "$(wc -l <"$ROOT/skills/$f/SKILL.md")" -lt 500 ] || missing+=" $f:500-lines"
+  done
   check "${missing# }" ""
 }
 
@@ -5172,7 +5191,8 @@ ADDED_AGENTS_SINCE_BASELINE=(agents/auto-visual.md)
 # rules (issue 111); review-guidance.md holds REVIEW.md and pre-existing findings
 # (issue 109).
 ADDED_SKILL_FILES_SINCE_BASELINE=(skills/work-ticket/spec-delta.md skills/work-ticket/acceptance.md skills/review/review-guidance.md
-  skills/auto-ticket/base-sync.md skills/work-ticket/base-conflict.md skills/work-ticket/review-head.md)
+  skills/auto-ticket/base-sync.md skills/work-ticket/base-conflict.md skills/work-ticket/review-head.md
+  skills/finish-ticket/merge-conflicts.md skills/finish-ticket/errors.md)
 
 spec_prompt_files() {
   { git -C "$ROOT" ls-tree -r --name-only "$SPEC_BASELINE" -- skills agents
@@ -5460,6 +5480,18 @@ followup_change_shape_passes() {
   # shellcheck disable=SC2016 # literal backticks
   fu_check < <(fu_change | sed 's|^`src/net/abuse.ts`: make |Make |')
   check "$RC,$(fu_rules)" "1,change-file-missing"
+  # Longer and framework extensions, a :line suffix, a dot name, and known
+  # extensionless names are files; dotted symbols are not, and neither is a
+  # bare *.json name that is not a well-known root file.
+  local tok got=''
+  for tok in build.gradle application.properties Main.svelte src/net/abuse.ts:42 abuse.ts:10-12 \
+    .gitignore LICENSE Makefile Dockerfile package.json tsconfig.build.json \
+    res.json user.id config.get AbuseManager.ipMatchesCIDR 'x()'; do
+    # shellcheck disable=SC2016 # literal backticks
+    fu_check < <(fu_change | sed "s|^\`src/net/abuse.ts\`: make \`AbuseManager.ipMatchesCIDR\`|\`$tok\`: make it|")
+    got+=" $tok:$RC"
+  done
+  check "${got# }" "build.gradle:0 application.properties:0 Main.svelte:0 src/net/abuse.ts:42:0 abuse.ts:10-12:0 .gitignore:0 LICENSE:0 Makefile:0 Dockerfile:0 package.json:0 tsconfig.build.json:0 res.json:1 user.id:1 config.get:1 AbuseManager.ipMatchesCIDR:1 x():1"
 }
 
 # A description in the shape before 3.31.0 fails the new rules, and passes with

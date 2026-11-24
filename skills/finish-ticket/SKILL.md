@@ -177,7 +177,7 @@ git diff {baseRefName}...HEAD --stat
 
 Compare the commit history and file changes against the ticket title and description. Briefly assess whether the work looks complete relative to the ticket scope. Look for obvious gaps (e.g., ticket mentions a UI change but only backend files changed), scope creep (many unrelated files changed), and incomplete implementation signals (TODO comments, skipped tests, WIP commits).
 
-**Review covers the PR head (RV-178).** A push after the last review (a fix of a finding, a fix for PR feedback, a merge of the base) leaves the head unreviewed, and a merge gate that binds the review to the head (Reeve parks any other head as `review-not-clean`) rejects the old report. Unless orchestrated (`orchestrator:` in the grounding block: `/ccmagic:auto-ticket` reaches this step only with a clean review of the PR head, its Step 4e and 4f), read `${CLAUDE_PLUGIN_ROOT}/skills/work-ticket/review-head.md` and run its check before Step 5b, the merge, or the hand-off: read the PR head with `gh pr view {pr_number} --json headRefOid --jq .headRefOid`, find the commit the last review read (the `head:` of the newest `# Ticket-Grounded Review:` comment on the PR, or the commit an interactive review in this session read), and when they differ, or no review is found, review the PR head as that file's step 4 says: autonomous, rerun `/ccmagic:review-ticket` on it and confirm the new report's `head:` equals the PR head; interactive, offer that rerun or going on with the stale review named in the final message. In autonomous mode a review that is not clean on the PR head is a blocker like the merge gate's, since this step does not fix findings. Report the result under **Review head** in 3e.
+**Review covers the PR head (RV-178).** A push after the last review (a fix of a finding, PR feedback, a base merge) leaves the head unreviewed, and a merge gate that binds the review to the head (Reeve parks any other head as `review-not-clean`) rejects the old report. Unless orchestrated, read `${CLAUDE_PLUGIN_ROOT}/skills/work-ticket/review-head.md` and run its check, as its *In /ccmagic:finish-ticket* section says, before Step 5b, the merge, or the hand-off: it reads the PR head with `gh pr view {pr_number} --json headRefOid,headRefName`, takes the newest posted review from this run's own login, and requires its `head:` to equal the PR head with `status: clean`. Report the result on the `Review head:` line in 3e.
 
 ### 3e. Report
 
@@ -200,9 +200,8 @@ CI Checks:
 Reviews:
   Approved by {reviewer}
   No approvals yet
-
-Review head: {covers {sha7} | review covers {sha7}, PR head is {sha7} | no review found}
   Changes requested by {reviewer}
+  Review head: {review covers the PR head {sha7}, clean | review covers {sha7}, PR head is {sha7} | review of {sha7} is {status} | no review found}
 
 Scope:
   {2-3 sentences summarizing whether the changes appear to match the ticket}
@@ -288,17 +287,7 @@ Wait for explicit confirmation. If the user says "no" or wants to change somethi
 
 Only when `draft_until_finish` resolves to `true` (a line in the grounding block wins over config). Absent the key, or with `false`, skip this step and nothing below changes.
 
-This runs on both paths, after Step 3's gate passes and Step 5's confirmation, and before Step 6's merge or Step 7's hand-off: GitHub refuses to merge a draft, and the merge gate a hand-off goes to expects a PR ready for review. Read the draft flag, as its own Bash call:
-
-```bash
-gh pr view {pr_number} --json isDraft --jq .isDraft
-```
-
-If it prints `true`, mark the PR ready, then read the flag again, each as its own Bash call:
-
-```bash
-gh pr ready {pr_number}
-```
+This runs on both paths, after Step 3's gate passes and Step 5's confirmation, and before Step 6's merge or Step 7's hand-off: GitHub refuses to merge a draft, and the merge gate a hand-off goes to expects a PR ready for review. Read the draft flag, as its own Bash call: `gh pr view {pr_number} --json isDraft --jq .isDraft`. If it prints `true`, mark the PR ready with `gh pr ready {pr_number}`, then read the flag again, each as its own Bash call.
 
 The PR is ready only when the second read prints `false`. A failed `gh pr ready`, a failed read, or a PR still a draft stops the finish: do not merge and do not hand off. Interactively, say so with the command's first error line and stop. In autonomous mode, return `needs-human` with `reason: draft_until_finish: could not mark PR #{pr_number} ready for review: {first error line, or "still a draft after gh pr ready"}`. If the first read prints `false` (the PR was already ready, as when a person marked it), go on.
 
@@ -340,29 +329,7 @@ Use the strategy flag chosen in Step 5 (`--squash` for feature/bugfix/hotfix/cho
 
 ### Handle merge conflicts
 
-If the merge fails due to conflicts:
-
-1. Report the conflict clearly:
-   > "The PR cannot be merged automatically due to conflicts."
-2. Fetch and attempt local resolution:
-   ```bash
-   git fetch origin
-   git checkout {headRefName}
-   git merge origin/{baseRefName}
-   ```
-3. Show the conflicting files:
-   ```bash
-   git diff --name-only --diff-filter=U
-   ```
-4. Attempt to resolve straightforward conflicts (version bumps, import lists, config values). If the conflict requires business-logic judgment, show it to the user and ask.
-5. After resolving:
-   ```bash
-   git add {resolved files}
-   git commit -m "chore: resolve merge conflicts for {TICKET-ID}"
-   git push origin {headRefName}
-   ```
-6. The push moved the PR head past the last review: run Step 3d's review head check again on the new head (in autonomous mode a review that is not clean there is `needs-human`). Then re-attempt the PR merge.
-7. If conflicts cannot be resolved, stop and tell the user what remains unresolved.
+If the merge fails due to conflicts, read `${CLAUDE_SKILL_DIR}/merge-conflicts.md` and follow it. It resolves straightforward conflicts locally and pushes the merge, and that push moves the PR head past the last review: standalone, Step 3d's review head check runs again on the new head before the merge is re-attempted; orchestrated, the step returns `needs-human` instead of merging a head no review has read.
 
 ### Verify merge success
 
@@ -483,11 +450,11 @@ Absent all three, run the interactive path exactly as documented above. Also rea
 ### Behavior at each human-gate
 
 - **Step 3 (Sanity check) — this is the merge gate.** Merge **only if** `ccm-merge-gate` exits 0 (after waiting out `pending` / `not-registered` CI with `"${CLAUDE_PLUGIN_ROOT}/bin/ccm-ci-status" --watch` as Step 3 describes). **Never ask a human to confirm CI, and never emit a question as the run's result** — an autonomous run ends by merging or by route-and-stop, never by asking. If the gate fails → `needs-human` (do **not** merge; the `reason` is the gate's `blockers` joined with `; `). Do not take the interactive "proceed anyway" option. The PreToolUse hook denies `gh pr merge` in autonomous runs while the gate fails, so a merge attempt past a failed gate is refused, and the refusal means `needs-human`.
-- **Step 3d (Review head, top-level runs only):** never merge or hand off on a stale review. When the check in `${CLAUDE_PLUGIN_ROOT}/skills/work-ticket/review-head.md` cannot bring a clean review to the PR head (the head read fails, the rerun's `head:` differs, the review is not clean) → `needs-human` with its reason; do not merge or hand off.
+- **Step 3d (Review head, top-level runs only):** never merge or hand off on a stale review. When the check in `${CLAUDE_PLUGIN_ROOT}/skills/work-ticket/review-head.md` cannot bring a review with `status: clean` to the PR head (the head read fails, the rerun's `head:` differs, the review is `fixable-findings` or `needs-human`) → `needs-human` with its reason; do not merge or hand off.
 - **Step 4 (Disposition):** always take the **Done** path. The QA path needs an interactive hand-off (QA-assignee lookup, status confirmation) that would hang an unattended run, so autonomous mode never enters it — **even if `default_qa_workflow: true`**. If the QA path was explicitly forced (`--qa` passed *together with* an autonomous signal), that's a conflict autonomous mode can't satisfy → `needs-human` (reason: "QA disposition requires a human — re-run without `--qa`, or complete QA manually"); do **not** merge. A project that requires QA on every ticket should not be driven by `/ccmagic:auto-ticket`.
 - **Step 5 (Merge confirmation):** proceed with the determined strategy — squash for `feature/`/`bugfix/`/`hotfix/`/`chore/`, merge commit for `release/` — no pause.
 - **Step 5b (Mark ready, `draft_until_finish: true` only):** mark the PR ready for review before the merge, as Step 5b says; a failure is `needs-human`, and the run neither merges nor hands off.
-- **Step 6 (Merge conflicts):** auto-resolve **trivial** conflicts (version bumps, import lists, config values) exactly as Step 6 already describes. A **business-logic** conflict → `needs-human` (do not merge; leave the branch unmerged, `reason` names the conflicting files).
+- **Step 6 (Merge conflicts):** auto-resolve **trivial** conflicts (version bumps, import lists, config values) exactly as Step 6 already describes. A **business-logic** conflict → `needs-human` (do not merge; leave the branch unmerged, `reason` names the conflicting files). After the push of a resolved merge, merge only with a clean review of the new head (standalone); when orchestrated, return `needs-human` instead of merging (`merge-conflicts.md`, item 6).
 
 ### Merge hand-off (`merge_owner: reeve`)
 
@@ -528,22 +495,4 @@ requested_state: <Done when orchestrated or under prompt-relay; omit otherwise>
 
 ## Error Handling
 
-| Situation | Action |
-|-----------|--------|
-| No tracker available — unless the prompt-relay detection rule matched (contract §7) | Stop. Tell user to install one or set `tracker:` in `.claude/ccmagic.local.md`. |
-| No PR found | Stop. Tell user to create one first. |
-| Ticket not found | Stop. Tell user the ID that failed. |
-| Tracker MCP/CLI not connected | Stop. Tell user which integration is needed. |
-| CI checks failing | Surface them. Ask user to fix or override. (Autonomous: `needs-human` — do not merge.) |
-| Changes requested on PR | Surface them. Ask user to address or override. (Autonomous: `needs-human` — do not merge.) |
-| PR has conflicts | Attempt local resolution. Escalate unresolvable conflicts to user. (Autonomous: trivial → resolve; business-logic → `needs-human`.) |
-| Merge fails for other reason | Show the error. Do not retry blindly. |
-| `--delete-branch` fails (branch checked out in a worktree, or any local-checkout reason) | Verify the merge succeeded (`gh pr view --json state`), delete the remote branch best-effort (`git push origin --delete {headRefName}`), leave the local checkout alone, and report the outcome gracefully — this is not an error. |
-| Conflict resolution: `git checkout {headRefName}` fails with "'{headRefName}' is already used by worktree at '{path}'" | The branch lives in a linked worktree — run the same conflict-resolution commands from that worktree path instead, then re-attempt the merge. Not an error. |
-| Target transition not found (JIRA/Linear) | Show available transitions/states. Ask user to pick. (Autonomous: for the Done target, try the fallbacks; if none match, apply `needs_human_label` and note it.) |
-| QA label missing (GitHub QA path) | Ask user which label, offer to save to config. |
-| Ticket update fails | Warn user. Report what was and wasn't updated. Continue to Done. |
-| Cannot identify QA person (QA path only) | Ask the user directly. |
-| User says "no" at confirmation | Stop cleanly. Nothing has been merged yet. |
-| Autonomous: merge gate not satisfied | `needs-human` — route-and-stop (park to `needs_human_state`, comment on PR + ticket) if top-level; else emit the handshake for the parent. |
-| `merge_owner: reeve` and `merge_handoff_state` does not exist on the team | Do not merge, do not transition. Interactive: say so and stop. Autonomous: `needs-human` with the state name in `reason`. |
+The table of situations and actions (no tracker, no PR, failing CI, conflicts, a failed `--delete-branch`, a missing transition, and the autonomous cases) is in `${CLAUDE_SKILL_DIR}/errors.md`; read it when one of them comes up.
