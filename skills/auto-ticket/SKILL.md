@@ -264,7 +264,7 @@ Whatever the outcome, record it on the PR and the ticket so the unattended run l
 
 If the search or the comment fails, that is not a park: file the item as in the first option and say in the summary that the duplicate search or the comment failed. If the create itself fails, that is not a park either: list the item as not filed with the reason `create failed: {error}`, go on with the next item, and let the run end as it would have.
 
-**Carried over from earlier runs.** From the earlier run summaries and parked notes collected above, add to the run's follow-up list every item an earlier run left for a human to file: one listed under "To file" in its Follow-ups section or line, or a run record `follow_ups` entry with `ticket: null` whose `reason` starts with `to file` or `create failed`, or is none of the known don't-file reasons above (a run before 3.30.1 recorded a failed create's raw error as its reason). This holds for every run, a rerun that does not review again included: such a run raises no items of its own, and without this step what a parked run listed would never be filed. Keep the item's step, name the earlier run in the summary line (`from {step}, run {earlier run_id}`), and reuse the key and draft description the earlier note or record kept (the record entry's `key` and `description`, or the note's `<details>` draft), so the key matches and the description passes `ccm-followup-check`; derive them as for any other item only when the earlier run kept none. Then, in this order:
+**Carried over from earlier runs.** From the earlier run summaries and parked notes collected above, add to the run's follow-up list every item an earlier run left for a human to file: one listed under "To file" in its Follow-ups section or line, or a run record `follow_ups` entry with `ticket: null` whose `reason` starts with `to file` or `create failed`, or is none of the known don't-file reasons above (a run before 3.30.1 recorded a failed create's raw error as its reason). This holds for every run, a rerun that does not review again included: such a run raises no items of its own, and without this step what a parked run listed would never be filed. Keep the item's step, name the earlier run in the summary line (`from {step}, run {earlier run_id}`), and reuse the key and draft description the earlier note or record kept (the record entry's `key` and `description`, or the note's `<details>` draft), so the key matches and the description passes `ccm-followup-check` (with `--carried-over`, below, since a draft from before 3.31.0 is in the older change shape); derive them as for any other item only when the earlier run kept none. Then, in this order:
 
 - **Drop what is already handled, with no comment.** An item a later summary lists as filed, or that the key search or the related and mentioned tickets show as filed, is `already filed` with that id. The same item carried from two earlier runs is one item, and the other copy is a duplicate.
 - **Check it still holds.** Before filing a carried-over item, confirm the defect still exists at the current PR head, or at `origin/{base}` when the PR has merged: read the file and symbol its key names at that commit (`git show {sha}:{path}`) and check the item's claim against it. When the defect is gone, drop it with the reason `fixed since run {earlier run_id}`. When the check cannot settle it (the file moved, the claim is not about code), file it.
@@ -273,7 +273,7 @@ If the search or the comment fails, that is not a park: file the item as in the 
 **Follow-up descriptions.** A filed follow-up holds one finding: file each extra finding as its own item, or drop it with a reason as above, and never append it as "Low-priority also: ...". Every description opens with a line naming the PR and the step that raised it, and ends with exactly one line `Follow-up key: <key>`, its last line. Between them it takes one of two shapes:
 
 - **Needs a decision** (the step could not choose between fixes, or the item ends in "needs a human decision"): write each open question as `**q1.** <question>` (then `**q2.**`, ...), each option on its own line as `- A: <option> (for: <reasons>; against: <reasons>)` (then `- B:`, ...; at least two), and one line `Recommended: X. <why>` naming one of the options. File it in the tracker's decision state instead of the default Backlog: Linear `Needs Decision` when the team has a state of that name (`list_issue_statuses`), a JIRA status of that name when the project's workflow has one; otherwise the default state, and the summary marks the item "needs a decision".
-- **No open decision**: a `## Change` section that names the file (and symbol) and what to do, and a `## Acceptance criteria` section with at least one checkable list item (`- [ ] ...`).
+- **No open decision** (since 3.31.0, RV-175): the line right after the opener is `Goal: <one sentence>`, the outcome the ticket is for. Then a `## Change` section with the one chosen approach, naming the file in backticks (and the symbol) and what to do; a `## Out of scope` section with at least one line saying what the ticket does not cover (a neighboring case, a related cleanup, or `Nothing else in {file}.`); and a `## Acceptance criteria` section with at least one checkable list item (`- [ ] ...`). The opener's PR and the file `## Change` names are the ticket's context.
 
 ```text
 Raised by the review step on PR #42 (ENG-123).
@@ -288,10 +288,15 @@ Follow-up key: AuthGuard.canActivate
 
 ```text
 Raised by the review step on PR #42 (ENG-123).
+Goal: An IPv4 CIDR rule with a prefix length over 32 matches no address.
 
 ## Change
 
 `src/net/abuse.ts`: make `AbuseManager.ipMatchesCIDR` reject a prefix length over 32 instead of matching every address.
+
+## Out of scope
+
+- IPv6 rules, which `AbuseManager.ipMatchesCIDR` does not parse.
 
 ## Acceptance criteria
 
@@ -308,7 +313,7 @@ Before filing, pass each description to the checker on stdin, as its own Bash ca
 CCM_FOLLOWUP_EOF
 ```
 
-Write the description's lines and the closing `CCM_FOLLOWUP_EOF` line at the start of the line. Its `shape` is `decision` or `change`. Exit 1: rewrite the description to clear each of its `problems`, and check again. If it still fails, file it as it is and name the remaining rules in the summary; a failed check is never a park.
+Write the description's lines and the closing `CCM_FOLLOWUP_EOF` line at the start of the line. Its `shape` is `decision` or `change`. For a carried-over item whose draft description you reuse as the earlier run kept it, add `--carried-over` (`"${CLAUDE_PLUGIN_ROOT}/bin/ccm-followup-check" --carried-over <<'CCM_FOLLOWUP_EOF'`): a draft from before 3.31.0 has no `Goal:` line and no `## Out of scope` section, and with the flag it passes with an `old-shape` warning (`old_shape: true`), so it is filed as it is and its key still matches. Never pass the flag for a description this run wrote. Exit 1: rewrite the description to clear each of its `problems`, and check again. If it still fails, file it as it is and name the remaining rules in the summary; a failed check is never a park.
 
 <!-- ccmagic:spec-only -->
 **Only when the grounding block has a `spec:` section.** Also collect the follow-ups filed on the change's other tickets (the sub-issues of the change's parent ticket) and on their PRs, since the sections and the archive ticket of one change tend to find the same defects.

@@ -5397,15 +5397,21 @@ fu_decision() {
     'Follow-up key: AuthGuard.canActivate'
 }
 
-# fu_change: a follow-up with no open decision: one finding, a change, and
-# acceptance criteria.
+# fu_change: a follow-up with no open decision: one finding, a goal, a change
+# naming the file, what is out of scope, and acceptance criteria (RV-175).
 fu_change() {
   # shellcheck disable=SC2016 # literal backticks
-  printf '%s\n' 'Raised by the review step on PR #7 (ENG-1).' '' '## Change' '' \
+  printf '%s\n' 'Raised by the review step on PR #7 (ENG-1).' '' \
+    'Goal: CIDR matching rejects a prefix length over 32.' '' '## Change' '' \
     '`src/net/abuse.ts`: make `AbuseManager.ipMatchesCIDR` reject a prefix length over 32.' '' \
+    '## Out of scope' '' '- IPv6 prefixes.' '' \
     '## Acceptance criteria' '' '- [ ] `ipMatchesCIDR("10.0.0.1", "10.0.0.0/33")` returns false.' '' \
     'Follow-up key: AbuseManager.ipMatchesCIDR'
 }
+
+# fu_change_old: the change shape before 3.31.0, with no goal and no out of
+# scope section, as earlier runs drafted and filed it.
+fu_change_old() { fu_change | sed '/^Goal: /,/^$/d; /^## Out of scope/,/^- IPv6/d' | cat -s; }
 
 followup_decision_shape_passes() {
   fu_check < <(fu_decision)
@@ -5419,10 +5425,40 @@ followup_decision_shape_passes() {
 
 followup_change_shape_passes() {
   fu_check < <(fu_change)
-  check "$RC,$(jqval .pass),$(jqval .shape),$(fu_rules)" "0,true,change,"
+  check "$RC,$(jqval .pass),$(jqval .shape),$(jqval .old_shape),$(fu_rules),$(jqval '.warnings | length')" "0,true,change,false,,0"
   # Any list marker counts as a checkable item.
   fu_check < <(fu_change | sed 's/^- \[ \] /1. /')
   check "$RC" "0"
+  # A file is a backticked token with a slash, a short extension, or a known
+  # extensionless name; a symbol alone is not one.
+  # shellcheck disable=SC2016 # literal backticks
+  fu_check < <(fu_change | sed 's|^`src/net/abuse.ts`: make `AbuseManager.ipMatchesCIDR`|In `Makefile`, make `AbuseManager.ipMatchesCIDR`|')
+  check "$RC,$(fu_rules)" "0,"
+  # shellcheck disable=SC2016 # literal backticks
+  fu_check < <(fu_change | sed 's|^`src/net/abuse.ts`: make |Make |')
+  check "$RC,$(fu_rules)" "1,change-file-missing"
+}
+
+# A description in the shape before 3.31.0 fails the new rules, and passes with
+# an old-shape warning only as a carried-over description, so an earlier run's
+# draft is still filed as it is (RV-175).
+followup_change_old_shape() {
+  fu_check < <(fu_change_old)
+  check "$RC,$(jqval .old_shape),$(fu_rules)" "1,true,goal-missing,scope-missing"
+  fu_check --carried-over < <(fu_change_old)
+  check "$RC,$(jqval .pass),$(jqval .old_shape),$(fu_rules),$(jq -r '[.warnings[].rule] | join(",")' <<<"$OUT")" "0,true,true,,old-shape"
+  # The old shape still needs its own sections.
+  fu_check --carried-over < <(fu_change_old | sed '/^## Acceptance criteria/,/^- \[ \]/d')
+  check "$RC,$(fu_rules)" "1,criteria-missing"
+  # A description with a goal or an out of scope section is in the new shape,
+  # and --carried-over does not relax it.
+  fu_check --carried-over < <(fu_change | sed '/^## Out of scope/,/^- IPv6/d')
+  check "$RC,$(jqval .old_shape),$(fu_rules)" "1,false,scope-missing"
+  fu_check --carried-over < <(fu_change | sed '/^Goal: /d')
+  check "$RC,$(jqval .old_shape),$(fu_rules)" "1,false,goal-missing"
+  # A decision is never in the old shape.
+  fu_check --carried-over < <(fu_decision)
+  check "$RC,$(jqval .old_shape),$(jqval '.warnings | length')" "0,false,0"
 }
 
 followup_decision_problems() {
@@ -5438,7 +5474,7 @@ followup_decision_problems() {
   # The options of RD-107, written as one sentence, are not a decision block.
   fu_check <<<'Options: intercept GET /api/me, or reword the rule. Needs a human decision.
 Follow-up key: AuthGuard.canActivate'
-  check "$RC,$(jqval .shape),$(fu_rules)" "1,change,change-missing,criteria-missing"
+  check "$RC,$(jqval .shape),$(fu_rules)" "1,change,change-missing,criteria-missing,goal-missing,scope-missing"
 }
 
 followup_change_problems() {
@@ -5447,8 +5483,13 @@ followup_change_problems() {
 Low-priority also: rename x; drop y.')
   check "$RC,$(fu_rules)" "1,extra-findings,criteria-missing"
   # Empty sections.
-  fu_check < <(fu_change | sed '/^`src/d; /^- \[ \]/d')
-  check "$RC,$(fu_rules)" "1,change-empty,criteria-empty"
+  fu_check < <(fu_change | sed '/^`src/d; /^- IPv6/d; /^- \[ \]/d')
+  check "$RC,$(fu_rules)" "1,change-empty,scope-empty,criteria-empty"
+  # The goal is the line right after the Raised by line.
+  fu_check < <(fu_change | sed 's/^Goal: //')
+  check "$RC,$(fu_rules)" "1,goal-missing"
+  fu_check < <(fu_change | sed '1d')
+  check "$RC,$(fu_rules)" "1,goal-missing"
   # The key line: missing, repeated, not last.
   fu_check < <(fu_change | sed '$d')
   check "$RC,$(fu_rules)" "1,key-missing"
@@ -5464,12 +5505,19 @@ Low-priority also: rename x; drop y.')
 }
 
 # SKILL.md states both shapes, files a decision in the decision state, and
-# checks each description with ccm-followup-check; its two examples pass.
+# checks each description with ccm-followup-check; its two examples pass
+# without --carried-over.
 # shellcheck disable=SC2016 # literal backticks in the markdown being matched
 skills_auto_ticket_follow_up_shapes() {
   local f="$ROOT/skills/auto-ticket/SKILL.md" missing='' ex shapes=''
   grep -qF '`Needs Decision`' "$f" || missing+=" decision-state"
   grep -qF '`## Acceptance criteria`' "$f" || missing+=" criteria"
+  # RV-175: a change follow-up carries a goal and what is out of scope, and an
+  # earlier run's draft in the old shape is checked with --carried-over.
+  grep -qF '`Goal: <one sentence>`' "$f" || missing+=" goal"
+  grep -qF '`## Out of scope`' "$f" || missing+=" out-of-scope"
+  grep -qF 'ccm-followup-check" --carried-over' "$f" || missing+=" carried-over"
+  grep -qF 'Never pass the flag for a description this run wrote' "$f" || missing+=" carried-over-only"
   grep -qF '`**q1.** <question>`' "$f" || missing+=" q1"
   grep -qF 'bin/ccm-followup-check' "$f" || missing+=" helper"
   grep -qF 'Low-priority also' "$f" || missing+=" one-finding"

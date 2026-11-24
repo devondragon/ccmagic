@@ -292,10 +292,10 @@
  
 -Run the finish-ticket step via `run_step` — `/ccmagic:finish-ticket` with the grounding block. Its Step 3 sanity check is the **merge gate**: it merges only if the PR is mergeable, CI is green, and there are no unaddressed change-requests.
 +Run the finish-ticket step via `run_step` — `/ccmagic:finish-ticket` with the grounding block, plus a `ci_handoff: true` line when the pass was **clean with red CI** (4d), ending it with a `steps:` section (contract §2): the run record's `steps` array so far, every step invocation of this run in order with its status and reason, exactly as Step 6 will write it, as one line of JSON in a `~~~` fence. Its Step 3 sanity check is the **merge gate**: it merges only if the PR is mergeable, CI is green, and there are no unaddressed change-requests.
++
++**Finish guard.** `ccm-finish-guard` reads that `steps:` section and refuses a run whose latest validate is not `done`, whose latest review-ticket is not `clean`, or that ran work-ticket, pr-feedback, or a `base-sync` merge after its latest validate (RV-86). The plugin's PreToolUse hook runs it on your call that starts `auto-finish` and denies the call when it fails, and the finish agent runs it again first. A denied call names the rule: **route-and-stop** with the stage and reason the denial gives. Do not start the finish step again with a changed step list, and do not move the ticket yourself. The one exception is a denial for a missing or malformed `steps:` section (`steps-unreadable`): add the section and start the step once more.
  
 -- `done` with `reason` beginning `handed off to reeve` → the PR is open and nothing merged; the handshake carries `requested_state: {merge_handoff_state}`, which the after-step routine applies (a missing state parks the run there). Continue to Step 6 with outcome **handed-off**.
-+**Finish guard.** `ccm-finish-guard` reads that `steps:` section and refuses a run whose latest validate is not `done`, whose latest review-ticket is not `clean`, or that ran work-ticket, pr-feedback, or a `base-sync` merge after its latest validate (RV-86). The plugin's PreToolUse hook runs it on your call that starts `auto-finish` and denies the call when it fails, and the finish agent runs it again first. A denied call names the rule: **route-and-stop** with the stage and reason the denial gives. Do not start the finish step again with a changed step list, and do not move the ticket yourself. The one exception is a denial for a missing or malformed `steps:` section (`steps-unreadable`): add the section and start the step once more.
-+
 +- `done` with `reason` beginning `handed off to reeve` → the PR is open and nothing merged; the handshake carries `requested_state: {merge_handoff_state}`, which the after-step routine applies (a missing state parks the run there). Continue to Step 6 with outcome **handed-off**. With `ci_handoff: true` the finish step runs its merge gate with `--red-ci-handoff`, which reads the attribution again itself; when that refuses, it returns `needs-human` like any blocker.
  - `done` otherwise → the PR merged; the handshake carries `requested_state: Done`, which the after-step routine applies. Continue to Step 6 with outcome **merged**.
 -- `needs-human` → the gate wasn't satisfied. It did **not** merge → **route-and-stop** (stage = `finish-ticket`, reason: its blockers).
@@ -303,7 +303,7 @@
  
  ---
  
-@@ -210,17 +238,66 @@ Run the finish-ticket step via `run_step` — `/ccmagic:finish-ticket` with the
+@@ -210,17 +238,71 @@ Run the finish-ticket step via `run_step` — `/ccmagic:finish-ticket` with the
  
  Whatever the outcome, record it on the PR and the ticket so the unattended run leaves an audit trail.
  
@@ -316,7 +316,7 @@
 +
 +If the search or the comment fails, that is not a park: file the item as in the first option and say in the summary that the duplicate search or the comment failed. If the create itself fails, that is not a park either: list the item as not filed with the reason `create failed: {error}`, go on with the next item, and let the run end as it would have.
 +
-+**Carried over from earlier runs.** From the earlier run summaries and parked notes collected above, add to the run's follow-up list every item an earlier run left for a human to file: one listed under "To file" in its Follow-ups section or line, or a run record `follow_ups` entry with `ticket: null` whose `reason` starts with `to file` or `create failed`, or is none of the known don't-file reasons above (a run before 3.30.1 recorded a failed create's raw error as its reason). This holds for every run, a rerun that does not review again included: such a run raises no items of its own, and without this step what a parked run listed would never be filed. Keep the item's step, name the earlier run in the summary line (`from {step}, run {earlier run_id}`), and reuse the key and draft description the earlier note or record kept (the record entry's `key` and `description`, or the note's `<details>` draft), so the key matches and the description passes `ccm-followup-check`; derive them as for any other item only when the earlier run kept none. Then, in this order:
++**Carried over from earlier runs.** From the earlier run summaries and parked notes collected above, add to the run's follow-up list every item an earlier run left for a human to file: one listed under "To file" in its Follow-ups section or line, or a run record `follow_ups` entry with `ticket: null` whose `reason` starts with `to file` or `create failed`, or is none of the known don't-file reasons above (a run before 3.30.1 recorded a failed create's raw error as its reason). This holds for every run, a rerun that does not review again included: such a run raises no items of its own, and without this step what a parked run listed would never be filed. Keep the item's step, name the earlier run in the summary line (`from {step}, run {earlier run_id}`), and reuse the key and draft description the earlier note or record kept (the record entry's `key` and `description`, or the note's `<details>` draft), so the key matches and the description passes `ccm-followup-check` (with `--carried-over`, below, since a draft from before 3.31.0 is in the older change shape); derive them as for any other item only when the earlier run kept none. Then, in this order:
 +
 +- **Drop what is already handled, with no comment.** An item a later summary lists as filed, or that the key search or the related and mentioned tickets show as filed, is `already filed` with that id. The same item carried from two earlier runs is one item, and the other copy is a duplicate.
 +- **Check it still holds.** Before filing a carried-over item, confirm the defect still exists at the current PR head, or at `origin/{base}` when the PR has merged: read the file and symbol its key names at that commit (`git show {sha}:{path}`) and check the item's claim against it. When the defect is gone, drop it with the reason `fixed since run {earlier run_id}`. When the check cannot settle it (the file moved, the claim is not about code), file it.
@@ -325,7 +325,7 @@
 +**Follow-up descriptions.** A filed follow-up holds one finding: file each extra finding as its own item, or drop it with a reason as above, and never append it as "Low-priority also: ...". Every description opens with a line naming the PR and the step that raised it, and ends with exactly one line `Follow-up key: <key>`, its last line. Between them it takes one of two shapes:
 +
 +- **Needs a decision** (the step could not choose between fixes, or the item ends in "needs a human decision"): write each open question as `**q1.** <question>` (then `**q2.**`, ...), each option on its own line as `- A: <option> (for: <reasons>; against: <reasons>)` (then `- B:`, ...; at least two), and one line `Recommended: X. <why>` naming one of the options. File it in the tracker's decision state instead of the default Backlog: Linear `Needs Decision` when the team has a state of that name (`list_issue_statuses`), a JIRA status of that name when the project's workflow has one; otherwise the default state, and the summary marks the item "needs a decision".
-+- **No open decision**: a `## Change` section that names the file (and symbol) and what to do, and a `## Acceptance criteria` section with at least one checkable list item (`- [ ] ...`).
++- **No open decision** (since 3.31.0, RV-175): the line right after the opener is `Goal: <one sentence>`, the outcome the ticket is for. Then a `## Change` section with the one chosen approach, naming the file in backticks (and the symbol) and what to do; a `## Out of scope` section with at least one line saying what the ticket does not cover (a neighboring case, a related cleanup, or `Nothing else in {file}.`); and a `## Acceptance criteria` section with at least one checkable list item (`- [ ] ...`). The opener's PR and the file `## Change` names are the ticket's context.
 +
 +```text
 +Raised by the review step on PR #42 (ENG-123).
@@ -337,16 +337,21 @@
 +
 +Follow-up key: AuthGuard.canActivate
 +```
++
++```text
++Raised by the review step on PR #42 (ENG-123).
++Goal: An IPv4 CIDR rule with a prefix length over 32 matches no address.
  
 -- **file it**: on mcp, create a ticket in the same tracker and team (Linear `save_issue` related to `{TICKET-ID}`, `gh issue create`, or the Atlassian MCP) with a title and a description that names the PR and the step that raised it, then list its ID; or
 -- **don't file it**, with a one-line reason: already a ticket ID (list it as is), a duplicate of another item, fixed later in this run (name the commit or pass), or too minor to track (say why).
-+```text
-+Raised by the review step on PR #42 (ENG-123).
++## Change
  
 -Under prompt-relay there is no create API, so list every item under "to file" for a human. Every item appears in the summary's Follow-ups section; "none" is correct only when the list is empty. A parked run does the same before route-and-stop posts its note.
-+## Change
-+
 +`src/net/abuse.ts`: make `AbuseManager.ipMatchesCIDR` reject a prefix length over 32 instead of matching every address.
++
++## Out of scope
++
++- IPv6 rules, which `AbuseManager.ipMatchesCIDR` does not parse.
 +
 +## Acceptance criteria
 +
@@ -363,7 +368,7 @@
 +CCM_FOLLOWUP_EOF
 +```
 +
-+Write the description's lines and the closing `CCM_FOLLOWUP_EOF` line at the start of the line. Its `shape` is `decision` or `change`. Exit 1: rewrite the description to clear each of its `problems`, and check again. If it still fails, file it as it is and name the remaining rules in the summary; a failed check is never a park.
++Write the description's lines and the closing `CCM_FOLLOWUP_EOF` line at the start of the line. Its `shape` is `decision` or `change`. For a carried-over item whose draft description you reuse as the earlier run kept it, add `--carried-over` (`"${CLAUDE_PLUGIN_ROOT}/bin/ccm-followup-check" --carried-over <<'CCM_FOLLOWUP_EOF'`): a draft from before 3.31.0 has no `Goal:` line and no `## Out of scope` section, and with the flag it passes with an `old-shape` warning (`old_shape: true`), so it is filed as it is and its key still matches. Never pass the flag for a description this run wrote. Exit 1: rewrite the description to clear each of its `problems`, and check again. If it still fails, file it as it is and name the remaining rules in the summary; a failed check is never a park.
 +
 +Under prompt-relay there is no create API, so list every item (carried-over ones as above) under "to file" for a human, with the record reason `to file: no create API under prompt-relay`, its key, and its draft description in the shape above, checked with `ccm-followup-check`, so a human can paste it as it is. That is the only case an item is listed "to file": under mcp every item is filed, already filed, or not filed with a reason, whatever the outcome. Every item appears in the summary's Follow-ups section (or the parked note's Follow-ups line), and every item without a ticket shows its `Follow-up key:`; "none" is correct only when the list is empty.
  
@@ -375,7 +380,7 @@
  **PR:** {pr_url}
  **Run:** {run_id}
  **Requested state:** {Done | merge_handoff_state | needs_human_state} *(prompt-relay only — omit under mcp)*
-@@ -229,30 +306,47 @@ Under prompt-relay there is no create API, so list every item under "to file" fo
+@@ -229,30 +311,47 @@ Under prompt-relay there is no create API, so list every item under "to file" fo
  - Classified as **{class}**, branched, implemented, opened the PR.
  - Review: {clean first pass | N CRITICAL findings fixed and re-reviewed}{; re-reviewed after a late push in feedback pass P}.
  - PR feedback: {P} pass(es) — applied {A}, declined {D}, deferred {F}.
@@ -429,7 +434,7 @@
  
  `version: 2` binds the record to what it describes, and Reeve treats a record whose binding doesn't match the PR it located as no record at all (RV-1). A version 2 record carries `repo`, `pr`, and `head_sha` on every outcome, never omitted (the one exception is the version 1 fallback below):
  
-@@ -286,7 +380,9 @@ Never write the summary to a temp file first: a session with narrow Bash grants
+@@ -286,7 +385,9 @@ Never write the summary to a temp file first: a session with narrow Bash grants
  
  ## Route-and-stop
  
@@ -440,7 +445,7 @@
  
  Every run ends in exactly one of these states:
  
-@@ -311,16 +407,24 @@ There is no stalled outcome. Never hang waiting for input.
+@@ -311,16 +412,24 @@ There is no stalled outcome. Never hang waiting for input.
  | A sub-skill emits no handshake (crash/tool error) | Treat as `needs-human` → route-and-stop with reason "{skill} produced no handshake". |
  | `work-ticket` → `needs-human` | route-and-stop (stage `work-ticket`). |
  | `review-ticket` → `needs-human`, or `fixable-findings` unresolved after the bounded loop | route-and-stop (stage `review-ticket`). |
@@ -695,7 +700,7 @@
  | `comment(ticket, body)` | Skip. Put anything the ticket should carry (for example finish-ticket's closing or hand-off comment) in the step's final report. | Posts its run summary to the ticket in Step 6 (mcp). |
  | `link_pr(url)` | Skip; the PR URL is in the handshake's `reason` (work-ticket). | Links the PR to the ticket after the work step (mcp). |
 -| `file_followup(desc)` | Record a short description in `follow_ups:`; reply to a deferred PR thread with `ccm-pr-reply ... --ticket requested`. | Files it or lists it with a reason (its *Follow-ups* rule). |
-+| `file_followup(desc)` | Record a short description in `follow_ups:`, one finding per item, naming the options when the item needs a decision; reply to a deferred PR thread through `ccm-pr-reply` with `--ticket requested`. | Searches for an earlier ticket on the same finding first, then files it with a `Follow-up key:` line, comments on the existing one, or lists it with a reason (its *Follow-ups* rule). A filed description has the decision shape (`**q1.**` questions, lettered options, a `Recommended:` line; filed in the tracker's decision state) or the change shape (`## Change` and `## Acceptance criteria`), checked with `ccm-followup-check` (its *Follow-up descriptions* rule). It does this on every outcome, a park included, before the summary or parked note is posted, and also for items an earlier run on the ticket or PR left unfiled. |
++| `file_followup(desc)` | Record a short description in `follow_ups:`, one finding per item, naming the options when the item needs a decision; reply to a deferred PR thread through `ccm-pr-reply` with `--ticket requested`. | Searches for an earlier ticket on the same finding first, then files it with a `Follow-up key:` line, comments on the existing one, or lists it with a reason (its *Follow-ups* rule). A filed description has the decision shape (`**q1.**` questions, lettered options, a `Recommended:` line; filed in the tracker's decision state) or the change shape (a `Goal:` line, `## Change` naming the file, `## Out of scope`, and `## Acceptance criteria`), checked with `ccm-followup-check` (its *Follow-up descriptions* rule). It does this on every outcome, a park included, before the summary or parked note is posted, and also for items an earlier run on the ticket or PR left unfiled. |
  
  Needs-human parking is already the orchestrator's (§4). Comments on the PR (`gh pr comment`, `ccm-post-review`, `ccm-pr-reply`) are not tracker writes and stay in the steps. A sub-skill invoked without a grounding block (interactive or standalone autonomous) keeps its full tracker behavior; this section changes nothing there.
  

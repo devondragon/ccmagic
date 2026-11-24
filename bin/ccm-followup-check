@@ -3,7 +3,12 @@
 # as JSON, whether it has one of the two shapes auto-ticket files follow-ups
 # in (skills/auto-ticket/SKILL.md Step 6, ccmagic issue 112).
 #
-# Usage: ccm-followup-check < description
+# Usage: ccm-followup-check [--carried-over] < description
+#
+#   --carried-over  the description is one an earlier run drafted (a carried-
+#                   over item, or a ticket filed before 3.31.0): a change
+#                   description in the old shape passes, with an old-shape
+#                   warning (below)
 #
 # A decision follow-up holds one or more question blocks:
 #   **q1.** <question>
@@ -14,36 +19,52 @@
 # lettered A, B, ... in order, and exactly one Recommended line naming one of
 # its options.
 #
-# Any other follow-up is a change follow-up: a `## Change` section with at
-# least one non-blank line (the file and what to do), and a
-# `## Acceptance criteria` section with at least one list item (`- [ ] `,
-# `- `, `* `, or `1. `).
+# Any other follow-up is a change follow-up (RV-175):
+#   Raised by <step> on PR #<n> (<ticket>).
+#   Goal: <one sentence>              the next non-blank line after the first
+#   ## Change                         at least one non-blank line, naming a
+#                                     file in backticks (a token with a `/`,
+#                                     a short extension, or a name such as
+#                                     Makefile) and what to do
+#   ## Out of scope                   at least one non-blank line
+#   ## Acceptance criteria            at least one list item (`- [ ] `, `- `,
+#                                     `* `, or `1. `)
+# The shape before 3.31.0 had only `## Change` and `## Acceptance criteria`. A
+# change description with no `Goal:` line and no `## Out of scope` section is
+# in that old shape (old_shape: true): it fails on goal-missing and
+# scope-missing, unless --carried-over is given, when it passes with a
+# warning `old-shape` and the file is not required.
 #
 # Both shapes end with exactly one `Follow-up key: <key>` line, the last
 # non-blank line. A line starting `Low-priority also` (any case) holds extra
 # findings, which belong in their own tickets.
 #
-# Output: {pass, shape: "decision" | "change", questions, problems: [{rule, detail}]}
+# Output: {pass, shape: "decision" | "change", questions, old_shape,
+#          problems: [{rule, detail}], warnings: [{rule, detail}]}
 #   rule  key-missing | key-repeated | key-not-last | extra-findings |
 #         question-order | options-too-few | option-order | option-shape |
 #         recommended-missing | recommended-repeated | recommended-shape |
-#         recommended-unknown | change-missing |
-#         change-empty | criteria-missing | criteria-empty
+#         recommended-unknown | change-missing | change-empty |
+#         change-file-missing | goal-missing | scope-missing | scope-empty |
+#         criteria-missing | criteria-empty
 #
 # Exit codes: 0 pass, 1 problems found, 4 usage error.
 
 set -euo pipefail
 
+carried=0
 for a in "$@"; do
   case $a in
-    -h|--help) sed -n '2,32p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,51p' "$0"; exit 0 ;;
+    --carried-over) carried=1 ;;
     *) echo "ccm-followup-check: unexpected argument $a" >&2; exit 4 ;;
   esac
 done
 
-# awk prints "shape<TAB>decision|change", "questions<TAB>N", and one
-# "rule<TAB>detail" line per problem.
-lines=$(tr -d '\r' | awk '
+# awk prints "shape<TAB>decision|change", "questions<TAB>N",
+# "old_shape<TAB>true|false", one "rule<TAB>detail" line per problem, and one
+# "warn<TAB>rule<TAB>detail" line per warning.
+lines=$(tr -d '\r' | awk -v carried="$carried" '
   function problem(r, d) { print r "\t" d }
   function letter(i) { return substr("ABCDEFGHIJKLMNOPQRSTUVWXYZ", i, 1) }
   function close_question() {
@@ -55,21 +76,44 @@ lines=$(tr -d '\r' | awk '
   }
   function close_section() {
     if (sec == "change" && !body) problem("change-empty", "## Change names no file and no change")
+    if (sec == "scope" && !scopebody) problem("scope-empty", "## Out of scope has no line")
     if (sec == "criteria" && !items) problem("criteria-empty", "## Acceptance criteria has no list item")
     sec = ""
   }
+  # A file token: no space, and a slash, a short extension, or a known
+  # extensionless file name.
+  function is_file(t) {
+    if (t ~ /[[:space:]]/) return 0
+    if (t ~ /\//) return 1
+    if (t ~ /\.[A-Za-z0-9][A-Za-z0-9]?[A-Za-z0-9]?[A-Za-z0-9]?[A-Za-z0-9]?$/) return 1
+    return t ~ /^(Makefile|Dockerfile|Containerfile|Gemfile|Rakefile|Procfile|Justfile|Brewfile|Vagrantfile|Jenkinsfile)$/
+  }
+  function names_file(s,   t) {
+    while (match(s, /`[^`]+`/)) {
+      t = substr(s, RSTART + 1, RLENGTH - 2)
+      if (is_file(t)) return 1
+      s = substr(s, RSTART + RLENGTH)
+    }
+    return 0
+  }
   { line[NR] = $0 }
-  $0 ~ /[^[:space:]]/ { last = NR }
+  $0 ~ /[^[:space:]]/ {
+    last = NR; nonblank++
+    if (nonblank == 2) goal = ($0 ~ /^Goal: [^[:space:]]/)
+  }
+  /^Goal:/ { goals++ }
   /^Follow-up key: [^[:space:]]/ { keys++; keyline = NR }
   tolower($0) ~ /^[[:space:]]*(\*\*)?low[- ]priority also/ { problem("extra-findings", "line " NR " lists other findings; file each in its own ticket or drop it with a reason") }
   /^## / {
     close_section()
     if ($0 ~ /^## Change[[:space:]]*$/) { sec = "change"; changes++; body = 0 }
+    else if ($0 ~ /^## Out of scope[[:space:]]*$/) { sec = "scope"; scopes++; scopebody = 0 }
     else if ($0 ~ /^## Acceptance criteria[[:space:]]*$/) { sec = "criteria"; criteria++; items = 0 }
     next
   }
   /^Follow-up key:/ { close_section(); next }
-  sec == "change" && /[^[:space:]]/ { body = 1 }
+  sec == "change" && /[^[:space:]]/ { body = 1; changebody = 1; if (names_file($0)) changefile = 1 }
+  sec == "scope" && /[^[:space:]]/ { scopebody = 1 }
   sec == "criteria" && /^[[:space:]]*(- \[[ xX]\] |- |\* |[0-9]+\. )[^[:space:]]/ { items = 1 }
   /^\*\*q[0-9]+\.\*\* [^[:space:]]/ {
     close_question()
@@ -97,20 +141,32 @@ lines=$(tr -d '\r' | awk '
     if (keys == 0) problem("key-missing", "no \"Follow-up key: <key>\" line")
     if (keys > 1) problem("key-repeated", keys " Follow-up key lines; a follow-up has exactly one")
     if (keys >= 1 && keyline != last) problem("key-not-last", "the Follow-up key line is not the last line")
+    old = 0
     if (q) { print "shape\tdecision"; print "questions\t" q }
     else {
       print "shape\tchange"; print "questions\t0"
+      old = (!goals && !scopes)
       if (!changes) problem("change-missing", "no decision block (**q1.** ...) and no ## Change section")
       if (!criteria) problem("criteria-missing", "no ## Acceptance criteria section")
+      if (old && carried)
+        print "warn\told-shape\tthe shape before 3.31.0 (no Goal: line and no ## Out of scope section), accepted for a carried-over description"
+      else {
+        if (!goal) problem("goal-missing", "the line after the Raised by line is not \"Goal: <one sentence>\"")
+        if (!scopes) problem("scope-missing", "no ## Out of scope section")
+        if (changebody && !changefile) problem("change-file-missing", "## Change names no file in backticks (`path/to/file.ext`)")
+      }
     }
+    print "old_shape\t" (old ? "true" : "false")
   }')
 
 result=$(jq -Rn '
   [inputs | split("\t") | {rule: .[0], detail: (.[1:] | join("\t"))}] as $all
   | ($all | map(select(.rule == "shape")) | .[0].detail) as $shape
   | ($all | map(select(.rule == "questions")) | .[0].detail | tonumber) as $q
-  | ($all | map(select(.rule != "shape" and .rule != "questions"))) as $problems
-  | {pass: ($problems | length == 0), shape: $shape, questions: $q, problems: $problems}
+  | ($all | map(select(.rule == "old_shape")) | .[0].detail == "true") as $old
+  | ($all | map(select(.rule == "warn")) | map(.detail | split("\t") | {rule: .[0], detail: (.[1:] | join("\t"))})) as $warnings
+  | ($all | map(select(.rule != "shape" and .rule != "questions" and .rule != "old_shape" and .rule != "warn"))) as $problems
+  | {pass: ($problems | length == 0), shape: $shape, questions: $q, old_shape: $old, problems: $problems, warnings: $warnings}
 ' <<<"$lines")
 
 echo "$result"
