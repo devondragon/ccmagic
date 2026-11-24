@@ -205,6 +205,7 @@ After presenting the plan, suggest validation steps:
 > 1. `/ccmagic:validate` — Run pre-commit checks to catch regressions
 > 2. `/ccmagic:test` — Run tests to verify fixes don't break existing behavior
 > 3. `gh pr view {PR_NUMBER} --comments` — Review to confirm all threads addressed
+> 4. `/ccmagic:review-ticket` on the pushed head: the fixes moved the PR head past the last review, so review it again and confirm the report's `head:` equals `gh pr view {PR_NUMBER} --json headRefOid --jq .headRefOid` before finishing or handing off (`${CLAUDE_PLUGIN_ROOT}/skills/work-ticket/review-head.md`, RV-178)
 >
 > When replying to review threads, use `"${CLAUDE_PLUGIN_ROOT}/bin/ccm-pr-reply" {PR} {comment_id} --disposition fixed|declined|answered|deferred ...` (see *Autonomous mode*, step 4). A plain reply leaves the thread counted as open by `/ccmagic:auto-ticket`.
 
@@ -242,6 +243,8 @@ Run Steps 1–5 exactly as written (load conventions, fetch threads, classify, v
 
    Questions and comments in the general PR conversation (not line threads) get a normal `gh pr comment` reply; they don't count toward open threads.
 
+5. **Review the pushed head (top-level runs only, RV-178).** The push in step 3 moved the PR head past the last review, and a merge gate that binds the review to the head rejects the old report. When this skill is the top-level autonomous entry point (no `orchestrator:` in the grounding block) and step 3 pushed, read `${CLAUDE_PLUGIN_ROOT}/skills/work-ticket/review-head.md` and run its check before the handshake: read the PR head with `gh pr view {PR_NUMBER} --json headRefOid --jq .headRefOid`, rerun `/ccmagic:review-ticket` on it with the autonomous grounding block, and confirm the new report's `head:` equals the PR head. A review that cannot be brought to the PR head is `needs-human`, never `done`. When orchestrated, skip this step: `/ccmagic:auto-ticket` re-reviews the pushed head in its Step 4f.
+
 ### Behavior at each human-gate
 
 - **Step 4d (Conflicting reviewers):** do not ask. Conventions already win in this skill — if a project convention decides the conflict, take that side automatically and cite it in the reply. Only a **genuine tie** (no convention applies) → `needs-human` (the `reason` names the `file:line` and both positions).
@@ -255,7 +258,7 @@ reason: applied {A} / declined {D} / deferred {F}   (or the blocking tie on need
 follow_ups: [<follow-up ticket ids filed, or short descriptions when orchestrated or under prompt-relay>]
 ```
 
-`done` = this pass's fixes are applied, replies posted, follow-ups filed (or recorded as short descriptions when orchestrated or under prompt-relay), and the branch pushed. `needs-human` = a genuine reviewer tie (or a fix that can't be made safely) surfaced; if top-level, route-and-stop (park to `needs_human_state`, or `needs_human_label` if that state doesn't exist — on GitHub create the label first if missing; comment) before emitting — otherwise hand the handshake to the parent. **Under prompt-relay** (contract §7), that top-level park applies contract §4's *Under the prompt-relay transport* adjustments — no state move or label, parked note to the PR only, emitted (with `Requested state: {needs_human_state}`) wrapped in the §7 final-message delimiters as your final output. The parent orchestrator recomputes overall "clean" (CI green + zero unresolved actionable threads) after CI and any new bot review land.
+`done` = this pass's fixes are applied, replies posted, follow-ups filed (or recorded as short descriptions when orchestrated or under prompt-relay), the branch pushed, and, on a top-level run that pushed, a review whose `head:` is the PR head (step 5). `needs-human` = a genuine reviewer tie (or a fix that can't be made safely) surfaced; if top-level, route-and-stop (park to `needs_human_state`, or `needs_human_label` if that state doesn't exist — on GitHub create the label first if missing; comment) before emitting — otherwise hand the handshake to the parent. **Under prompt-relay** (contract §7), that top-level park applies contract §4's *Under the prompt-relay transport* adjustments — no state move or label, parked note to the PR only, emitted (with `Requested state: {needs_human_state}`) wrapped in the §7 final-message delimiters as your final output. The parent orchestrator recomputes overall "clean" (CI green + zero unresolved actionable threads) after CI and any new bot review land.
 
 ## Execution
 

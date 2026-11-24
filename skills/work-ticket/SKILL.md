@@ -220,7 +220,7 @@ Reeve can write a ticket's acceptance tests in a separate tests ticket that merg
 
 1. Implement the fix directly in this session. Read the relevant files first to understand the codebase. Make the minimal change that addresses the ticket scope. Follow the project's coding standards from `context/conventions.md`.
 2. Do not over-engineer. If the fix is genuinely one line, make it one line.
-3. **Run `/ccmagic:review`** on the change. The auto-router will usually pick QUICK for a one-or-two-file fix and DEEP if it touches risky paths. Address any CRITICAL findings before moving on.
+3. **Run `/ccmagic:review`** on the change. The auto-router will usually pick QUICK for a one-or-two-file fix and DEEP if it touches risky paths. Address any CRITICAL findings before moving on. A fix made after the review is code the review did not read, so Step 7's review head check reviews the pushed head again.
 
 ### Complex Feature path
 
@@ -231,7 +231,7 @@ Implement the feature inline in this session, following these phases:
 3. **Clarifying questions** — ask the user about any underspecified details. Do not guess.
 4. **Architecture** — propose a brief implementation plan before writing code; pause for confirmation on non-trivial designs.
 5. **Implementation** — write the code following `context/conventions.md`.
-6. **Review** — invoke `/ccmagic:review-ticket` so the review is grounded in the ticket scope. Address CRITICAL findings.
+6. **Review** — invoke `/ccmagic:review-ticket` so the review is grounded in the ticket scope. Address CRITICAL findings. Note the commit the review read (`git rev-parse HEAD`); a fix after it gets a second review at Step 7's review head check.
 
 > If you want the multi-agent feature workflow (parallel codebase exploration, architecture review), consider `/ccmagic:research` for the exploration phase and `/ccmagic:codex-review` for the review phase.
 
@@ -249,7 +249,7 @@ Symptoms: {description}
 {any reproduction steps or error messages from the ticket}
 ```
 
-The debug skill runs its systematic investigation. After it finishes, **run `/ccmagic:review-ticket`** on the resulting fix — debug focuses on correctness of the fix, not code quality or ticket coverage.
+The debug skill runs its systematic investigation. After it finishes, **run `/ccmagic:review-ticket`** on the resulting fix — debug focuses on correctness of the fix, not code quality or ticket coverage. A fix made after that review is reviewed again at Step 7's review head check.
 
 ### Build and test runs (all paths)
 
@@ -336,7 +336,7 @@ Confirm the PR with the user before creating it.
 - For a requirements approval's archive ticket: `Approval archive: archived {change} as {spec_delta}/, tasks left unchecked as the approval wrote them.` then `Strict validation passed after the archive (openspec {version}).` The PR body says the PR carries only the result of `openspec archive {change} --yes`.
 <!-- /ccmagic:plain-delta -->
 
-After the PR is created, capture the PR URL returned by `gh pr create`.
+After the PR is created, capture the PR URL returned by `gh pr create`. **Review head check (RV-178).** Then, and again after any later push to the PR branch in this run (a fix of a review finding, a fix for PR feedback, a merge of the base), and before Step 8 moves the ticket to In Review or the `done` handshake: read `${CLAUDE_SKILL_DIR}/review-head.md` and run its check. It reads the PR head with `gh pr view {PR_NUMBER} --json headRefOid --jq .headRefOid`, reruns `/ccmagic:review-ticket` on the new head when the last review read another commit (or uncommitted changes that were edited after it), and confirms the report's `head:` equals the PR head. Skip it when orchestrated (`orchestrator:` in the grounding block): `/ccmagic:auto-ticket` re-reviews the pushed head itself. In autonomous mode a review that cannot be brought to the PR head is `needs-human`, never `done`.
 
 ---
 

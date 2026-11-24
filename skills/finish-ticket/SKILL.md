@@ -177,6 +177,8 @@ git diff {baseRefName}...HEAD --stat
 
 Compare the commit history and file changes against the ticket title and description. Briefly assess whether the work looks complete relative to the ticket scope. Look for obvious gaps (e.g., ticket mentions a UI change but only backend files changed), scope creep (many unrelated files changed), and incomplete implementation signals (TODO comments, skipped tests, WIP commits).
 
+**Review covers the PR head (RV-178).** A push after the last review (a fix of a finding, a fix for PR feedback, a merge of the base) leaves the head unreviewed, and a merge gate that binds the review to the head (Reeve parks any other head as `review-not-clean`) rejects the old report. Unless orchestrated (`orchestrator:` in the grounding block: `/ccmagic:auto-ticket` reaches this step only with a clean review of the PR head, its Step 4e and 4f), read `${CLAUDE_PLUGIN_ROOT}/skills/work-ticket/review-head.md` and run its check before Step 5b, the merge, or the hand-off: read the PR head with `gh pr view {pr_number} --json headRefOid --jq .headRefOid`, find the commit the last review read (the `head:` of the newest `# Ticket-Grounded Review:` comment on the PR, or the commit an interactive review in this session read), and when they differ, or no review is found, review the PR head as that file's step 4 says: autonomous, rerun `/ccmagic:review-ticket` on it and confirm the new report's `head:` equals the PR head; interactive, offer that rerun or going on with the stale review named in the final message. In autonomous mode a review that is not clean on the PR head is a blocker like the merge gate's, since this step does not fix findings. Report the result under **Review head** in 3e.
+
 ### 3e. Report
 
 Present the sanity check results in this format:
@@ -198,6 +200,8 @@ CI Checks:
 Reviews:
   Approved by {reviewer}
   No approvals yet
+
+Review head: {covers {sha7} | review covers {sha7}, PR head is {sha7} | no review found}
   Changes requested by {reviewer}
 
 Scope:
@@ -357,7 +361,7 @@ If the merge fails due to conflicts:
    git commit -m "chore: resolve merge conflicts for {TICKET-ID}"
    git push origin {headRefName}
    ```
-6. Re-attempt the PR merge.
+6. The push moved the PR head past the last review: run Step 3d's review head check again on the new head (in autonomous mode a review that is not clean there is `needs-human`). Then re-attempt the PR merge.
 7. If conflicts cannot be resolved, stop and tell the user what remains unresolved.
 
 ### Verify merge success
@@ -479,6 +483,7 @@ Absent all three, run the interactive path exactly as documented above. Also rea
 ### Behavior at each human-gate
 
 - **Step 3 (Sanity check) — this is the merge gate.** Merge **only if** `ccm-merge-gate` exits 0 (after waiting out `pending` / `not-registered` CI with `"${CLAUDE_PLUGIN_ROOT}/bin/ccm-ci-status" --watch` as Step 3 describes). **Never ask a human to confirm CI, and never emit a question as the run's result** — an autonomous run ends by merging or by route-and-stop, never by asking. If the gate fails → `needs-human` (do **not** merge; the `reason` is the gate's `blockers` joined with `; `). Do not take the interactive "proceed anyway" option. The PreToolUse hook denies `gh pr merge` in autonomous runs while the gate fails, so a merge attempt past a failed gate is refused, and the refusal means `needs-human`.
+- **Step 3d (Review head, top-level runs only):** never merge or hand off on a stale review. When the check in `${CLAUDE_PLUGIN_ROOT}/skills/work-ticket/review-head.md` cannot bring a clean review to the PR head (the head read fails, the rerun's `head:` differs, the review is not clean) → `needs-human` with its reason; do not merge or hand off.
 - **Step 4 (Disposition):** always take the **Done** path. The QA path needs an interactive hand-off (QA-assignee lookup, status confirmation) that would hang an unattended run, so autonomous mode never enters it — **even if `default_qa_workflow: true`**. If the QA path was explicitly forced (`--qa` passed *together with* an autonomous signal), that's a conflict autonomous mode can't satisfy → `needs-human` (reason: "QA disposition requires a human — re-run without `--qa`, or complete QA manually"); do **not** merge. A project that requires QA on every ticket should not be driven by `/ccmagic:auto-ticket`.
 - **Step 5 (Merge confirmation):** proceed with the determined strategy — squash for `feature/`/`bugfix/`/`hotfix/`/`chore/`, merge commit for `release/` — no pause.
 - **Step 5b (Mark ready, `draft_until_finish: true` only):** mark the PR ready for review before the merge, as Step 5b says; a failure is `needs-human`, and the run neither merges nor hands off.

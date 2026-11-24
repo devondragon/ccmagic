@@ -3969,6 +3969,29 @@ skills_auto_ticket_rereviews_after_late_push() {
   check "${missing# }" ""
 }
 
+# RV-178: work-ticket, pr-feedback, and finish-ticket, run on their own, review
+# the PR head again after a push that followed the review and confirm the
+# report's head: is the PR head before they finish or hand off. The rule is in
+# work-ticket/review-head.md; orchestrated runs leave it to auto-ticket 4e/4f.
+# shellcheck disable=SC2016 # literal ${...} in the markdown being matched
+skills_standalone_review_covers_pr_head() {
+  local rule=$ROOT/skills/work-ticket/review-head.md missing='' key f
+  [ -f "$rule" ] || missing+=" rule-file"
+  for key in 'headRefOid' 'head:' 'review_pass:' 'previous_findings:' 'max_review_fix_passes' 'orchestrator:' 'needs-human' 'git pull --ff-only' 'Never pick the second yourself'; do
+    grep -qF -- "$key" "$rule" 2>/dev/null || missing+=" rule:$key"
+  done
+  f=$ROOT/skills/work-ticket/SKILL.md
+  section "$f" '^## Step 7:' '^## Step 8:' | grep -F '${CLAUDE_SKILL_DIR}/review-head.md' | grep -qF 'headRefOid' || missing+=" work-ticket:step7"
+  for f in pr-feedback finish-ticket; do
+    grep -F '${CLAUDE_PLUGIN_ROOT}/skills/work-ticket/review-head.md' "$ROOT/skills/$f/SKILL.md" | grep -qF 'headRefOid' || missing+=" $f:check"
+  done
+  # finish-ticket runs it again after it pushes a conflict merge, and parks in
+  # autonomous mode rather than merge or hand off on a stale review.
+  section "$ROOT/skills/finish-ticket/SKILL.md" '^### Handle merge conflicts' '^### Verify merge' | grep -qF 'review head check' || missing+=" finish-ticket:conflict-push"
+  grep -qF 'never merge or hand off on a stale review' "$ROOT/skills/finish-ticket/SKILL.md" || missing+=" finish-ticket:autonomous"
+  check "${missing# }" ""
+}
+
 # A version 1 fallback record says why it fell back, in a fallback_reason key
 # (Reeve's RunRecordV1 is not strict, so the extra key parses), and the run's
 # final message says so too.
@@ -5149,7 +5172,7 @@ ADDED_AGENTS_SINCE_BASELINE=(agents/auto-visual.md)
 # rules (issue 111); review-guidance.md holds REVIEW.md and pre-existing findings
 # (issue 109).
 ADDED_SKILL_FILES_SINCE_BASELINE=(skills/work-ticket/spec-delta.md skills/work-ticket/acceptance.md skills/review/review-guidance.md
-  skills/auto-ticket/base-sync.md skills/work-ticket/base-conflict.md)
+  skills/auto-ticket/base-sync.md skills/work-ticket/base-conflict.md skills/work-ticket/review-head.md)
 
 spec_prompt_files() {
   { git -C "$ROOT" ls-tree -r --name-only "$SPEC_BASELINE" -- skills agents
