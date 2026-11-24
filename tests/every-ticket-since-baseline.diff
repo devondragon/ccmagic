@@ -292,10 +292,10 @@
  
 -Run the finish-ticket step via `run_step` — `/ccmagic:finish-ticket` with the grounding block. Its Step 3 sanity check is the **merge gate**: it merges only if the PR is mergeable, CI is green, and there are no unaddressed change-requests.
 +Run the finish-ticket step via `run_step` — `/ccmagic:finish-ticket` with the grounding block, plus a `ci_handoff: true` line when the pass was **clean with red CI** (4d), ending it with a `steps:` section (contract §2): the run record's `steps` array so far, every step invocation of this run in order with its status and reason, exactly as Step 6 will write it, as one line of JSON in a `~~~` fence. Its Step 3 sanity check is the **merge gate**: it merges only if the PR is mergeable, CI is green, and there are no unaddressed change-requests.
++
++**Finish guard.** `ccm-finish-guard` reads that `steps:` section and refuses a run whose latest validate is not `done`, whose latest review-ticket is not `clean`, or that ran work-ticket, pr-feedback, or a `base-sync` merge after its latest validate (RV-86). The plugin's PreToolUse hook runs it on your call that starts `auto-finish` and denies the call when it fails, and the finish agent runs it again first. A denied call names the rule: **route-and-stop** with the stage and reason the denial gives. Do not start the finish step again with a changed step list, and do not move the ticket yourself. The one exception is a denial for a missing or malformed `steps:` section (`steps-unreadable`): add the section and start the step once more.
  
 -- `done` with `reason` beginning `handed off to reeve` → the PR is open and nothing merged; the handshake carries `requested_state: {merge_handoff_state}`, which the after-step routine applies (a missing state parks the run there). Continue to Step 6 with outcome **handed-off**.
-+**Finish guard.** `ccm-finish-guard` reads that `steps:` section and refuses a run whose latest validate is not `done`, whose latest review-ticket is not `clean`, or that ran work-ticket, pr-feedback, or a `base-sync` merge after its latest validate (RV-86). The plugin's PreToolUse hook runs it on your call that starts `auto-finish` and denies the call when it fails, and the finish agent runs it again first. A denied call names the rule: **route-and-stop** with the stage and reason the denial gives. Do not start the finish step again with a changed step list, and do not move the ticket yourself. The one exception is a denial for a missing or malformed `steps:` section (`steps-unreadable`): add the section and start the step once more.
-+
 +- `done` with `reason` beginning `handed off to reeve` → the PR is open and nothing merged; the handshake carries `requested_state: {merge_handoff_state}`, which the after-step routine applies (a missing state parks the run there). Continue to Step 6 with outcome **handed-off**. With `ci_handoff: true` the finish step runs its merge gate with `--red-ci-handoff`, which reads the attribution again itself; when that refuses, it returns `needs-human` like any blocker.
  - `done` otherwise → the PR merged; the handshake carries `requested_state: Done`, which the after-step routine applies. Continue to Step 6 with outcome **merged**.
 -- `needs-human` → the gate wasn't satisfied. It did **not** merge → **route-and-stop** (stage = `finish-ticket`, reason: its blockers).
@@ -303,7 +303,7 @@
  
  ---
  
-@@ -210,17 +238,66 @@ Run the finish-ticket step via `run_step` — `/ccmagic:finish-ticket` with the
+@@ -210,17 +238,71 @@ Run the finish-ticket step via `run_step` — `/ccmagic:finish-ticket` with the
  
  Whatever the outcome, record it on the PR and the ticket so the unattended run leaves an audit trail.
  
@@ -316,7 +316,7 @@
 +
 +If the search or the comment fails, that is not a park: file the item as in the first option and say in the summary that the duplicate search or the comment failed. If the create itself fails, that is not a park either: list the item as not filed with the reason `create failed: {error}`, go on with the next item, and let the run end as it would have.
 +
-+**Carried over from earlier runs.** From the earlier run summaries and parked notes collected above, add to the run's follow-up list every item an earlier run left for a human to file: one listed under "To file" in its Follow-ups section or line, or a run record `follow_ups` entry with `ticket: null` whose `reason` starts with `to file` or `create failed`, or is none of the known don't-file reasons above (a run before 3.30.1 recorded a failed create's raw error as its reason). This holds for every run, a rerun that does not review again included: such a run raises no items of its own, and without this step what a parked run listed would never be filed. Keep the item's step, name the earlier run in the summary line (`from {step}, run {earlier run_id}`), and reuse the key and draft description the earlier note or record kept (the record entry's `key` and `description`, or the note's `<details>` draft), so the key matches and the description passes `ccm-followup-check`; derive them as for any other item only when the earlier run kept none. Then, in this order:
++**Carried over from earlier runs.** From the earlier run summaries and parked notes collected above, add to the run's follow-up list every item an earlier run left for a human to file: one listed under "To file" in its Follow-ups section or line, or a run record `follow_ups` entry with `ticket: null` whose `reason` starts with `to file` or `create failed`, or is none of the known don't-file reasons above (a run before 3.30.1 recorded a failed create's raw error as its reason). This holds for every run, a rerun that does not review again included: such a run raises no items of its own, and without this step what a parked run listed would never be filed. Keep the item's step, name the earlier run in the summary line (`from {step}, run {earlier run_id}`), and reuse the key and draft description the earlier note or record kept (the record entry's `key` and `description`, or the note's `<details>` draft), so the key matches and the description passes `ccm-followup-check` (with `--carried-over`, below, since a draft from before 3.31.0 is in the older change shape); derive them as for any other item only when the earlier run kept none. Then, in this order:
 +
 +- **Drop what is already handled, with no comment.** An item a later summary lists as filed, or that the key search or the related and mentioned tickets show as filed, is `already filed` with that id. The same item carried from two earlier runs is one item, and the other copy is a duplicate.
 +- **Check it still holds.** Before filing a carried-over item, confirm the defect still exists at the current PR head, or at `origin/{base}` when the PR has merged: read the file and symbol its key names at that commit (`git show {sha}:{path}`) and check the item's claim against it. When the defect is gone, drop it with the reason `fixed since run {earlier run_id}`. When the check cannot settle it (the file moved, the claim is not about code), file it.
@@ -325,7 +325,7 @@
 +**Follow-up descriptions.** A filed follow-up holds one finding: file each extra finding as its own item, or drop it with a reason as above, and never append it as "Low-priority also: ...". Every description opens with a line naming the PR and the step that raised it, and ends with exactly one line `Follow-up key: <key>`, its last line. Between them it takes one of two shapes:
 +
 +- **Needs a decision** (the step could not choose between fixes, or the item ends in "needs a human decision"): write each open question as `**q1.** <question>` (then `**q2.**`, ...), each option on its own line as `- A: <option> (for: <reasons>; against: <reasons>)` (then `- B:`, ...; at least two), and one line `Recommended: X. <why>` naming one of the options. File it in the tracker's decision state instead of the default Backlog: Linear `Needs Decision` when the team has a state of that name (`list_issue_statuses`), a JIRA status of that name when the project's workflow has one; otherwise the default state, and the summary marks the item "needs a decision".
-+- **No open decision**: a `## Change` section that names the file (and symbol) and what to do, and a `## Acceptance criteria` section with at least one checkable list item (`- [ ] ...`).
++- **No open decision** (since 3.31.0, RV-175): the line right after the opener is `Goal: <one sentence>`, the outcome the ticket is for. Then a `## Change` section with the one chosen approach, naming the file in backticks (and the symbol) and what to do; a `## Out of scope` section with at least one line saying what the ticket does not cover (a neighboring case, a related cleanup, or `Nothing else in {file}.`); and a `## Acceptance criteria` section with at least one checkable list item (`- [ ] ...`). The opener's PR and the file `## Change` names are the ticket's context.
 +
 +```text
 +Raised by the review step on PR #42 (ENG-123).
@@ -337,16 +337,21 @@
 +
 +Follow-up key: AuthGuard.canActivate
 +```
++
++```text
++Raised by the review step on PR #42 (ENG-123).
++Goal: An IPv4 CIDR rule with a prefix length over 32 matches no address.
  
 -- **file it**: on mcp, create a ticket in the same tracker and team (Linear `save_issue` related to `{TICKET-ID}`, `gh issue create`, or the Atlassian MCP) with a title and a description that names the PR and the step that raised it, then list its ID; or
 -- **don't file it**, with a one-line reason: already a ticket ID (list it as is), a duplicate of another item, fixed later in this run (name the commit or pass), or too minor to track (say why).
-+```text
-+Raised by the review step on PR #42 (ENG-123).
++## Change
  
 -Under prompt-relay there is no create API, so list every item under "to file" for a human. Every item appears in the summary's Follow-ups section; "none" is correct only when the list is empty. A parked run does the same before route-and-stop posts its note.
-+## Change
-+
 +`src/net/abuse.ts`: make `AbuseManager.ipMatchesCIDR` reject a prefix length over 32 instead of matching every address.
++
++## Out of scope
++
++- IPv6 rules, which `AbuseManager.ipMatchesCIDR` does not parse.
 +
 +## Acceptance criteria
 +
@@ -363,7 +368,7 @@
 +CCM_FOLLOWUP_EOF
 +```
 +
-+Write the description's lines and the closing `CCM_FOLLOWUP_EOF` line at the start of the line. Its `shape` is `decision` or `change`. Exit 1: rewrite the description to clear each of its `problems`, and check again. If it still fails, file it as it is and name the remaining rules in the summary; a failed check is never a park.
++Write the description's lines and the closing `CCM_FOLLOWUP_EOF` line at the start of the line. Its `shape` is `decision` or `change`. For a carried-over item whose draft description you reuse as the earlier run kept it, add `--carried-over` (`"${CLAUDE_PLUGIN_ROOT}/bin/ccm-followup-check" --carried-over <<'CCM_FOLLOWUP_EOF'`): a draft from before 3.31.0 has no `Goal:` line and no `## Out of scope` section, and with the flag it passes with an `old-shape` warning (`old_shape: true`), so it is filed as it is and its key still matches. Never pass the flag for a description this run wrote. Exit 1: rewrite the description to clear each of its `problems`, and check again. If it still fails, file it as it is and name the remaining rules in the summary; a failed check is never a park.
 +
 +Under prompt-relay there is no create API, so list every item (carried-over ones as above) under "to file" for a human, with the record reason `to file: no create API under prompt-relay`, its key, and its draft description in the shape above, checked with `ccm-followup-check`, so a human can paste it as it is. That is the only case an item is listed "to file": under mcp every item is filed, already filed, or not filed with a reason, whatever the outcome. Every item appears in the summary's Follow-ups section (or the parked note's Follow-ups line), and every item without a ticket shows its `Follow-up key:`; "none" is correct only when the list is empty.
  
@@ -375,7 +380,7 @@
  **PR:** {pr_url}
  **Run:** {run_id}
  **Requested state:** {Done | merge_handoff_state | needs_human_state} *(prompt-relay only — omit under mcp)*
-@@ -229,30 +306,47 @@ Under prompt-relay there is no create API, so list every item under "to file" fo
+@@ -229,30 +311,47 @@ Under prompt-relay there is no create API, so list every item under "to file" fo
  - Classified as **{class}**, branched, implemented, opened the PR.
  - Review: {clean first pass | N CRITICAL findings fixed and re-reviewed}{; re-reviewed after a late push in feedback pass P}.
  - PR feedback: {P} pass(es) — applied {A}, declined {D}, deferred {F}.
@@ -429,7 +434,7 @@
  
  `version: 2` binds the record to what it describes, and Reeve treats a record whose binding doesn't match the PR it located as no record at all (RV-1). A version 2 record carries `repo`, `pr`, and `head_sha` on every outcome, never omitted (the one exception is the version 1 fallback below):
  
-@@ -286,7 +380,9 @@ Never write the summary to a temp file first: a session with narrow Bash grants
+@@ -286,7 +385,9 @@ Never write the summary to a temp file first: a session with narrow Bash grants
  
  ## Route-and-stop
  
@@ -440,7 +445,7 @@
  
  Every run ends in exactly one of these states:
  
-@@ -311,16 +407,24 @@ There is no stalled outcome. Never hang waiting for input.
+@@ -311,16 +412,24 @@ There is no stalled outcome. Never hang waiting for input.
  | A sub-skill emits no handshake (crash/tool error) | Treat as `needs-human` → route-and-stop with reason "{skill} produced no handshake". |
  | `work-ticket` → `needs-human` | route-and-stop (stage `work-ticket`). |
  | `review-ticket` → `needs-human`, or `fixable-findings` unresolved after the bounded loop | route-and-stop (stage `review-ticket`). |
@@ -695,7 +700,7 @@
  | `comment(ticket, body)` | Skip. Put anything the ticket should carry (for example finish-ticket's closing or hand-off comment) in the step's final report. | Posts its run summary to the ticket in Step 6 (mcp). |
  | `link_pr(url)` | Skip; the PR URL is in the handshake's `reason` (work-ticket). | Links the PR to the ticket after the work step (mcp). |
 -| `file_followup(desc)` | Record a short description in `follow_ups:`; reply to a deferred PR thread with `ccm-pr-reply ... --ticket requested`. | Files it or lists it with a reason (its *Follow-ups* rule). |
-+| `file_followup(desc)` | Record a short description in `follow_ups:`, one finding per item, naming the options when the item needs a decision; reply to a deferred PR thread through `ccm-pr-reply` with `--ticket requested`. | Searches for an earlier ticket on the same finding first, then files it with a `Follow-up key:` line, comments on the existing one, or lists it with a reason (its *Follow-ups* rule). A filed description has the decision shape (`**q1.**` questions, lettered options, a `Recommended:` line; filed in the tracker's decision state) or the change shape (`## Change` and `## Acceptance criteria`), checked with `ccm-followup-check` (its *Follow-up descriptions* rule). It does this on every outcome, a park included, before the summary or parked note is posted, and also for items an earlier run on the ticket or PR left unfiled. |
++| `file_followup(desc)` | Record a short description in `follow_ups:`, one finding per item, naming the options when the item needs a decision; reply to a deferred PR thread through `ccm-pr-reply` with `--ticket requested`. | Searches for an earlier ticket on the same finding first, then files it with a `Follow-up key:` line, comments on the existing one, or lists it with a reason (its *Follow-ups* rule). A filed description has the decision shape (`**q1.**` questions, lettered options, a `Recommended:` line; filed in the tracker's decision state) or the change shape (a `Goal:` line, `## Change` naming the file, `## Out of scope`, and `## Acceptance criteria`), checked with `ccm-followup-check` (its *Follow-up descriptions* rule). It does this on every outcome, a park included, before the summary or parked note is posted, and also for items an earlier run on the ticket or PR left unfiled. |
  
  Needs-human parking is already the orchestrator's (§4). Comments on the PR (`gh pr comment`, `ccm-post-review`, `ccm-pr-reply`) are not tracker writes and stay in the steps. A sub-skill invoked without a grounding block (interactive or standalone autonomous) keeps its full tracker behavior; this section changes nothing there.
  
@@ -767,7 +772,24 @@
  
  If `ci.status` is `pending` or `not-registered`, wait for CI rather than reporting it as a blocker yet:
  
-@@ -257,6 +258,28 @@ Wait for explicit confirmation. If the user says "no" or wants to change somethi
+@@ -154,6 +155,8 @@ git diff {baseRefName}...HEAD --stat
+ 
+ Compare the commit history and file changes against the ticket title and description. Briefly assess whether the work looks complete relative to the ticket scope. Look for obvious gaps (e.g., ticket mentions a UI change but only backend files changed), scope creep (many unrelated files changed), and incomplete implementation signals (TODO comments, skipped tests, WIP commits).
+ 
++**Review covers the PR head (RV-178).** A push after the last review (a fix of a finding, PR feedback, a base merge) leaves the head unreviewed, and a merge gate that binds the review to the head (Reeve parks any other head as `review-not-clean`) rejects the old report. Unless orchestrated, read `${CLAUDE_PLUGIN_ROOT}/skills/work-ticket/review-head.md` and run its check, as its *In /ccmagic:finish-ticket* section says, before Step 5b, the merge, or the hand-off: it reads the PR head with `gh pr view {pr_number} --json headRefOid,headRefName`, takes the newest posted review from this run's own login, and requires its `head:` to equal the PR head with `status: clean`. Report the result on the `Review head:` line in 3e.
++
+ ### 3e. Report
+ 
+ Present the sanity check results in this format:
+@@ -176,6 +179,7 @@ Reviews:
+   Approved by {reviewer}
+   No approvals yet
+   Changes requested by {reviewer}
++  Review head: {review covers the PR head {sha7}, clean | review covers {sha7}, PR head is {sha7} | review of {sha7} is {status} | no review found}
+ 
+ Scope:
+   {2-3 sentences summarizing whether the changes appear to match the ticket}
+@@ -257,6 +261,18 @@ Wait for explicit confirmation. If the user says "no" or wants to change somethi
  
  ---
  
@@ -775,17 +797,7 @@
 +
 +Only when `draft_until_finish` resolves to `true` (a line in the grounding block wins over config). Absent the key, or with `false`, skip this step and nothing below changes.
 +
-+This runs on both paths, after Step 3's gate passes and Step 5's confirmation, and before Step 6's merge or Step 7's hand-off: GitHub refuses to merge a draft, and the merge gate a hand-off goes to expects a PR ready for review. Read the draft flag, as its own Bash call:
-+
-+```bash
-+gh pr view {pr_number} --json isDraft --jq .isDraft
-+```
-+
-+If it prints `true`, mark the PR ready, then read the flag again, each as its own Bash call:
-+
-+```bash
-+gh pr ready {pr_number}
-+```
++This runs on both paths, after Step 3's gate passes and Step 5's confirmation, and before Step 6's merge or Step 7's hand-off: GitHub refuses to merge a draft, and the merge gate a hand-off goes to expects a PR ready for review. Read the draft flag, as its own Bash call: `gh pr view {pr_number} --json isDraft --jq .isDraft`. If it prints `true`, mark the PR ready with `gh pr ready {pr_number}`, then read the flag again, each as its own Bash call.
 +
 +The PR is ready only when the second read prints `false`. A failed `gh pr ready`, a failed read, or a PR still a draft stops the finish: do not merge and do not hand off. Interactively, say so with the command's first error line and stop. In autonomous mode, return `needs-human` with `reason: draft_until_finish: could not mark PR #{pr_number} ready for review: {first error line, or "still a draft after gh pr ready"}`. If the first read prints `false` (the PR was already ready, as when a person marked it), go on.
 +
@@ -796,16 +808,49 @@
  ## Step 6: Merge the PR
  
  **If you took the hand-off at Step 5, or `merge_owner: reeve` applies in autonomous mode, skip this step entirely. Nothing is merged on that path.**
-@@ -433,14 +456,15 @@ Absent all three, run the interactive path exactly as documented above. Also rea
+@@ -291,29 +307,7 @@ Use the strategy flag chosen in Step 5 (`--squash` for feature/bugfix/hotfix/cho
+ 
+ ### Handle merge conflicts
+ 
+-If the merge fails due to conflicts:
+-
+-1. Report the conflict clearly:
+-   > "The PR cannot be merged automatically due to conflicts."
+-2. Fetch and attempt local resolution:
+-   ```bash
+-   git fetch origin
+-   git checkout {headRefName}
+-   git merge origin/{baseRefName}
+-   ```
+-3. Show the conflicting files:
+-   ```bash
+-   git diff --name-only --diff-filter=U
+-   ```
+-4. Attempt to resolve straightforward conflicts (version bumps, import lists, config values). If the conflict requires business-logic judgment, show it to the user and ask.
+-5. After resolving:
+-   ```bash
+-   git add {resolved files}
+-   git commit -m "chore: resolve merge conflicts for {TICKET-ID}"
+-   git push origin {headRefName}
+-   ```
+-6. Re-attempt the PR merge.
+-7. If conflicts cannot be resolved, stop and tell the user what remains unresolved.
++If the merge fails due to conflicts, read `${CLAUDE_SKILL_DIR}/merge-conflicts.md` and follow it. It resolves straightforward conflicts locally and pushes the merge, and that push moves the PR head past the last review: standalone, Step 3d's review head check runs again on the new head before the merge is re-attempted; orchestrated, the step returns `needs-human` instead of merging a head no review has read.
+ 
+ ### Verify merge success
+ 
+@@ -433,14 +427,16 @@ Absent all three, run the interactive path exactly as documented above. Also rea
  
  ### Behavior at each human-gate
  
 -- **Step 3 (Sanity check) — this is the merge gate.** Merge **only if** `ccm-merge-gate` exits 0 (after waiting out `pending` / `not-registered` CI with `ccm-ci-status --watch` as Step 3 describes). **Never ask a human to confirm CI, and never emit a question as the run's result** — an autonomous run ends by merging or by route-and-stop, never by asking. If the gate fails → `needs-human` (do **not** merge; the `reason` is the gate's `blockers` joined with `; `). Do not take the interactive "proceed anyway" option. The PreToolUse hook denies `gh pr merge` in autonomous runs while the gate fails, so a merge attempt past a failed gate is refused, and the refusal means `needs-human`.
 +- **Step 3 (Sanity check) — this is the merge gate.** Merge **only if** `ccm-merge-gate` exits 0 (after waiting out `pending` / `not-registered` CI with `"${CLAUDE_PLUGIN_ROOT}/bin/ccm-ci-status" --watch` as Step 3 describes). **Never ask a human to confirm CI, and never emit a question as the run's result** — an autonomous run ends by merging or by route-and-stop, never by asking. If the gate fails → `needs-human` (do **not** merge; the `reason` is the gate's `blockers` joined with `; `). Do not take the interactive "proceed anyway" option. The PreToolUse hook denies `gh pr merge` in autonomous runs while the gate fails, so a merge attempt past a failed gate is refused, and the refusal means `needs-human`.
++- **Step 3d (Review head, top-level runs only):** never merge or hand off on a stale review. When the check in `${CLAUDE_PLUGIN_ROOT}/skills/work-ticket/review-head.md` cannot bring a review with `status: clean` to the PR head (the head read fails, the rerun's `head:` differs, the review is `fixable-findings` or `needs-human`) → `needs-human` with its reason; do not merge or hand off.
  - **Step 4 (Disposition):** always take the **Done** path. The QA path needs an interactive hand-off (QA-assignee lookup, status confirmation) that would hang an unattended run, so autonomous mode never enters it — **even if `default_qa_workflow: true`**. If the QA path was explicitly forced (`--qa` passed *together with* an autonomous signal), that's a conflict autonomous mode can't satisfy → `needs-human` (reason: "QA disposition requires a human — re-run without `--qa`, or complete QA manually"); do **not** merge. A project that requires QA on every ticket should not be driven by `/ccmagic:auto-ticket`.
  - **Step 5 (Merge confirmation):** proceed with the determined strategy — squash for `feature/`/`bugfix/`/`hotfix/`/`chore/`, merge commit for `release/` — no pause.
+-- **Step 6 (Merge conflicts):** auto-resolve **trivial** conflicts (version bumps, import lists, config values) exactly as Step 6 already describes. A **business-logic** conflict → `needs-human` (do not merge; leave the branch unmerged, `reason` names the conflicting files).
 +- **Step 5b (Mark ready, `draft_until_finish: true` only):** mark the PR ready for review before the merge, as Step 5b says; a failure is `needs-human`, and the run neither merges nor hands off.
- - **Step 6 (Merge conflicts):** auto-resolve **trivial** conflicts (version bumps, import lists, config values) exactly as Step 6 already describes. A **business-logic** conflict → `needs-human` (do not merge; leave the branch unmerged, `reason` names the conflicting files).
++- **Step 6 (Merge conflicts):** auto-resolve **trivial** conflicts (version bumps, import lists, config values) exactly as Step 6 already describes. A **business-logic** conflict → `needs-human` (do not merge; leave the branch unmerged, `reason` names the conflicting files). After the push of a resolved merge, merge only with a clean review of the new head (standalone); when orchestrated, return `needs-human` instead of merging (`merge-conflicts.md`, item 6).
  
  ### Merge hand-off (`merge_owner: reeve`)
  
@@ -814,7 +859,7 @@
  
  ```
  status: done
-@@ -449,6 +473,8 @@ follow_ups: []
+@@ -449,6 +445,8 @@ follow_ups: []
  requested_state: <{merge_handoff_state} when orchestrated or under prompt-relay; omit otherwise>
  ```
  
@@ -823,6 +868,30 @@
  The `reason` must begin with the exact text `handed off to reeve`; `/ccmagic:auto-ticket` keys on it. A missing `merge_handoff_state` on the team is `needs-human` (Step 7 hand-off branch), never a fallback merge. Absent the key, or with `merge_owner: self`, this section does not apply and the run merges as documented above.
  
  ### Route-and-stop (park the ticket) — top-level entry points only
+@@ -475,22 +473,4 @@ requested_state: <Done when orchestrated or under prompt-relay; omit otherwise>
+ 
+ ## Error Handling
+ 
+-| Situation | Action |
+-|-----------|--------|
+-| No tracker available — unless the prompt-relay detection rule matched (contract §7) | Stop. Tell user to install one or set `tracker:` in `.claude/ccmagic.local.md`. |
+-| No PR found | Stop. Tell user to create one first. |
+-| Ticket not found | Stop. Tell user the ID that failed. |
+-| Tracker MCP/CLI not connected | Stop. Tell user which integration is needed. |
+-| CI checks failing | Surface them. Ask user to fix or override. (Autonomous: `needs-human` — do not merge.) |
+-| Changes requested on PR | Surface them. Ask user to address or override. (Autonomous: `needs-human` — do not merge.) |
+-| PR has conflicts | Attempt local resolution. Escalate unresolvable conflicts to user. (Autonomous: trivial → resolve; business-logic → `needs-human`.) |
+-| Merge fails for other reason | Show the error. Do not retry blindly. |
+-| `--delete-branch` fails (branch checked out in a worktree, or any local-checkout reason) | Verify the merge succeeded (`gh pr view --json state`), delete the remote branch best-effort (`git push origin --delete {headRefName}`), leave the local checkout alone, and report the outcome gracefully — this is not an error. |
+-| Conflict resolution: `git checkout {headRefName}` fails with "'{headRefName}' is already used by worktree at '{path}'" | The branch lives in a linked worktree — run the same conflict-resolution commands from that worktree path instead, then re-attempt the merge. Not an error. |
+-| Target transition not found (JIRA/Linear) | Show available transitions/states. Ask user to pick. (Autonomous: for the Done target, try the fallbacks; if none match, apply `needs_human_label` and note it.) |
+-| QA label missing (GitHub QA path) | Ask user which label, offer to save to config. |
+-| Ticket update fails | Warn user. Report what was and wasn't updated. Continue to Done. |
+-| Cannot identify QA person (QA path only) | Ask the user directly. |
+-| User says "no" at confirmation | Stop cleanly. Nothing has been merged yet. |
+-| Autonomous: merge gate not satisfied | `needs-human` — route-and-stop (park to `needs_human_state`, comment on PR + ticket) if top-level; else emit the handshake for the parent. |
+-| `merge_owner: reeve` and `merge_handoff_state` does not exist on the team | Do not merge, do not transition. Interactive: say so and stop. Autonomous: `needs-human` with the state name in `reason`. |
++The table of situations and actions (no tracker, no PR, failing CI, conflicts, a failed `--delete-branch`, a missing transition, and the autonomous cases) is in `${CLAUDE_SKILL_DIR}/errors.md`; read it when one of them comes up.
 ### skills/help/SKILL.md
 @@ -24,7 +24,7 @@ End-to-end ticket lifecycle backed by Linear, GitHub Issues, or JIRA. Auto-detec
  - **Purpose:** End-to-end ticket workflow — lookup, assign, branch, work, review, PR.
@@ -876,16 +945,18 @@
     - Project conventions
     - Branch type (feature/hotfix/release)
 ### skills/pr-feedback/SKILL.md
-@@ -206,7 +206,7 @@ After presenting the plan, suggest validation steps:
+@@ -205,8 +205,9 @@ After presenting the plan, suggest validation steps:
+ > 1. `/ccmagic:validate` — Run pre-commit checks to catch regressions
  > 2. `/ccmagic:test` — Run tests to verify fixes don't break existing behavior
  > 3. `gh pr view {PR_NUMBER} --comments` — Review to confirm all threads addressed
++> 4. `/ccmagic:review-ticket` on the pushed head: the fixes moved the PR head past the last review, so review it again and confirm the report is clean and its `head:` equals `gh pr view {PR_NUMBER} --json headRefOid --jq .headRefOid` before finishing or handing off (`${CLAUDE_PLUGIN_ROOT}/skills/work-ticket/review-head.md`, RV-178)
  >
 -> When replying to review threads, use `ccm-pr-reply {PR} {comment_id} --disposition fixed|declined|answered|deferred ...` (see *Autonomous mode*, step 4). A plain reply leaves the thread counted as open by `/ccmagic:auto-ticket`.
 +> When replying to review threads, use `"${CLAUDE_PLUGIN_ROOT}/bin/ccm-pr-reply" {PR} {comment_id} --disposition fixed|declined|answered|deferred ...` (see *Autonomous mode*, step 4). A plain reply leaves the thread counted as open by `/ccmagic:auto-ticket`.
  
  ## Autonomous mode
  
-@@ -233,7 +233,7 @@ Run Steps 1–5 exactly as written (load conventions, fetch threads, classify, v
+@@ -233,7 +234,7 @@ Run Steps 1–5 exactly as written (load conventions, fetch threads, classify, v
  3. **Push**: invoke `/ccmagic:push` with the autonomous grounding block prepended (it commits the grouped fixes and pushes; if push returns `needs-human`, propagate that and skip step 4). Replies come after the push because a `fixed` reply must cite a pushed commit.
  4. **Reply on every triaged thread with `ccm-pr-reply`**, using the response templates in `${CLAUDE_SKILL_DIR}/triage-guide.md` for the body. The script appends the disposition marker that `ccm-pr-threads` reads, replies to the thread's root comment, and resolves the thread for `fixed`:
     ```bash
@@ -894,6 +965,24 @@
     {reply body}
     CCM_REPLY_EOF
     ```
+@@ -242,6 +243,8 @@ Run Steps 1–5 exactly as written (load conventions, fetch threads, classify, v
+ 
+    Questions and comments in the general PR conversation (not line threads) get a normal `gh pr comment` reply; they don't count toward open threads.
+ 
++5. **Review the pushed head (top-level runs only, RV-178).** The push in step 3 moved the PR head past the last review, and a merge gate that binds the review to the head rejects the old report. When this skill is the top-level autonomous entry point (no `orchestrator:` in the grounding block) and step 3 pushed, read `${CLAUDE_PLUGIN_ROOT}/skills/work-ticket/review-head.md` and run its check before the handshake: read the PR head with `gh pr view {PR_NUMBER} --json headRefOid --jq .headRefOid`, rerun `/ccmagic:review-ticket` on it with the autonomous grounding block, and confirm the new report's `head:` equals the PR head and its `status:` is `clean`. On `fixable-findings`, fix the findings, push, and review again, within `max_review_fix_passes` rounds (that file's steps 4 and 5). A review that is not `clean` on the PR head when the rounds run out, a `needs-human` review, or a head that does not match is `needs-human`, never `done`. When orchestrated, skip this step: `/ccmagic:auto-ticket` re-reviews the pushed head in its Step 4f.
++
+ ### Behavior at each human-gate
+ 
+ - **Step 4d (Conflicting reviewers):** do not ask. Conventions already win in this skill — if a project convention decides the conflict, take that side automatically and cite it in the reply. Only a **genuine tie** (no convention applies) → `needs-human` (the `reason` names the `file:line` and both positions).
+@@ -255,7 +258,7 @@ reason: applied {A} / declined {D} / deferred {F}   (or the blocking tie on need
+ follow_ups: [<follow-up ticket ids filed, or short descriptions when orchestrated or under prompt-relay>]
+ ```
+ 
+-`done` = this pass's fixes are applied, replies posted, follow-ups filed (or recorded as short descriptions when orchestrated or under prompt-relay), and the branch pushed. `needs-human` = a genuine reviewer tie (or a fix that can't be made safely) surfaced; if top-level, route-and-stop (park to `needs_human_state`, or `needs_human_label` if that state doesn't exist — on GitHub create the label first if missing; comment) before emitting — otherwise hand the handshake to the parent. **Under prompt-relay** (contract §7), that top-level park applies contract §4's *Under the prompt-relay transport* adjustments — no state move or label, parked note to the PR only, emitted (with `Requested state: {needs_human_state}`) wrapped in the §7 final-message delimiters as your final output. The parent orchestrator recomputes overall "clean" (CI green + zero unresolved actionable threads) after CI and any new bot review land.
++`done` = this pass's fixes are applied, replies posted, follow-ups filed (or recorded as short descriptions when orchestrated or under prompt-relay), the branch pushed, and, on a top-level run that pushed, a review whose `head:` is the PR head and whose `status:` is `clean` (step 5). `needs-human` = a genuine reviewer tie (or a fix that can't be made safely) surfaced; if top-level, route-and-stop (park to `needs_human_state`, or `needs_human_label` if that state doesn't exist — on GitHub create the label first if missing; comment) before emitting — otherwise hand the handshake to the parent. **Under prompt-relay** (contract §7), that top-level park applies contract §4's *Under the prompt-relay transport* adjustments — no state move or label, parked note to the PR only, emitted (with `Requested state: {needs_human_state}`) wrapped in the §7 final-message delimiters as your final output. The parent orchestrator recomputes overall "clean" (CI green + zero unresolved actionable threads) after CI and any new bot review land.
+ 
+ ## Execution
+ 
 ### skills/pr/SKILL.md
 @@ -206,6 +206,7 @@ Create as draft if:
  - WIP commits present
@@ -1370,7 +1459,7 @@
  argument-hint: Ticket ID (e.g. ENG-123, PROJ-456, or a GitHub issue number like 42)
  model: inherit
  ---
-@@ -170,6 +170,10 @@ git checkout -b {branch-name}
+@@ -170,11 +170,15 @@ git checkout -b {branch-name}
  
  ## Step 5: Execute the work
  
@@ -1381,7 +1470,27 @@
  ### Quick Fix path
  
  1. Implement the fix directly in this session. Read the relevant files first to understand the codebase. Make the minimal change that addresses the ticket scope. Follow the project's coding standards from `context/conventions.md`.
-@@ -207,6 +211,8 @@ The debug skill runs its systematic investigation. After it finishes, **run `/cc
+ 2. Do not over-engineer. If the fix is genuinely one line, make it one line.
+-3. **Run `/ccmagic:review`** on the change. The auto-router will usually pick QUICK for a one-or-two-file fix and DEEP if it touches risky paths. Address any CRITICAL findings before moving on.
++3. **Run `/ccmagic:review`** on the change. The auto-router will usually pick QUICK for a one-or-two-file fix and DEEP if it touches risky paths. Address any CRITICAL findings before moving on. A fix made after the review is code the review did not read, so Step 7's review head check reviews the pushed head again.
+ 
+ ### Complex Feature path
+ 
+@@ -185,7 +189,7 @@ Implement the feature inline in this session, following these phases:
+ 3. **Clarifying questions** — ask the user about any underspecified details. Do not guess.
+ 4. **Architecture** — propose a brief implementation plan before writing code; pause for confirmation on non-trivial designs.
+ 5. **Implementation** — write the code following `context/conventions.md`.
+-6. **Review** — invoke `/ccmagic:review-ticket` so the review is grounded in the ticket scope. Address CRITICAL findings.
++6. **Review** — invoke `/ccmagic:review-ticket` so the review is grounded in the ticket scope. Address CRITICAL findings. Note the commit the review read (`git rev-parse HEAD`); a fix after it gets a second review at Step 7's review head check.
+ 
+ > If you want the multi-agent feature workflow (parallel codebase exploration, architecture review), consider `/ccmagic:research` for the exploration phase and `/ccmagic:codex-review` for the review phase.
+ 
+@@ -203,10 +207,12 @@ Symptoms: {description}
+ {any reproduction steps or error messages from the ticket}
+ ```
+ 
+-The debug skill runs its systematic investigation. After it finishes, **run `/ccmagic:review-ticket`** on the resulting fix — debug focuses on correctness of the fix, not code quality or ticket coverage.
++The debug skill runs its systematic investigation. After it finishes, **run `/ccmagic:review-ticket`** on the resulting fix — debug focuses on correctness of the fix, not code quality or ticket coverage. A fix made after that review is reviewed again at Step 7's review head check.
  
  ### Build and test runs (all paths)
  
@@ -1399,15 +1508,17 @@
  For each acceptance criterion or stated goal in the ticket, report:
  - **Addressed** — describe how.
  - **Partially addressed** — explain the gap.
-@@ -262,6 +270,8 @@ Invoke `/ccmagic:pr`. The PR skill will:
+@@ -262,7 +270,9 @@ Invoke `/ccmagic:pr`. The PR skill will:
  
  Confirm the PR with the user before creating it.
  
+-After the PR is created, capture the PR URL returned by `gh pr create`.
 +**Draft until finish.** When `draft_until_finish` is `true` (a `draft_until_finish: true` line in the grounding block, else the `config` object from `ccm-context`), create the PR as a draft: pass `--draft` to `gh pr create`. `/ccmagic:finish-ticket` marks it ready for review at its Step 5b. Never mark it ready here, and never in a fix pass. Absent the key, or with `false`, open the PR as before.
 +
- After the PR is created, capture the PR URL returned by `gh pr create`.
++After the PR is created, capture the PR URL returned by `gh pr create`. **Review head check (RV-178).** Then, and again after any later push to the PR branch in this run (a fix of a review finding, a fix for PR feedback, a merge of the base), and before Step 8 moves the ticket to In Review or the `done` handshake: read `${CLAUDE_SKILL_DIR}/review-head.md` and run its check. It reads the PR head with `gh pr view {PR_NUMBER} --json headRefOid --jq .headRefOid`, reruns `/ccmagic:review-ticket` on the new head when the last review read another commit (or uncommitted changes that were edited after it), and confirms the report's `head:` equals the PR head. Skip it when orchestrated (`orchestrator:` in the grounding block): `/ccmagic:auto-ticket` re-reviews the pushed head itself. In autonomous mode a review that cannot be brought to the PR head is `needs-human`, never `done`.
  
  ---
+ 
 @@ -331,20 +341,23 @@ Also read these keys from `.claude/ccmagic.local.md`: `needs_human_state:`, `nee
    - If only minor/cosmetic unknowns remain, pick the reasonable option and note the choice in the PR body.
    - Record the implementation/architecture plan as a **PR comment** after the PR is created (Step 7) instead of pausing for confirmation.

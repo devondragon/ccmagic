@@ -3969,6 +3969,48 @@ skills_auto_ticket_rereviews_after_late_push() {
   check "${missing# }" ""
 }
 
+# RV-178: work-ticket, pr-feedback, and finish-ticket, run on their own, review
+# the PR head again after a push that followed the review and confirm the
+# report's head: is the PR head before they finish or hand off. The rule is in
+# work-ticket/review-head.md; orchestrated runs leave it to auto-ticket 4e/4f.
+# shellcheck disable=SC2016 # literal ${...} in the markdown being matched
+skills_standalone_review_covers_pr_head() {
+  local rule=$ROOT/skills/work-ticket/review-head.md conf=$ROOT/skills/finish-ticket/merge-conflicts.md missing='' key f
+  [ -f "$rule" ] || missing+=" rule-file"
+  for key in 'headRefOid' 'head:' 'review_pass:' 'previous_findings:' 'max_review_fix_passes' 'orchestrator:' 'needs-human' 'Never pick the second yourself' \
+    'git fetch origin {headRefName}' 'git merge --ff-only FETCH_HEAD' 'git checkout {headRefName}' 'no upstream' 'cannot fetch {headRefName}' 'has diverged' \
+    '**and** the verdict is `clean`' '`fixable-findings` goes to step 4' 'fixable-findings` verdict with no round left is a stop' \
+    'covers the first pushed head' 'whatever its handshake `head:` says' 'gh api user --jq .login' 'names as the commit it read'; do
+    grep -qF -- "$key" "$rule" 2>/dev/null || missing+=" rule:$key"
+  done
+  # A bare pull fails on a branch with no upstream (a Cyrus sandbox), so the
+  # rule never prescribes one.
+  grep -qF '`git pull --ff-only`' "$rule" && missing+=" rule:bare-pull"
+  grep -qF 'Never a bare `git pull`' "$rule" || missing+=" rule:no-bare-pull"
+  f=$ROOT/skills/work-ticket/SKILL.md
+  section "$f" '^## Step 7:' '^## Step 8:' | grep -F '${CLAUDE_SKILL_DIR}/review-head.md' | grep -qF 'headRefOid' || missing+=" work-ticket:step7"
+  for f in pr-feedback finish-ticket; do
+    grep -F '${CLAUDE_PLUGIN_ROOT}/skills/work-ticket/review-head.md' "$ROOT/skills/$f/SKILL.md" | grep -qF 'headRefOid' || missing+=" $f:check"
+  done
+  # pr-feedback's done needs a clean review of the PR head, and a
+  # fixable-findings review gets a bounded fix loop.
+  grep -qF 'whose `status:` is `clean` (step 5)' "$ROOT/skills/pr-feedback/SKILL.md" || missing+=" pr-feedback:done-clean"
+  grep -F 'On `fixable-findings`, fix the findings' "$ROOT/skills/pr-feedback/SKILL.md" | grep -qF 'max_review_fix_passes' || missing+=" pr-feedback:fix-loop"
+  # finish-ticket runs it again after it pushes a conflict merge; orchestrated,
+  # where Step 3d skips itself, it returns needs-human instead of merging.
+  section "$ROOT/skills/finish-ticket/SKILL.md" '^### Handle merge conflicts' '^### Verify merge' | grep -qF '${CLAUDE_SKILL_DIR}/merge-conflicts.md' || missing+=" finish-ticket:conflict-file"
+  grep -qF "run Step 3d's review head check again on the new head" "$conf" 2>/dev/null || missing+=" conflicts:standalone"
+  grep -F '**Orchestrated**' "$conf" 2>/dev/null | grep -F 'Do not merge and do not hand off' | grep -qF 'needs-human' || missing+=" conflicts:orchestrated"
+  grep -qF 'never merge or hand off on a stale review' "$ROOT/skills/finish-ticket/SKILL.md" || missing+=" finish-ticket:autonomous"
+  # The Review head line sits under Reviews, after Changes requested.
+  grep -A1 -F '  Changes requested by {reviewer}' "$ROOT/skills/finish-ticket/SKILL.md" | grep -qF '  Review head:' || missing+=" finish-ticket:report-line"
+  # Both skills stay under the 500-line rule in .claude/CLAUDE.md.
+  for f in work-ticket finish-ticket; do
+    [ "$(wc -l <"$ROOT/skills/$f/SKILL.md")" -lt 500 ] || missing+=" $f:500-lines"
+  done
+  check "${missing# }" ""
+}
+
 # A version 1 fallback record says why it fell back, in a fallback_reason key
 # (Reeve's RunRecordV1 is not strict, so the extra key parses), and the run's
 # final message says so too.
@@ -5149,7 +5191,8 @@ ADDED_AGENTS_SINCE_BASELINE=(agents/auto-visual.md)
 # rules (issue 111); review-guidance.md holds REVIEW.md and pre-existing findings
 # (issue 109).
 ADDED_SKILL_FILES_SINCE_BASELINE=(skills/work-ticket/spec-delta.md skills/work-ticket/acceptance.md skills/review/review-guidance.md
-  skills/auto-ticket/base-sync.md skills/work-ticket/base-conflict.md)
+  skills/auto-ticket/base-sync.md skills/work-ticket/base-conflict.md skills/work-ticket/review-head.md
+  skills/finish-ticket/merge-conflicts.md skills/finish-ticket/errors.md)
 
 spec_prompt_files() {
   { git -C "$ROOT" ls-tree -r --name-only "$SPEC_BASELINE" -- skills agents
@@ -5397,15 +5440,21 @@ fu_decision() {
     'Follow-up key: AuthGuard.canActivate'
 }
 
-# fu_change: a follow-up with no open decision: one finding, a change, and
-# acceptance criteria.
+# fu_change: a follow-up with no open decision: one finding, a goal, a change
+# naming the file, what is out of scope, and acceptance criteria (RV-175).
 fu_change() {
   # shellcheck disable=SC2016 # literal backticks
-  printf '%s\n' 'Raised by the review step on PR #7 (ENG-1).' '' '## Change' '' \
+  printf '%s\n' 'Raised by the review step on PR #7 (ENG-1).' '' \
+    'Goal: CIDR matching rejects a prefix length over 32.' '' '## Change' '' \
     '`src/net/abuse.ts`: make `AbuseManager.ipMatchesCIDR` reject a prefix length over 32.' '' \
+    '## Out of scope' '' '- IPv6 prefixes.' '' \
     '## Acceptance criteria' '' '- [ ] `ipMatchesCIDR("10.0.0.1", "10.0.0.0/33")` returns false.' '' \
     'Follow-up key: AbuseManager.ipMatchesCIDR'
 }
+
+# fu_change_old: the change shape before 3.31.0, with no goal and no out of
+# scope section, as earlier runs drafted and filed it.
+fu_change_old() { fu_change | sed '/^Goal: /,/^$/d; /^## Out of scope/,/^- IPv6/d' | cat -s; }
 
 followup_decision_shape_passes() {
   fu_check < <(fu_decision)
@@ -5419,10 +5468,52 @@ followup_decision_shape_passes() {
 
 followup_change_shape_passes() {
   fu_check < <(fu_change)
-  check "$RC,$(jqval .pass),$(jqval .shape),$(fu_rules)" "0,true,change,"
+  check "$RC,$(jqval .pass),$(jqval .shape),$(jqval .old_shape),$(fu_rules),$(jqval '.warnings | length')" "0,true,change,false,,0"
   # Any list marker counts as a checkable item.
   fu_check < <(fu_change | sed 's/^- \[ \] /1. /')
   check "$RC" "0"
+  # A file is a backticked token with a slash, a short extension, or a known
+  # extensionless name; a symbol alone is not one.
+  # shellcheck disable=SC2016 # literal backticks
+  fu_check < <(fu_change | sed 's|^`src/net/abuse.ts`: make `AbuseManager.ipMatchesCIDR`|In `Makefile`, make `AbuseManager.ipMatchesCIDR`|')
+  check "$RC,$(fu_rules)" "0,"
+  # shellcheck disable=SC2016 # literal backticks
+  fu_check < <(fu_change | sed 's|^`src/net/abuse.ts`: make |Make |')
+  check "$RC,$(fu_rules)" "1,change-file-missing"
+  # Longer and framework extensions, a :line suffix, a dot name, and known
+  # extensionless names are files; dotted symbols are not, and neither is a
+  # bare *.json name that is not a well-known root file.
+  local tok got=''
+  for tok in build.gradle application.properties Main.svelte src/net/abuse.ts:42 abuse.ts:10-12 \
+    .gitignore LICENSE Makefile Dockerfile package.json tsconfig.build.json \
+    res.json user.id config.get AbuseManager.ipMatchesCIDR 'x()'; do
+    # shellcheck disable=SC2016 # literal backticks
+    fu_check < <(fu_change | sed "s|^\`src/net/abuse.ts\`: make \`AbuseManager.ipMatchesCIDR\`|\`$tok\`: make it|")
+    got+=" $tok:$RC"
+  done
+  check "${got# }" "build.gradle:0 application.properties:0 Main.svelte:0 src/net/abuse.ts:42:0 abuse.ts:10-12:0 .gitignore:0 LICENSE:0 Makefile:0 Dockerfile:0 package.json:0 tsconfig.build.json:0 res.json:1 user.id:1 config.get:1 AbuseManager.ipMatchesCIDR:1 x():1"
+}
+
+# A description in the shape before 3.31.0 fails the new rules, and passes with
+# an old-shape warning only as a carried-over description, so an earlier run's
+# draft is still filed as it is (RV-175).
+followup_change_old_shape() {
+  fu_check < <(fu_change_old)
+  check "$RC,$(jqval .old_shape),$(fu_rules)" "1,true,goal-missing,scope-missing"
+  fu_check --carried-over < <(fu_change_old)
+  check "$RC,$(jqval .pass),$(jqval .old_shape),$(fu_rules),$(jq -r '[.warnings[].rule] | join(",")' <<<"$OUT")" "0,true,true,,old-shape"
+  # The old shape still needs its own sections.
+  fu_check --carried-over < <(fu_change_old | sed '/^## Acceptance criteria/,/^- \[ \]/d')
+  check "$RC,$(fu_rules)" "1,criteria-missing"
+  # A description with a goal or an out of scope section is in the new shape,
+  # and --carried-over does not relax it.
+  fu_check --carried-over < <(fu_change | sed '/^## Out of scope/,/^- IPv6/d')
+  check "$RC,$(jqval .old_shape),$(fu_rules)" "1,false,scope-missing"
+  fu_check --carried-over < <(fu_change | sed '/^Goal: /d')
+  check "$RC,$(jqval .old_shape),$(fu_rules)" "1,false,goal-missing"
+  # A decision is never in the old shape.
+  fu_check --carried-over < <(fu_decision)
+  check "$RC,$(jqval .old_shape),$(jqval '.warnings | length')" "0,false,0"
 }
 
 followup_decision_problems() {
@@ -5438,7 +5529,7 @@ followup_decision_problems() {
   # The options of RD-107, written as one sentence, are not a decision block.
   fu_check <<<'Options: intercept GET /api/me, or reword the rule. Needs a human decision.
 Follow-up key: AuthGuard.canActivate'
-  check "$RC,$(jqval .shape),$(fu_rules)" "1,change,change-missing,criteria-missing"
+  check "$RC,$(jqval .shape),$(fu_rules)" "1,change,change-missing,criteria-missing,goal-missing,scope-missing"
 }
 
 followup_change_problems() {
@@ -5447,8 +5538,13 @@ followup_change_problems() {
 Low-priority also: rename x; drop y.')
   check "$RC,$(fu_rules)" "1,extra-findings,criteria-missing"
   # Empty sections.
-  fu_check < <(fu_change | sed '/^`src/d; /^- \[ \]/d')
-  check "$RC,$(fu_rules)" "1,change-empty,criteria-empty"
+  fu_check < <(fu_change | sed '/^`src/d; /^- IPv6/d; /^- \[ \]/d')
+  check "$RC,$(fu_rules)" "1,change-empty,scope-empty,criteria-empty"
+  # The goal is the line right after the Raised by line.
+  fu_check < <(fu_change | sed 's/^Goal: //')
+  check "$RC,$(fu_rules)" "1,goal-missing"
+  fu_check < <(fu_change | sed '1d')
+  check "$RC,$(fu_rules)" "1,goal-missing"
   # The key line: missing, repeated, not last.
   fu_check < <(fu_change | sed '$d')
   check "$RC,$(fu_rules)" "1,key-missing"
@@ -5464,12 +5560,19 @@ Low-priority also: rename x; drop y.')
 }
 
 # SKILL.md states both shapes, files a decision in the decision state, and
-# checks each description with ccm-followup-check; its two examples pass.
+# checks each description with ccm-followup-check; its two examples pass
+# without --carried-over.
 # shellcheck disable=SC2016 # literal backticks in the markdown being matched
 skills_auto_ticket_follow_up_shapes() {
   local f="$ROOT/skills/auto-ticket/SKILL.md" missing='' ex shapes=''
   grep -qF '`Needs Decision`' "$f" || missing+=" decision-state"
   grep -qF '`## Acceptance criteria`' "$f" || missing+=" criteria"
+  # RV-175: a change follow-up carries a goal and what is out of scope, and an
+  # earlier run's draft in the old shape is checked with --carried-over.
+  grep -qF '`Goal: <one sentence>`' "$f" || missing+=" goal"
+  grep -qF '`## Out of scope`' "$f" || missing+=" out-of-scope"
+  grep -qF 'ccm-followup-check" --carried-over' "$f" || missing+=" carried-over"
+  grep -qF 'Never pass the flag for a description this run wrote' "$f" || missing+=" carried-over-only"
   grep -qF '`**q1.** <question>`' "$f" || missing+=" q1"
   grep -qF 'bin/ccm-followup-check' "$f" || missing+=" helper"
   grep -qF 'Low-priority also' "$f" || missing+=" one-finding"
