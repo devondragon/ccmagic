@@ -40,7 +40,7 @@ Call `Task` with `run_in_background: false` for every step, and keep every Bash 
 
 There is no inline mode: a forked orchestrator cannot invoke a `context: fork` skill, and the steps reach forked skills (`validate` itself, and `analyze-impact` from `work-ticket`), so running steps inline in this orchestrator's own context is not achievable. (`review` also ran forked until 3.13.2; it now runs inline.) Per-step isolation and per-step models are the whole point of this skill.
 
-**Every step below runs through `run_step`**, including the `/ccmagic:push` commit-and-push call sites and the fix passes in the Step 2b visual-fix loop, the Step 3 review-fix loop, and Step 4b validate-fix. **This skill never edits code.** Every change to the repository in a run is made by a step agent: the work itself, review fixes, and validate fixes by `auto-work` (a fix pass, contract §2), and PR-feedback fixes by `auto-feedback`. This skill parses reports, builds the grounding for each step, and counts passes.
+**Every step below runs through `run_step`**, including the `/ccmagic:push` commit-and-push call sites and the fix passes in the Step 2b visual-fix loop, the Step 3 review-fix loop, and Step 4b validate-fix. **This skill never edits code.** Every change to the repository in a run is made by a step agent: the work itself, review fixes, and validate fixes by `auto-work` (a fix pass, contract §2), and PR-feedback fixes by `auto-feedback`. This skill parses reports, builds the grounding for each step, and counts passes. Its own writes to the PR are comments and, in Step 4g, the description.
 
 ### Per-step agent registry
 
@@ -131,10 +131,10 @@ Run the work-ticket step via `run_step` — `/ccmagic:work-ticket {TICKET-ID}` w
 Resolve the PR the run will operate on:
 
 ```bash
-gh pr view --json number,url,title,baseRefName,headRefName --jq '{number,url,title,baseRefName,headRefName}'
+gh pr view --json number,url,title,baseRefName,headRefName,headRefOid --jq '{number,url,title,baseRefName,headRefName,headRefOid}'
 ```
 
-Store `{PR_NUMBER}`, `{PR_URL}`, `{BASE_BRANCH}`. Add `pr:` to the grounding block for the remaining steps. If no PR exists after a `done` from `work-ticket`, that's an inconsistency → **route-and-stop** (reason: "work-ticket reported done but no PR is present").
+Store `{PR_NUMBER}`, `{PR_URL}`, `{BASE_BRANCH}`. When Step 0's `ccm-context` output had `pr: null`, the work step opened the PR in this run, so its description was written for this head: keep `headRefOid` as `described_head`. Otherwise the description is older than the run, and `described_head` is none. Add `pr:` to the grounding block for the remaining steps. If no PR exists after a `done` from `work-ticket`, that's an inconsistency → **route-and-stop** (reason: "work-ticket reported done but no PR is present").
 
 ## Step 2b: Visual check
 
@@ -235,6 +235,8 @@ Everything this pass pushes is measured against `H`, so bot reviews triggered *b
   - `fixable-findings` with feedback passes left → run the Step 3 fix loop (items 1 to 5) on this report, continuing its pass count, so only the fix passes left under `max_review_fix_passes` remain. With none left → **route-and-stop** (stage = `review-ticket`, reason: "late-push re-review found fixable findings and no review fix passes remain: {findings}"). When the loop ends `clean`, its fix push has had no CI run or bot review yet, so return to the top of Step 4 for the next feedback pass.
 
 Each 4f follows a feedback pass that pushed, so a run makes at most `max_feedback_passes` late-push re-reviews, plus the fix loop's re-reviews under `max_review_fix_passes`; there is no separate limit. Whenever a limit stops the run while the PR head is ahead of `reviewed_head`, the run parks. It never finishes on a stale review.
+
+**4g. Keep the PR description true.** Once the loop ends, before Step 5, when `described_head` is none or differs from the PR head (a push in Step 0, 0b, 2b, 3, 4a, 4b, or 4c moved it), read `${CLAUDE_PLUGIN_ROOT}/skills/pr/refresh-description.md` and run its check from `described_head` (from `origin/{BASE_BRANCH}` when it is none). It lists the commits since, and when one makes a line of the description false or adds a change it does not mention (a file outside the ticket's scope, a test touched, a follow-up no longer needed), edits only those lines with `gh pr edit {PR_NUMBER} --body-file -`. This skill makes the edit, as it posts its own PR comments: a fix pass runs no `gh pr` command, and the push step never reads the description. Run it once here, however many pushes came before; a park runs it before the parked note instead (contract §4 step 5). Keep its one-line result for "Key autonomous decisions". A failed read or edit is never a park: the line says the description may be stale and names the commit.
 
 ---
 
@@ -339,6 +341,7 @@ Under prompt-relay there is no create API, so list every item (carried-over ones
 - {classification + reasoning}
 - {any minor implementation choices made instead of asking}
 - {out-of-scope changes flagged, if any}
+- {Step 4g's result when it edited or failed: "PR description: updated for {sha7, ...}" or "PR description may be stale after {sha7}: {why}"}
 - {a validate `done` that recorded a local test failure: "Local tests failed and passed on rerun: {files}" or "Local tests failed, CI passed on {sha7}: {files}"}
 - {v1 fallback only: "Run record fell back to version 1: {fallback_reason}"}
 
@@ -477,6 +480,7 @@ There is no stalled outcome. Never hang waiting for input.
 | Feedback-pass cap hit still not clean | route-and-stop (reason: remaining threads / red CI). |
 | Red CI under `merge_owner: reeve`, no open threads, and `ccm-ci-status` with `--attribute` says `not-attributable` on the head validate passed on | Not a park: the pass is clean with red CI (4d); finish hands off with `ci_handoff: true` and the record's `ci` key. |
 | Step 4 pushed after the last clean review (4a or 4b) | Re-review the pushed head (4f). A stale review never reaches finish: a clean re-review of another head, an unreadable PR head, or findings with no review fix or feedback passes left → route-and-stop (stage `review-ticket`), before any fix is pushed. |
+| Step 4g cannot read or edit the PR description | Not a park. Say under "Key autonomous decisions" that the description may be stale after the commit that needed the edit, and continue. |
 | `finish-ticket` merge gate not satisfied | It returns `needs-human` and does not merge → route-and-stop (stage `finish-ticket`). |
 | `requested_state: {merge_handoff_state}` and no state of that exact name exists | route-and-stop (stage `finish-ticket`); nothing was merged on the hand-off path. |
 | Any other tracker write fails (In Progress, In Review, Done, PR link, follow-up ticket), on any outcome, a park included | Not a park. Say what failed in the summary and continue; an unfiled follow-up is listed with `create failed: {error}` as its reason, and the next run on the ticket files it (Step 6, *Carried over from earlier runs*). A failed duplicate search or "also raised by" comment is the same: file the follow-up anyway and note the failed search. |

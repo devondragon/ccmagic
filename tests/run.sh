@@ -5642,6 +5642,35 @@ skills_criterion_out_of_scope() {
   check "${missing# }" ""
 }
 
+# After a push that followed the PR description, the orchestrator compares
+# the commits since with the description and edits only the lines they made
+# false or the changes it does not mention, once before finish and before a
+# park's note; a failed edit is never a park (reeve-dashboard PR #165, 3.32.0).
+# shellcheck disable=SC2016 # literal backticks in the markdown being matched
+skills_pr_description_refresh() {
+  local a="$ROOT/skills/auto-ticket/SKILL.md" c="$ROOT/skills/auto-ticket/autonomous-contract.md"
+  local p="$ROOT/skills/pr/SKILL.md" r="$ROOT/skills/pr/refresh-description.md" missing=''
+  [ -f "$r" ] || missing+=" refresh:file"
+  grep -qF "gh pr edit {PR_NUMBER} --body-file - <<'CCM_PR_BODY_EOF'" "$r" 2>/dev/null || missing+=" refresh:edit"
+  grep -qF 'git log --first-parent --no-merges --name-only' "$r" 2>/dev/null || missing+=" refresh:commits"
+  grep -qF 'Do not rewrite, reorder, or reword any other line' "$r" 2>/dev/null || missing+=" refresh:minimal"
+  grep -qF '`Closes #N`' "$r" 2>/dev/null || missing+=" refresh:closes"
+  grep -qF 'is never a park' "$r" 2>/dev/null || missing+=" refresh:no-park"
+  grep -qF 'PR description may be stale after {sha7}' "$r" 2>/dev/null || missing+=" refresh:stale"
+  # The orchestrator keeps the head the description was written for, runs
+  # the check in Step 4g before Step 5, and again before a park's note.
+  grep -qF 'headRefOid --jq '"'"'{number,url,title,baseRefName,headRefName,headRefOid}'"'" "$a" || missing+=" auto:step2"
+  grep -qF 'keep `headRefOid` as `described_head`' "$a" || missing+=" auto:described-head"
+  section "$a" '^\*\*4g\. Keep the PR description true' '^## Step 5' | grep -qF '${CLAUDE_PLUGIN_ROOT}/skills/pr/refresh-description.md' || missing+=" auto:4g"
+  grep -F '**4g.' "$a" | grep -qF 'A failed read or edit is never a park' || missing+=" auto:4g-no-park"
+  grep -qF '"PR description may be stale after {sha7}: {why}"' "$a" || missing+=" auto:summary"
+  grep -qF 'Step 4g cannot read or edit the PR description' "$a" || missing+=" auto:errors"
+  grep -F '5. **Comment the reason**' "$c" | grep -qF 'run its Step 4g description check now' || missing+=" contract:park"
+  grep -qF '${CLAUDE_SKILL_DIR}/refresh-description.md' "$p" || missing+=" pr:open-pr"
+  [ "$(wc -l <"$a")" -lt 500 ] || missing+=" auto:500-lines"
+  check "${missing# }" ""
+}
+
 # ---- ccm-baseline-check and /ccmagic:spec-baseline (RV-84) ------------------
 
 BASELINE_FIXTURE=$ROOT/tests/fixtures/baseline
