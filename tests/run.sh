@@ -5189,10 +5189,10 @@ ADDED_AGENTS_SINCE_BASELINE=(agents/auto-visual.md)
 # spec-delta.md holds the plain-delta rules its SKILL.md blocks point to (moved
 # there to keep SKILL.md under 500 lines) and acceptance.md the acceptance-test
 # rules (issue 111); review-guidance.md holds REVIEW.md and pre-existing findings
-# (issue 109).
+# (issue 109). pr/refresh-description.md holds the PR description check (3.32.0).
 ADDED_SKILL_FILES_SINCE_BASELINE=(skills/work-ticket/spec-delta.md skills/work-ticket/acceptance.md skills/review/review-guidance.md
   skills/auto-ticket/base-sync.md skills/work-ticket/base-conflict.md skills/work-ticket/review-head.md
-  skills/finish-ticket/merge-conflicts.md skills/finish-ticket/errors.md)
+  skills/finish-ticket/merge-conflicts.md skills/finish-ticket/errors.md skills/pr/refresh-description.md)
 
 spec_prompt_files() {
   { git -C "$ROOT" ls-tree -r --name-only "$SPEC_BASELINE" -- skills agents
