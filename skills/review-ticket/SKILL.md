@@ -207,6 +207,8 @@ If empty: "All AC items have corresponding changes."
 {Full code review report from /ccmagic:review here, including its own Scope Check, Critical/High/Medium findings, etc.}
 ```
 
+**A criterion that needs an out-of-scope change.** A criterion that only a change the ticket's out of scope section excludes could meet fully (a full-suite run blocked by another ticket's flaky test, for one) is not missing when the diff meets it as far as the ticket's own change can and the PR body names the other failures by test name. Never ask for the excluded change; a missing PR-body line is a fixable missing-AC item.
+
 <!-- ccmagic:plain-delta -->
 **Only when the base has `openspec/specs/` and the grounding block has no `spec:` section** (Step 4 ran the spec delta pass). Add a `### Spec delta` section after *Missing from ticket*: the `spec_delta` value `scope` reported, then each spec-delta finding, or "The spec delta matches the code." when there is none. For a requirements approval's archive ticket, the value is the `folder` `ccm-openspec-scope` reported, followed by its findings or "The PR carries only the archive."
 <!-- /ccmagic:plain-delta -->

@@ -5516,6 +5516,42 @@ followup_change_old_shape() {
   check "$RC,$(jqval .old_shape),$(jqval '.warnings | length')" "0,false,0"
 }
 
+# A criterion that asks for a whole-suite result names the file of its test,
+# since failures the ticket does not touch can block it (RD-145 and RD-146,
+# 3.32.0). A carried-over draft only warns, so it is still filed.
+followup_change_whole_suite() {
+  # shellcheck disable=SC2016 # literal backticks
+  local rd='- [ ] The test passes on 20 consecutive runs of the full `npm test` suite.'
+  fu_check < <(fu_change | sed "s|^- \[ \] .*|$rd|")
+  check "$RC,$(fu_rules),$(jq -r '.problems[0].detail' <<<"$OUT" | grep -c 'line 15 ')" "1,criteria-whole-suite,1"
+  fu_check --carried-over < <(fu_change | sed "s|^- \[ \] .*|$rd|")
+  check "$RC,$(jqval .pass),$(fu_rules),$(jq -r '[.warnings[].rule] | join(",")' <<<"$OUT")" "0,true,,criteria-whole-suite"
+  # An old-shape carried-over draft gets both warnings.
+  fu_check --carried-over < <(fu_change_old | sed "s|^- \[ \] .*|$rd|")
+  check "$RC,$(jq -r '[.warnings[].rule] | join(",")' <<<"$OUT")" "0,old-shape,criteria-whole-suite"
+  # The other phrasings, in any case and any list marker.
+  local item got=''
+  for item in '- All tests pass.' '* The whole test suite is green.' '1. The entire suite passes.' \
+    '- [ ] Every test passes in CI.' '- [ ] The Full Suite passes.'; do
+    fu_check < <(fu_change | sed "s|^- \[ \] .*|$item|")
+    got+="$RC"
+  done
+  check "$got" "11111"
+  # The scoped form names the test and its file, and passes.
+  # shellcheck disable=SC2016 # literal backticks
+  fu_check < <(fu_change | sed 's|^- \[ \] .*|- [ ] `shows the email` in `test/web/me.test.tsx` passes on 20 consecutive runs of the full suite; failures in other tests are reported in the PR, not fixed.|')
+  check "$RC,$(fu_rules),$(jqval '.warnings | length')" "0,,0"
+  # Words that only look like the phrases, and a suite line outside the
+  # criteria, are not whole-suite criteria.
+  fu_check < <(fu_change | sed 's|^- \[ \] .*|- [ ] The rule is fully covered by a test suite.|')
+  check "$RC" "0"
+  fu_check < <(fu_change | sed 's|^- IPv6 prefixes.|- Making the full suite pass.|')
+  check "$RC,$(fu_rules)" "0,"
+  # A decision follow-up has no criteria to check.
+  fu_check < <(fu_decision | sed 's|^Recommended: A\..*|Recommended: A. All tests pass with it.|')
+  check "$RC" "0"
+}
+
 followup_decision_problems() {
   # One option, no recommendation.
   fu_check < <(fu_decision | sed '/^- B:/d; /^Recommended:/d')
@@ -5573,6 +5609,12 @@ skills_auto_ticket_follow_up_shapes() {
   grep -qF '`## Out of scope`' "$f" || missing+=" out-of-scope"
   grep -qF 'ccm-followup-check" --carried-over' "$f" || missing+=" carried-over"
   grep -qF 'Never pass the flag for a description this run wrote' "$f" || missing+=" carried-over-only"
+  # 3.32.0: a criterion checks only the ticket's own change, a flaky test is
+  # named with its file, and sibling follow-ups are checked against each other.
+  grep -qF 'Each criterion checks only what `## Change` changes' "$f" || missing+=" criteria-scope"
+  grep -qF 'failures in other tests are reported in the PR, not fixed' "$f" || missing+=" flaky-form"
+  grep -qF 'no ticket'"'"'s criteria may depend on a file another of them changes' "$f" || missing+=" batch"
+  grep -qF '`criteria-whole-suite` warning' "$f" || missing+=" whole-suite-carried"
   grep -qF '`**q1.** <question>`' "$f" || missing+=" q1"
   grep -qF 'bin/ccm-followup-check' "$f" || missing+=" helper"
   grep -qF 'Low-priority also' "$f" || missing+=" one-finding"
@@ -5583,6 +5625,21 @@ skills_auto_ticket_follow_up_shapes() {
     shapes+=" $(jqval .shape)"
   done < <(awk '/^```text$/ { inb = 1; b = ""; next } inb && /^```$/ { inb = 0; if (b ~ /\nFollow-up key: /) printf "%s%c", b, 0; next } inb { b = b $0 "\n" }' "$f")
   check "${missing# },${shapes# }" ",decision change"
+}
+
+# A criterion that only an out-of-scope change could meet fully is met as far
+# as the ticket's own change can, with the other failures named in the PR
+# body: work-ticket does not make the excluded change and does not park on
+# it, and review-ticket does not ask for it (RD-145, 3.32.0).
+# shellcheck disable=SC2016 # literal backticks in the markdown being matched
+skills_criterion_out_of_scope() {
+  local w="$ROOT/skills/work-ticket/SKILL.md" r="$ROOT/skills/review-ticket/SKILL.md" missing=''
+  grep -qF '**A criterion that needs an out-of-scope change.**' "$w" || missing+=" work:rule"
+  grep -F '**A criterion that needs an out-of-scope change.**' "$w" | grep -qF 'do not make that change' || missing+=" work:no-change"
+  grep -F '**A criterion that needs an out-of-scope change.**' "$w" | grep -qF 'not a `needs-human` reason' || missing+=" work:no-park"
+  grep -F 'stop with `needs-human` (the `reason` lists the unmet AC)' "$w" | grep -qF '*A criterion that needs an out-of-scope change*' || missing+=" work:autonomous"
+  grep -F '**A criterion that needs an out-of-scope change.**' "$r" | grep -qF 'Never ask for the excluded change' || missing+=" review:rule"
+  check "${missing# }" ""
 }
 
 # ---- ccm-baseline-check and /ccmagic:spec-baseline (RV-84) ------------------

@@ -30,12 +30,19 @@
 #                                     what to do
 #   ## Out of scope                   at least one non-blank line
 #   ## Acceptance criteria            at least one list item (`- [ ] `, `- `,
-#                                     `* `, or `1. `)
+#                                     `* `, or `1. `); an item that asks for a
+#                                     whole-suite result ("full ... suite",
+#                                     "whole suite", "entire suite", "all
+#                                     tests", "every test") names a file in
+#                                     backticks, the file of the test it is
+#                                     about (3.32.0)
 # The shape before 3.31.0 had only `## Change` and `## Acceptance criteria`. A
 # change description with no `Goal:` line and no `## Out of scope` section is
 # in that old shape (old_shape: true): it fails on goal-missing and
 # scope-missing, unless --carried-over is given, when it passes with a
-# warning `old-shape` and the file is not required.
+# warning `old-shape` and the file is not required. With --carried-over, a
+# whole-suite criterion with no file is a warning `criteria-whole-suite`, not a
+# problem, whatever the shape, so a draft from before 3.32.0 is still filed.
 #
 # Both shapes end with exactly one `Follow-up key: <key>` line, the last
 # non-blank line. A line starting `Low-priority also` (any case) holds extra
@@ -48,7 +55,7 @@
 #         recommended-missing | recommended-repeated | recommended-shape |
 #         recommended-unknown | change-missing | change-empty |
 #         change-file-missing | goal-missing | scope-missing | scope-empty |
-#         criteria-missing | criteria-empty
+#         criteria-missing | criteria-empty | criteria-whole-suite
 #
 # Exit codes: 0 pass, 1 problems found, 4 usage error.
 
@@ -57,7 +64,7 @@ set -euo pipefail
 carried=0
 for a in "$@"; do
   case $a in
-    -h|--help) sed -n '2,53p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,60p' "$0"; exit 0 ;;
     --carried-over) carried=1 ;;
     *) echo "ccm-followup-check: unexpected argument $a" >&2; exit 4 ;;
   esac
@@ -131,7 +138,16 @@ lines=$(tr -d '\r' | awk -v carried="$carried" '
   /^Follow-up key:/ { close_section(); next }
   sec == "change" && /[^[:space:]]/ { body = 1; changebody = 1; if (names_file($0)) changefile = 1 }
   sec == "scope" && /[^[:space:]]/ { scopebody = 1 }
-  sec == "criteria" && /^[[:space:]]*(- \[[ xX]\] |- |\* |[0-9]+\. )[^[:space:]]/ { items = 1 }
+  sec == "criteria" && /^[[:space:]]*(- \[[ xX]\] |- |\* |[0-9]+\. )[^[:space:]]/ {
+    items = 1
+    # A whole-suite result can be blocked by failures the ticket does not
+    # touch (RD-145 and RD-146 each needed a fix in the file of the other),
+    # so such an item names the file of the test it is about. The check runs
+    # at END, since only a change follow-up has criteria to check.
+    lc = " " tolower($0) " "
+    if ((lc ~ /[^a-z]full[^a-z](.*[^a-z])?suite[^a-z]/ || lc ~ /[^a-z](whole|entire)[^a-z](.*[^a-z])?suite[^a-z]/ || lc ~ /[^a-z]all (the )?tests[^a-z]/ || lc ~ /[^a-z]every test[^a-z]/) && !names_file($0))
+      wholesuite[++wholesuites] = NR
+  }
   /^\*\*q[0-9]+\.\*\* [^[:space:]]/ {
     close_question()
     n = $0; sub(/^\*\*q/, "", n); sub(/\..*/, "", n)
@@ -171,6 +187,11 @@ lines=$(tr -d '\r' | awk -v carried="$carried" '
         if (!goal) problem("goal-missing", "the line after the Raised by line is not \"Goal: <one sentence>\"")
         if (!scopes) problem("scope-missing", "no ## Out of scope section")
         if (changebody && !changefile) problem("change-file-missing", "## Change names no file in backticks (`path/to/file.ext`)")
+      }
+      for (i = 1; i <= wholesuites; i++) {
+        d = "the criterion on line " wholesuite[i] " asks for a whole-suite result and names no file in backticks; name the test and its file (`<test name>` in `<file>` passes on N consecutive runs of the full suite; failures in other tests are reported in the PR, not fixed)"
+        if (carried) print "warn\tcriteria-whole-suite\t" d
+        else problem("criteria-whole-suite", d)
       }
     }
     print "old_shape\t" (old ? "true" : "false")
