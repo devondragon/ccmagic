@@ -28,6 +28,8 @@ Run:
 
 It prints JSON with the current `branch`, the `ticket_id` parsed from it, the open `pr` for this branch (or null), and `base_branch`: the repo's default branch from `gh`, or `develop` (local or `origin/develop`) when `gh` can't answer, otherwise `main`. Use `base_branch` as `$BASE_BRANCH`; do not re-derive it. The script is also on the Bash `PATH` as `ccm-context` while the plugin is enabled; use the bare name if the `${CLAUDE_PLUGIN_ROOT}` path doesn't resolve.
 
+When `pr` is not null, the branch already has an open PR: do not create a second one. Read `${CLAUDE_SKILL_DIR}/refresh-description.md` and run its check, which updates the existing description for the commits pushed since it was written, then stop. The check takes the base from the PR (`gh pr view --json baseRefName`), not from `base_branch`.
+
 `ccm-context` does not read the branching strategy. If `context/branching.md` exists, read the strategy (A, B, or C) from it as `$STRATEGY`, and if it names a base branch, that name overrides `base_branch`. Without the file, use Strategy B (direct to `$BASE_BRANCH`).
 
 ## PR Target Branch Determination

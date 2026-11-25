@@ -40,7 +40,7 @@ Call `Task` with `run_in_background: false` for every step, and keep every Bash 
 
 There is no inline mode: a forked orchestrator cannot invoke a `context: fork` skill, and the steps reach forked skills (`validate` itself, and `analyze-impact` from `work-ticket`), so running steps inline in this orchestrator's own context is not achievable. (`review` also ran forked until 3.13.2; it now runs inline.) Per-step isolation and per-step models are the whole point of this skill.
 
-**Every step below runs through `run_step`**, including the `/ccmagic:push` commit-and-push call sites and the fix passes in the Step 2b visual-fix loop, the Step 3 review-fix loop, and Step 4b validate-fix. **This skill never edits code.** Every change to the repository in a run is made by a step agent: the work itself, review fixes, and validate fixes by `auto-work` (a fix pass, contract §2), and PR-feedback fixes by `auto-feedback`. This skill parses reports, builds the grounding for each step, and counts passes.
+**Every step below runs through `run_step`**, including the `/ccmagic:push` commit-and-push call sites and the fix passes in the Step 2b visual-fix loop, the Step 3 review-fix loop, and Step 4b validate-fix. **This skill never edits code.** Every change to the repository in a run is made by a step agent: the work itself, review fixes, and validate fixes by `auto-work` (a fix pass, contract §2), and PR-feedback fixes by `auto-feedback`. This skill parses reports, builds the grounding for each step, and counts passes. Its own writes to the PR are comments and, in Step 4g, the description.
 
 ### Per-step agent registry
 
@@ -131,10 +131,10 @@ Run the work-ticket step via `run_step` — `/ccmagic:work-ticket {TICKET-ID}` w
 Resolve the PR the run will operate on:
 
 ```bash
-gh pr view --json number,url,title,baseRefName,headRefName --jq '{number,url,title,baseRefName,headRefName}'
+gh pr view --json number,url,title,baseRefName,headRefName,headRefOid --jq '{number,url,title,baseRefName,headRefName,headRefOid}'
 ```
 
-Store `{PR_NUMBER}`, `{PR_URL}`, `{BASE_BRANCH}`. Add `pr:` to the grounding block for the remaining steps. If no PR exists after a `done` from `work-ticket`, that's an inconsistency → **route-and-stop** (reason: "work-ticket reported done but no PR is present").
+Store `{PR_NUMBER}`, `{PR_URL}`, `{BASE_BRANCH}`. Keep `headRefOid` as `described_head` only when the PR was created in this run: Step 0's `ccm-context` output had `pr: null`, and the work step's `done` says it opened the PR, or `gh pr view {PR_NUMBER} --json createdAt` is later than the `date +%s` Step 0 read for `run_id`. Its description was then written for this head. Otherwise `described_head` is none, and Step 4g compares from `origin/{BASE_BRANCH}`. Add `pr:` to the grounding block for the remaining steps. If no PR exists after a `done` from `work-ticket`, that's an inconsistency → **route-and-stop** (reason: "work-ticket reported done but no PR is present").
 
 ## Step 2b: Visual check
 
@@ -236,6 +236,8 @@ Everything this pass pushes is measured against `H`, so bot reviews triggered *b
 
 Each 4f follows a feedback pass that pushed, so a run makes at most `max_feedback_passes` late-push re-reviews, plus the fix loop's re-reviews under `max_review_fix_passes`; there is no separate limit. Whenever a limit stops the run while the PR head is ahead of `reviewed_head`, the run parks. It never finishes on a stale review.
 
+**4g. Keep the PR description true.** Once the loop ends, before Step 5, when `described_head` is none or differs from the PR head (a push in Step 2b, 3, 4a, 4b, or 4c moved it), or a step reported other failures, read `${CLAUDE_PLUGIN_ROOT}/skills/pr/refresh-description.md` and run its check from `described_head` (from `origin/{BASE_BRANCH}` when it is none). Its other failures are the run's `follow_ups` items that start with `other failures: ` (from the work step or a fix pass, work-ticket Step 6). It lists the commits since, and when one makes a line of the description false or adds a change it does not mention (a file outside the ticket's scope, a test touched, a follow-up no longer needed), or the description names no line for an other failure, edits only those lines with `gh pr edit {PR_NUMBER} --body-file -`. This skill makes the edit, as it posts its own PR comments: a fix pass runs no `gh pr` command, and the push step never reads the description. Run it once here, however many pushes came before; a park runs it before the parked note instead (contract §4 step 5). Keep its one-line result for "Key autonomous decisions". A failed read or edit is never a park: the line says the description may be stale. An edit fires `pull_request.edited`, which can start checks again on the same head, so after an edit wait for CI once more exactly as 4c does, with the wait-key `{run_id}-desc`: `green` or `no-ci` goes on to Step 5, and so does `failed` when the pass was clean with red CI (4d) and the same checks failed; any other result is **route-and-stop** (step `ci-wait`, reason: "CI after the PR description edit: {status}: {reason}").
+
 ---
 
 ## Step 5: Finish the ticket
@@ -273,7 +275,7 @@ If the search or the comment fails, that is not a park: file the item as in the 
 **Follow-up descriptions.** A filed follow-up holds one finding: file each extra finding as its own item, or drop it with a reason as above, and never append it as "Low-priority also: ...". Every description opens with a line naming the PR and the step that raised it, and ends with exactly one line `Follow-up key: <key>`, its last line. Between them it takes one of two shapes:
 
 - **Needs a decision** (the step could not choose between fixes, or the item ends in "needs a human decision"): write each open question as `**q1.** <question>` (then `**q2.**`, ...), each option on its own line as `- A: <option> (for: <reasons>; against: <reasons>)` (then `- B:`, ...; at least two), and one line `Recommended: X. <why>` naming one of the options. File it in the tracker's decision state instead of the default Backlog: Linear `Needs Decision` when the team has a state of that name (`list_issue_statuses`), a JIRA status of that name when the project's workflow has one; otherwise the default state, and the summary marks the item "needs a decision".
-- **No open decision** (since 3.31.0, RV-175): the line right after the opener is `Goal: <one sentence>`, the outcome the ticket is for. Then a `## Change` section with the one chosen approach, naming the file in backticks (and the symbol) and what to do; a `## Out of scope` section with at least one line saying what the ticket does not cover (a neighboring case, a related cleanup, or `Nothing else in {file}.`); and a `## Acceptance criteria` section with at least one checkable list item (`- [ ] ...`). The opener's PR and the file `## Change` names are the ticket's context.
+- **No open decision** (since 3.31.0, RV-175): the line right after the opener is `Goal: <one sentence>`, the outcome the ticket is for. Then a `## Change` section with the one chosen approach, naming the file in backticks (and the symbol) and what to do; a `## Out of scope` section with at least one line saying what the ticket does not cover (a neighboring case, a related cleanup, or `Nothing else in {file}.`); and a `## Acceptance criteria` section with at least one checkable list item (`- [ ] ...`). The opener's PR and the file `## Change` names are the ticket's context. Each criterion checks only what `## Change` changes (since 3.32.0): never something `## Out of scope` excludes, and never a whole-suite result that other known failures can block. For a flaky test the criterion names that test and its file: "`<test name>` in `<file>` passes on N consecutive runs of the full suite; failures in other tests are reported in the PR, not fixed." When the run files two or more follow-ups, check them against each other before filing: no ticket's criteria may depend on a file another of them changes. (RD-145 and RD-146 each asked for 20 clean runs of the full suite while the other's flaky test was still in it, so each session had to fix the other ticket's file.)
 
 ```text
 Raised by the review step on PR #42 (ENG-123).
@@ -313,7 +315,7 @@ Before filing, pass each description to the checker on stdin, as its own Bash ca
 CCM_FOLLOWUP_EOF
 ```
 
-Write the description's lines and the closing `CCM_FOLLOWUP_EOF` line at the start of the line. Its `shape` is `decision` or `change`. For a carried-over item whose draft description you reuse as the earlier run kept it, add `--carried-over` (`"${CLAUDE_PLUGIN_ROOT}/bin/ccm-followup-check" --carried-over <<'CCM_FOLLOWUP_EOF'`): a draft from before 3.31.0 has no `Goal:` line and no `## Out of scope` section, and with the flag it passes with an `old-shape` warning (`old_shape: true`), so it is filed as it is and its key still matches. Never pass the flag for a description this run wrote. Exit 1: rewrite the description to clear each of its `problems`, and check again. If it still fails, file it as it is and name the remaining rules in the summary; a failed check is never a park.
+Write the description's lines and the closing `CCM_FOLLOWUP_EOF` line at the start of the line. Its `shape` is `decision` or `change`. For a carried-over item whose draft description you reuse as the earlier run kept it, add `--carried-over` (`"${CLAUDE_PLUGIN_ROOT}/bin/ccm-followup-check" --carried-over <<'CCM_FOLLOWUP_EOF'`): a draft from before 3.31.0 has no `Goal:` line and no `## Out of scope` section, and with the flag it passes with an `old-shape` warning (`old_shape: true`), so it is filed as it is and its key still matches; a draft from before 3.32.0 whose criterion asks for a whole-suite result with no file passes the same way, with a `criteria-whole-suite` warning. Never pass the flag for a description this run wrote. Exit 1: rewrite the description to clear each of its `problems`, and check again. If it still fails, file it as it is and name the remaining rules in the summary; a failed check is never a park.
 
 <!-- ccmagic:spec-only -->
 **Only when the grounding block has a `spec:` section.** Also collect the follow-ups filed on the change's other tickets (the sub-issues of the change's parent ticket) and on their PRs, since the sections and the archive ticket of one change tend to find the same defects.
@@ -339,6 +341,7 @@ Under prompt-relay there is no create API, so list every item (carried-over ones
 - {classification + reasoning}
 - {any minor implementation choices made instead of asking}
 - {out-of-scope changes flagged, if any}
+- {Step 4g's result when it edited or failed: "PR description: updated for {sha7, ...}" or "PR description may be stale{ after {sha7}}: {why}"}
 - {a validate `done` that recorded a local test failure: "Local tests failed and passed on rerun: {files}" or "Local tests failed, CI passed on {sha7}: {files}"}
 - {v1 fallback only: "Run record fell back to version 1: {fallback_reason}"}
 
@@ -477,6 +480,7 @@ There is no stalled outcome. Never hang waiting for input.
 | Feedback-pass cap hit still not clean | route-and-stop (reason: remaining threads / red CI). |
 | Red CI under `merge_owner: reeve`, no open threads, and `ccm-ci-status` with `--attribute` says `not-attributable` on the head validate passed on | Not a park: the pass is clean with red CI (4d); finish hands off with `ci_handoff: true` and the record's `ci` key. |
 | Step 4 pushed after the last clean review (4a or 4b) | Re-review the pushed head (4f). A stale review never reaches finish: a clean re-review of another head, an unreadable PR head, or findings with no review fix or feedback passes left → route-and-stop (stage `review-ticket`), before any fix is pushed. |
+| Step 4g cannot read or edit the PR description | Not a park. Say under "Key autonomous decisions" that the description may be stale (after the commit that needed the edit, when the edit failed), and continue. CI that does not settle green after an edit is route-and-stop (step `ci-wait`, Step 4g). |
 | `finish-ticket` merge gate not satisfied | It returns `needs-human` and does not merge → route-and-stop (stage `finish-ticket`). |
 | `requested_state: {merge_handoff_state}` and no state of that exact name exists | route-and-stop (stage `finish-ticket`); nothing was merged on the hand-off path. |
 | Any other tracker write fails (In Progress, In Review, Done, PR link, follow-up ticket), on any outcome, a park included | Not a park. Say what failed in the summary and continue; an unfiled follow-up is listed with `create failed: {error}` as its reason, and the next run on the ticket files it (Step 6, *Carried over from earlier runs*). A failed duplicate search or "also raised by" comment is the same: file the follow-up anyway and note the failed search. |

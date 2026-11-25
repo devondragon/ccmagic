@@ -5189,10 +5189,10 @@ ADDED_AGENTS_SINCE_BASELINE=(agents/auto-visual.md)
 # spec-delta.md holds the plain-delta rules its SKILL.md blocks point to (moved
 # there to keep SKILL.md under 500 lines) and acceptance.md the acceptance-test
 # rules (issue 111); review-guidance.md holds REVIEW.md and pre-existing findings
-# (issue 109).
+# (issue 109). pr/refresh-description.md holds the PR description check (3.32.0).
 ADDED_SKILL_FILES_SINCE_BASELINE=(skills/work-ticket/spec-delta.md skills/work-ticket/acceptance.md skills/review/review-guidance.md
   skills/auto-ticket/base-sync.md skills/work-ticket/base-conflict.md skills/work-ticket/review-head.md
-  skills/finish-ticket/merge-conflicts.md skills/finish-ticket/errors.md)
+  skills/finish-ticket/merge-conflicts.md skills/finish-ticket/errors.md skills/pr/refresh-description.md)
 
 spec_prompt_files() {
   { git -C "$ROOT" ls-tree -r --name-only "$SPEC_BASELINE" -- skills agents
@@ -5516,6 +5516,72 @@ followup_change_old_shape() {
   check "$RC,$(jqval .old_shape),$(jqval '.warnings | length')" "0,false,0"
 }
 
+# A criterion that asks for a whole-suite result names the file of its test,
+# since failures the ticket does not touch can block it (RD-145 and RD-146,
+# 3.32.0). A carried-over draft only warns, so it is still filed.
+followup_change_whole_suite() {
+  # shellcheck disable=SC2016 # literal backticks
+  local rd='- [ ] The test passes on 20 consecutive runs of the full `npm test` suite.'
+  fu_check < <(fu_change | sed "s|^- \[ \] .*|$rd|")
+  check "$RC,$(fu_rules),$(jq -r '.problems[0].detail' <<<"$OUT" | grep -c 'line 15 ')" "1,criteria-whole-suite,1"
+  fu_check --carried-over < <(fu_change | sed "s|^- \[ \] .*|$rd|")
+  check "$RC,$(jqval .pass),$(fu_rules),$(jq -r '[.warnings[].rule] | join(",")' <<<"$OUT")" "0,true,,criteria-whole-suite"
+  # An old-shape carried-over draft gets both warnings.
+  fu_check --carried-over < <(fu_change_old | sed "s|^- \[ \] .*|$rd|")
+  check "$RC,$(jq -r '[.warnings[].rule] | join(",")' <<<"$OUT")" "0,old-shape,criteria-whole-suite"
+  # The other phrasings, in any case and any list marker.
+  local item got=''
+  for item in '- All tests pass.' '* The whole test suite is green.' '1. The entire suite passes.' \
+    '- [ ] Every test passes in CI.' '- [ ] The Full Suite passes.'; do
+    fu_check < <(fu_change | sed "s|^- \[ \] .*|$item|")
+    got+="$RC"
+  done
+  check "$got" "11111"
+  # Plurals, one word or "of the" between all and tests, and a test file in
+  # any naming convention.
+  got=''
+  for item in '- [ ] The full and integration suites pass.' '- [ ] All unit tests pass.' \
+    '- [ ] All of the tests pass.' '- [ ] Every tests run is green.'; do
+    fu_check < <(fu_change | sed "s|^- \\[ \\] .*|$item|")
+    got+="$RC"
+  done
+  check "$got" "1111"
+  got=''
+  for tok in test/web/me.tsx src/__tests__/me.ts spec/me_spec.rb me.test.tsx me_test.go test_me.py MeTest.java \
+    src/net/abuse.ts package.json; do
+    # shellcheck disable=SC2016 # literal backticks
+    fu_check < <(fu_change | sed "s|^- \\[ \\] .*|- [ ] \`shows it\` in \`$tok\` passes on 20 runs of the full suite.|")
+    got+=" $tok:$RC"
+  done
+  check "${got# }" "test/web/me.tsx:0 src/__tests__/me.ts:0 spec/me_spec.rb:0 me.test.tsx:0 me_test.go:0 test_me.py:0 MeTest.java:0 src/net/abuse.ts:1 package.json:1"
+  # A continuation line joins its item: the phrase on one line and the pass
+  # word on the next is one criterion, and a test file on the next line
+  # scopes it.
+  fu_check < <(fu_change | sed 's|^- \[ \] .*|- [ ] The test runs 20 times in the full\
+  suite and passes each time.|')
+  check "$RC,$(fu_rules),$(jq -r '.problems[0].detail' <<<"$OUT" | grep -c 'line 15 ')" "1,criteria-whole-suite,1"
+  # shellcheck disable=SC2016 # literal backticks
+  fu_check < <(fu_change | sed 's|^- \[ \] .*|- [ ] `shows it` passes on 20 runs of the full suite,\
+  in `test/web/me.test.tsx`.|')
+  check "$RC" "0"
+  # Without a pass word it is not a result the ticket must reach.
+  fu_check < <(fu_change | sed 's|^- \[ \] .*|- [ ] The full suite runs in under a minute.|')
+  check "$RC" "0"
+  # The scoped form names the test and its file, and passes.
+  # shellcheck disable=SC2016 # literal backticks
+  fu_check < <(fu_change | sed 's|^- \[ \] .*|- [ ] `shows the email` in `test/web/me.test.tsx` passes on 20 consecutive runs of the full suite; failures in other tests are reported in the PR, not fixed.|')
+  check "$RC,$(fu_rules),$(jqval '.warnings | length')" "0,,0"
+  # Words that only look like the phrases, and a suite line outside the
+  # criteria, are not whole-suite criteria.
+  fu_check < <(fu_change | sed 's|^- \[ \] .*|- [ ] The rule is fully covered by a test suite.|')
+  check "$RC" "0"
+  fu_check < <(fu_change | sed 's|^- IPv6 prefixes.|- Making the full suite pass.|')
+  check "$RC,$(fu_rules)" "0,"
+  # A decision follow-up has no criteria to check.
+  fu_check < <(fu_decision | sed 's|^Recommended: A\..*|Recommended: A. All tests pass with it.|')
+  check "$RC" "0"
+}
+
 followup_decision_problems() {
   # One option, no recommendation.
   fu_check < <(fu_decision | sed '/^- B:/d; /^Recommended:/d')
@@ -5573,6 +5639,12 @@ skills_auto_ticket_follow_up_shapes() {
   grep -qF '`## Out of scope`' "$f" || missing+=" out-of-scope"
   grep -qF 'ccm-followup-check" --carried-over' "$f" || missing+=" carried-over"
   grep -qF 'Never pass the flag for a description this run wrote' "$f" || missing+=" carried-over-only"
+  # 3.32.0: a criterion checks only the ticket's own change, a flaky test is
+  # named with its file, and sibling follow-ups are checked against each other.
+  grep -qF 'Each criterion checks only what `## Change` changes' "$f" || missing+=" criteria-scope"
+  grep -qF 'failures in other tests are reported in the PR, not fixed' "$f" || missing+=" flaky-form"
+  grep -qF 'no ticket'"'"'s criteria may depend on a file another of them changes' "$f" || missing+=" batch"
+  grep -qF '`criteria-whole-suite` warning' "$f" || missing+=" whole-suite-carried"
   grep -qF '`**q1.** <question>`' "$f" || missing+=" q1"
   grep -qF 'bin/ccm-followup-check' "$f" || missing+=" helper"
   grep -qF 'Low-priority also' "$f" || missing+=" one-finding"
@@ -5583,6 +5655,63 @@ skills_auto_ticket_follow_up_shapes() {
     shapes+=" $(jqval .shape)"
   done < <(awk '/^```text$/ { inb = 1; b = ""; next } inb && /^```$/ { inb = 0; if (b ~ /\nFollow-up key: /) printf "%s%c", b, 0; next } inb { b = b $0 "\n" }' "$f")
   check "${missing# },${shapes# }" ",decision change"
+}
+
+# A criterion that only an out-of-scope change could meet fully is met as far
+# as the ticket's own change can, with the other failures named in the PR
+# body: work-ticket does not make the excluded change and does not park on
+# it, and review-ticket does not ask for it (RD-145, 3.32.0).
+# shellcheck disable=SC2016 # literal backticks in the markdown being matched
+skills_criterion_out_of_scope() {
+  local w="$ROOT/skills/work-ticket/SKILL.md" r="$ROOT/skills/review-ticket/SKILL.md" missing=''
+  grep -qF '**A criterion that needs an out-of-scope change.**' "$w" || missing+=" work:rule"
+  grep -F '**A criterion that needs an out-of-scope change.**' "$w" | grep -qF 'do not make that change' || missing+=" work:no-change"
+  grep -F '**A criterion that needs an out-of-scope change.**' "$w" | grep -qF 'not a `needs-human` reason' || missing+=" work:no-park"
+  grep -F 'stop with `needs-human` (the `reason` lists the unmet AC)' "$w" | grep -qF '*A criterion that needs an out-of-scope change*' || missing+=" work:autonomous"
+  grep -F '**A criterion that needs an out-of-scope change.**' "$r" | grep -qF 'Never ask for the excluded change' || missing+=" review:rule"
+  check "${missing# }" ""
+}
+
+# After a push that followed the PR description, the orchestrator compares
+# the commits since with the description and edits only the lines they made
+# false or the changes it does not mention, once before finish and before a
+# park's note; a failed edit is never a park (reeve-dashboard PR #165, 3.32.0).
+# shellcheck disable=SC2016 # literal backticks in the markdown being matched
+skills_pr_description_refresh() {
+  local a="$ROOT/skills/auto-ticket/SKILL.md" c="$ROOT/skills/auto-ticket/autonomous-contract.md"
+  local p="$ROOT/skills/pr/SKILL.md" r="$ROOT/skills/pr/refresh-description.md" missing=''
+  [ -f "$r" ] || missing+=" refresh:file"
+  grep -qF "gh pr edit {PR_NUMBER} --body-file - <<'CCM_PR_BODY_EOF'" "$r" 2>/dev/null || missing+=" refresh:edit"
+  grep -qF 'git log --first-parent --no-merges --name-only' "$r" 2>/dev/null || missing+=" refresh:commits"
+  grep -qF 'Do not rewrite, reorder, or reword any other line' "$r" 2>/dev/null || missing+=" refresh:minimal"
+  grep -qF '`Closes #N`' "$r" 2>/dev/null || missing+=" refresh:closes"
+  grep -qF 'is never a park' "$r" 2>/dev/null || missing+=" refresh:no-park"
+  grep -qF 'PR description may be stale after {sha7' "$r" 2>/dev/null || missing+=" refresh:stale"
+  grep -qF 'PR description may be stale: {first error line}' "$r" 2>/dev/null || missing+=" refresh:stale-read"
+  # The PR's own head and base, never local HEAD or the default branch; a
+  # merge's files only where the PR changes them; a second read before the
+  # edit; other failures get a line; GitLab on stdin too.
+  grep -qF 'json body,headRefOid,baseRefName' "$r" 2>/dev/null || missing+=" refresh:base"
+  grep -qF '{from}..{headRefOid}' "$r" 2>/dev/null || missing+=" refresh:head"
+  grep -qF 'git diff --name-only origin/{base}...{headRefOid}' "$r" 2>/dev/null || missing+=" refresh:merge-files"
+  grep -qF 'Read the body again right before the edit' "$r" 2>/dev/null || missing+=" refresh:reread"
+  grep -qF 'Other failures, out of this ticket'"'"'s scope and not fixed here' "$r" 2>/dev/null || missing+=" refresh:other-failures"
+  grep -qF "glab mr update {n} --description-file - <<'CCM_PR_BODY_EOF'" "$r" 2>/dev/null || missing+=" refresh:glab"
+  # The orchestrator keeps the head the description was written for, runs
+  # the check in Step 4g before Step 5, and again before a park's note.
+  grep -qF 'headRefOid --jq '"'"'{number,url,title,baseRefName,headRefName,headRefOid}'"'" "$a" || missing+=" auto:step2"
+  grep -qF 'Keep `headRefOid` as `described_head` only when the PR was created in this run' "$a" || missing+=" auto:described-head"
+  grep -F '**4g.' "$a" | grep -qF 'start with `other failures: `' || missing+=" auto:4g-other-failures"
+  grep -F '**4g.' "$a" | grep -qF 'with the wait-key `{run_id}-desc`' || missing+=" auto:4g-ci-wait"
+  grep -F '**A criterion that needs an out-of-scope change.**' "$ROOT/skills/review-ticket/SKILL.md" | grep -qF 'not a finding and not a missing-AC item' || missing+=" review:note"
+  section "$a" '^\*\*4g\. Keep the PR description true' '^## Step 5' | grep -qF '${CLAUDE_PLUGIN_ROOT}/skills/pr/refresh-description.md' || missing+=" auto:4g"
+  grep -F '**4g.' "$a" | grep -qF 'A failed read or edit is never a park' || missing+=" auto:4g-no-park"
+  grep -qF '"PR description may be stale{ after {sha7}}: {why}"' "$a" || missing+=" auto:summary"
+  grep -qF 'Step 4g cannot read or edit the PR description' "$a" || missing+=" auto:errors"
+  grep -F '5. **Comment the reason**' "$c" | grep -qF 'run its Step 4g description check now' || missing+=" contract:park"
+  grep -qF '${CLAUDE_SKILL_DIR}/refresh-description.md' "$p" || missing+=" pr:open-pr"
+  [ "$(wc -l <"$a")" -lt 500 ] || missing+=" auto:500-lines"
+  check "${missing# }" ""
 }
 
 # ---- ccm-baseline-check and /ccmagic:spec-baseline (RV-84) ------------------
